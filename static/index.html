@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HTML Editor</title>
+<style>
+  :root {
+    --bg: #1e1e1e;
+    --bg-side: #252526;
+    --bg-bar: #333333;
+    --bg-hover: #2a2d2e;
+    --bg-active: #094771;
+    --fg: #cccccc;
+    --fg-dim: #858585;
+    --border: #333333;
+    --accent: #007acc;
+    --danger: #c84040;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", sans-serif;
+    font-size: 13px;
+    color: var(--fg);
+    background: var(--bg);
+    overflow: hidden;
+  }
+  #app { display: flex; height: 100vh; width: 100vw; }
+  #sidebar {
+    width: 250px;
+    flex: 0 0 250px;
+    background: var(--bg-side);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    transition: margin-left 0.2s ease;
+  }
+  #sidebar.collapsed { margin-left: -250px; }
+  #sidebar-header {
+    padding: 8px 10px;
+    background: var(--bg-bar);
+    font-weight: bold;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-dim);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  #file-tree {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .tree-node {
+    display: flex;
+    align-items: center;
+    padding: 3px 8px;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tree-node:hover { background: var(--bg-hover); }
+  .tree-node.active { background: var(--bg-active); color: #fff; }
+  .tree-node .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tree-node .actions {
+    display: none;
+    gap: 2px;
+  }
+  .tree-node:hover .actions { display: flex; }
+  .tree-node .actions button {
+    background: transparent;
+    border: none;
+    color: var(--fg-dim);
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 11px;
+    border-radius: 3px;
+  }
+  .tree-node .actions button:hover { color: var(--fg); background: rgba(255,255,255,0.1); }
+  .tree-icon { display: inline-block; width: 16px; text-align: center; margin-right: 4px; opacity: 0.7; }
+  #sidebar-actions {
+    padding: 8px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  button.btn {
+    background: var(--bg-bar);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  button.btn:hover { background: #3c3c3c; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.btn.primary:hover { background: #1180d4; }
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #toolbar {
+    padding: 6px 12px;
+    background: var(--bg-bar);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 38px;
+  }
+  #toggle-sidebar {
+    background: transparent;
+    border: none;
+    color: var(--fg);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+  }
+  #current-file { flex: 1; font-weight: 500; color: var(--fg); }
+  #current-file .dirty { color: #e2c08d; margin-left: 4px; }
+  #editor-host { flex: 1; position: relative; min-height: 0; }
+  #editor { position: absolute; inset: 0; }
+  #image-preview {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    overflow: auto;
+  }
+  #image-preview img { max-width: 100%; max-height: 100%; }
+  #empty-hint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-dim);
+    font-size: 14px;
+  }
+  #status {
+    padding: 4px 12px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    min-height: 22px;
+  }
+  #toast {
+    position: fixed;
+    bottom: 30px;
+    right: 16px;
+    background: #333;
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    z-index: 9999;
+    display: none;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    max-width: 360px;
+  }
+  #toast.error { background: var(--danger); }
+  @media (max-width: 700px) {
+    #sidebar { position: absolute; z-index: 10; height: 100%; }
+    #sidebar.collapsed { margin-left: -250px; }
+  }
+  input[type="file"] { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      <span>WORKSPACE</span>
+      <button class="btn" id="refresh-btn" title="重新整理" style="padding:2px 6px;">⟳</button>
+    </div>
+    <div id="file-tree"></div>
+    <div id="sidebar-actions">
+      <button class="btn" id="upload-btn">上傳</button>
+      <button class="btn" id="mkdir-btn">新增目錄</button>
+      <button class="btn" id="newfile-btn">新增檔案</button>
+      <input type="file" id="upload-input" />
+    </div>
+  </aside>
+  <div id="main">
+    <div id="toolbar">
+      <button id="toggle-sidebar" title="切換側邊欄">☰</button>
+      <span id="current-file">尚未開啟檔案</span>
+      <button class="btn" id="download-btn" disabled>下載</button>
+      <button class="btn primary" id="save-btn" disabled>儲存 (Ctrl+S)</button>
+    </div>
+    <div id="editor-host">
+      <div id="empty-hint">從左側選擇檔案開始編輯</div>
+      <div id="editor" style="display:none;"></div>
+      <div id="image-preview"><img id="image-preview-img" /></div>
+    </div>
+    <div id="status"></div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script src="/static/monaco/vs/loader.js"></script>
+<script>
+(function () {
+  const IMG_EXT = ['png','jpg','jpeg','gif','webp','svg','ico'];
+  const LANG_MAP = {
+    html: 'html', htm: 'html',
+    css: 'css',
+    js: 'javascript',
+    json: 'json',
+    md: 'markdown',
+    txt: 'plaintext',
+    svg: 'xml',
+  };
+
+  let editor = null;
+  let currentPath = null;
+  let originalContent = '';
+  let dirty = false;
+
+  const $ = (id) => document.getElementById(id);
+
+  function toast(msg, isError) {
+    const el = $('toast');
+    el.textContent = msg;
+    el.className = isError ? 'error' : '';
+    el.style.display = 'block';
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => { el.style.display = 'none'; }, 2400);
+  }
+
+  function status(msg) { $('status').textContent = msg || ''; }
+
+  function extOf(path) {
+    const m = /\.([^./]+)$/.exec(path);
+    return m ? m[1].toLowerCase() : '';
+  }
+  function isImage(path) { return IMG_EXT.includes(extOf(path)); }
+
+  function setDirty(v) {
+    dirty = v;
+    const cf = $('current-file');
+    if (!currentPath) { cf.textContent = '尚未開啟檔案'; return; }
+    cf.innerHTML = '';
+    const span = document.createElement('span');
+    span.textContent = currentPath;
+    cf.appendChild(span);
+    if (dirty) {
+      const d = document.createElement('span');
+      d.className = 'dirty';
+      d.textContent = '●';
+      cf.appendChild(d);
+    }
+  }
+
+  async function api(path, opts) {
+    opts = opts || {};
+    const res = await fetch(path, opts);
+    const ct = res.headers.get('content-type') || '';
+    if (!res.ok) {
+      let msg = res.statusText;
+      if (ct.includes('application/json')) {
+        try { msg = (await res.json()).error || msg; } catch {}
+      }
+      throw new Error(msg);
+    }
+    if (ct.includes('application/json')) return await res.json();
+    return await res.text();
+  }
+
+  async function loadTree() {
+    try {
+      const data = await api('/api/files');
+      renderTree(data.files || []);
+    } catch (e) {
+      toast('載入檔案列表失敗: ' + e.message, true);
+    }
+  }
+
+  function renderTree(files) {
+    const root = $('file-tree');
+    root.innerHTML = '';
+    files.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.path.localeCompare(b.path);
+    });
+    for (const f of files) {
+      const depth = f.path.split('/').length - 1;
+      const node = document.createElement('div');
+      node.className = 'tree-node';
+      node.style.paddingLeft = (8 + depth * 14) + 'px';
+      if (f.path === currentPath) node.classList.add('active');
+
+      const icon = document.createElement('span');
+      icon.className = 'tree-icon';
+      icon.textContent = f.isDir ? '📁' : (isImage(f.path) ? '🖼' : '📄');
+      node.appendChild(icon);
+
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = f.name;
+      name.title = f.path;
+      node.appendChild(name);
+
+      const actions = document.createElement('span');
+      actions.className = 'actions';
+      if (!f.isDir) {
+        const dl = document.createElement('button');
+        dl.title = '下載';
+        dl.textContent = '⬇';
+        dl.onclick = (e) => { e.stopPropagation(); downloadFile(f.path); };
+        actions.appendChild(dl);
+      }
+      const del = document.createElement('button');
+      del.title = '刪除';
+      del.textContent = '✕';
+      del.onclick = (e) => { e.stopPropagation(); deleteFile(f.path, f.isDir); };
+      actions.appendChild(del);
+      node.appendChild(actions);
+
+      node.onclick = () => {
+        if (f.isDir) return;
+        openFile(f.path);
+      };
+      root.appendChild(node);
+    }
+    if (files.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:10px;color:var(--fg-dim);font-style:italic;';
+      empty.textContent = '(空)';
+      root.appendChild(empty);
+    }
+  }
+
+  function detectLang(path) {
+    return LANG_MAP[extOf(path)] || 'plaintext';
+  }
+
+  function showEditor() {
+    $('empty-hint').style.display = 'none';
+    $('image-preview').style.display = 'none';
+    $('editor').style.display = 'block';
+    if (editor) editor.layout();
+  }
+
+  function showImage(src) {
+    $('empty-hint').style.display = 'none';
+    $('editor').style.display = 'none';
+    const wrap = $('image-preview');
+    wrap.style.display = 'flex';
+    $('image-preview-img').src = src;
+  }
+
+  async function maybeConfirmDirty() {
+    if (!dirty) return true;
+    return confirm('目前檔案有未儲存的變更，確定要切換嗎？');
+  }
+
+  async function openFile(path) {
+    if (!await maybeConfirmDirty()) return;
+    currentPath = path;
+    document.querySelectorAll('.tree-node').forEach(n => n.classList.remove('active'));
+    for (const n of document.querySelectorAll('.tree-node')) {
+      const t = n.querySelector('.name');
+      if (t && t.title === path) n.classList.add('active');
+    }
+    $('save-btn').disabled = isImage(path);
+    $('download-btn').disabled = false;
+
+    if (isImage(path)) {
+      showImage('/api/file?path=' + encodeURIComponent(path) + '&t=' + Date.now());
+      originalContent = '';
+      setDirty(false);
+      status('圖片預覽：' + path);
+      return;
+    }
+
+    try {
+      const text = await api('/api/file?path=' + encodeURIComponent(path));
+      originalContent = text;
+      showEditor();
+      const lang = detectLang(path);
+      const model = monaco.editor.createModel(text, lang);
+      const old = editor.getModel();
+      editor.setModel(model);
+      if (old) old.dispose();
+      setDirty(false);
+      status('已開啟：' + path);
+    } catch (e) {
+      toast('開啟失敗: ' + e.message, true);
+    }
+  }
+
+  async function saveCurrent() {
+    if (!currentPath || !editor || isImage(currentPath)) return;
+    const content = editor.getValue();
+    try {
+      await api('/api/file?path=' + encodeURIComponent(currentPath), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        body: content,
+      });
+      originalContent = content;
+      setDirty(false);
+      status('已儲存：' + currentPath);
+      toast('儲存成功');
+    } catch (e) {
+      toast('儲存失敗: ' + e.message, true);
+    }
+  }
+
+  function downloadFile(path) {
+    const a = document.createElement('a');
+    a.href = '/api/download?path=' + encodeURIComponent(path);
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  async function deleteFile(path, isDir) {
+    if (!confirm('確定要刪除「' + path + '」嗎？' + (isDir ? '（會刪除目錄及內容）' : ''))) return;
+    if (!confirm('再次確認：此動作無法復原。')) return;
+    try {
+      await api('/api/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
+      if (currentPath === path || (isDir && currentPath && currentPath.startsWith(path + '/'))) {
+        currentPath = null;
+        if (editor && editor.getModel()) editor.getModel().setValue('');
+        $('editor').style.display = 'none';
+        $('empty-hint').style.display = 'flex';
+        $('save-btn').disabled = true;
+        $('download-btn').disabled = true;
+        setDirty(false);
+      }
+      await loadTree();
+      toast('已刪除');
+    } catch (e) {
+      toast('刪除失敗: ' + e.message, true);
+    }
+  }
+
+  async function uploadFile(file) {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('path', '');
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || res.statusText);
+      }
+      await loadTree();
+      toast('上傳成功');
+    } catch (e) {
+      toast('上傳失敗: ' + e.message, true);
+    }
+  }
+
+  async function mkdir() {
+    const name = prompt('輸入目錄名稱（可包含 / 建立巢狀）：');
+    if (!name) return;
+    try {
+      await api('/api/mkdir?path=' + encodeURIComponent(name), { method: 'POST' });
+      await loadTree();
+      toast('已建立目錄');
+    } catch (e) {
+      toast('建立失敗: ' + e.message, true);
+    }
+  }
+
+  async function newFile() {
+    const name = prompt('輸入新檔名（包含副檔名，例如 page.html）：');
+    if (!name) return;
+    try {
+      await api('/api/file?path=' + encodeURIComponent(name), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        body: '',
+      });
+      await loadTree();
+      openFile(name);
+    } catch (e) {
+      toast('建立失敗: ' + e.message, true);
+    }
+  }
+
+  function bindUI() {
+    $('save-btn').onclick = saveCurrent;
+    $('download-btn').onclick = () => currentPath && downloadFile(currentPath);
+    $('upload-btn').onclick = () => $('upload-input').click();
+    $('upload-input').onchange = (e) => {
+      const f = e.target.files[0];
+      if (f) uploadFile(f);
+      e.target.value = '';
+    };
+    $('mkdir-btn').onclick = mkdir;
+    $('newfile-btn').onclick = newFile;
+    $('refresh-btn').onclick = loadTree;
+    $('toggle-sidebar').onclick = () => $('sidebar').classList.toggle('collapsed');
+
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveCurrent();
+      }
+    });
+
+    window.addEventListener('beforeunload', (e) => {
+      if (dirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+
+    if (window.matchMedia('(max-width: 700px)').matches) {
+      $('sidebar').classList.add('collapsed');
+    }
+  }
+
+  require.config({ paths: { vs: '/static/monaco/vs' } });
+  require(['vs/editor/editor.main'], function () {
+    editor = monaco.editor.create($('editor'), {
+      value: '',
+      language: 'plaintext',
+      theme: 'vs-dark',
+      wordWrap: 'on',
+      automaticLayout: true,
+      fontSize: 13,
+    });
+    editor.onDidChangeModelContent(() => {
+      if (!currentPath) return;
+      const cur = editor.getValue();
+      const isDirty = cur !== originalContent;
+      if (isDirty !== dirty) setDirty(isDirty);
+    });
+    bindUI();
+    loadTree();
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "name": "html-editor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monaco editor static assets for html-editor",
+  "scripts": {
+    "postinstall": "mkdir -p static/monaco && cp -r node_modules/monaco-editor/min/vs static/monaco/vs"
+  },
+  "dependencies": {
+    "monaco-editor": "^0.52.2"
+  }
+}

@@ -1,0 +1,5 @@
+workspace/
+node_modules/
+static/monaco/
+html-editor
+package-lock.json
