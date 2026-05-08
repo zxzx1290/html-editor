@@ -71,29 +71,40 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .tree-node .actions {
-    display: none;
-    gap: 2px;
-  }
-  .tree-node:hover .actions { display: flex; }
-  .tree-node .actions button {
-    background: transparent;
-    border: none;
-    color: var(--fg-dim);
-    cursor: pointer;
-    padding: 2px 4px;
-    font-size: 11px;
-    border-radius: 3px;
-  }
-  .tree-node .actions button:hover { color: var(--fg); background: rgba(255,255,255,0.1); }
   .tree-icon { display: inline-block; width: 16px; text-align: center; margin-right: 4px; opacity: 0.7; }
-  #sidebar-actions {
-    padding: 8px;
-    border-top: 1px solid var(--border);
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
+  .tree-node.drop-over {
+    background: rgba(0, 122, 204, 0.45) !important;
+    outline: 1px dashed var(--accent);
+    outline-offset: -2px;
   }
+  #file-tree.drag-active {
+    background: rgba(0, 122, 204, 0.08);
+    outline: 2px dashed var(--accent);
+    outline-offset: -6px;
+  }
+  #context-menu {
+    position: fixed;
+    display: none;
+    z-index: 1000;
+    background: #252526;
+    border: 1px solid #454545;
+    border-radius: 4px;
+    padding: 4px 0;
+    min-width: 170px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    font-size: 12px;
+    user-select: none;
+  }
+  #context-menu .item {
+    padding: 5px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    color: var(--fg);
+  }
+  #context-menu .item:hover { background: var(--bg-active); color: #fff; }
+  #context-menu .item.danger { color: #f48771; }
+  #context-menu .item.danger:hover { background: var(--danger); color: #fff; }
+  #context-menu .sep { height: 1px; background: #454545; margin: 4px 0; }
   button.btn {
     background: var(--bg-bar);
     color: var(--fg);
@@ -183,13 +194,8 @@
       <span>WORKSPACE</span>
       <button class="btn" id="refresh-btn" title="重新整理" style="padding:2px 6px;">⟳</button>
     </div>
-    <div id="file-tree"></div>
-    <div id="sidebar-actions">
-      <button class="btn" id="upload-btn">上傳</button>
-      <button class="btn" id="mkdir-btn">新增目錄</button>
-      <button class="btn" id="newfile-btn">新增檔案</button>
-      <input type="file" id="upload-input" />
-    </div>
+    <div id="file-tree" title="拖曳檔案到此上傳，或右鍵開啟選單"></div>
+    <input type="file" id="upload-input" multiple />
   </aside>
   <div id="main">
     <div id="toolbar">
@@ -207,6 +213,7 @@
   </div>
 </div>
 <div id="toast"></div>
+<div id="context-menu"></div>
 
 <script src="/static/monaco/vs/loader.js"></script>
 <script>
@@ -298,6 +305,8 @@
       const node = document.createElement('div');
       node.className = 'tree-node';
       node.style.paddingLeft = (8 + depth * 14) + 'px';
+      node.dataset.path = f.path;
+      node.dataset.isDir = f.isDir ? '1' : '0';
       if (f.path === currentPath) node.classList.add('active');
 
       const icon = document.createElement('span');
@@ -311,22 +320,6 @@
       name.title = f.path;
       node.appendChild(name);
 
-      const actions = document.createElement('span');
-      actions.className = 'actions';
-      if (!f.isDir) {
-        const dl = document.createElement('button');
-        dl.title = '下載';
-        dl.textContent = '⬇';
-        dl.onclick = (e) => { e.stopPropagation(); downloadFile(f.path); };
-        actions.appendChild(dl);
-      }
-      const del = document.createElement('button');
-      del.title = '刪除';
-      del.textContent = '✕';
-      del.onclick = (e) => { e.stopPropagation(); deleteFile(f.path, f.isDir); };
-      actions.appendChild(del);
-      node.appendChild(actions);
-
       node.onclick = () => {
         if (f.isDir) return;
         openFile(f.path);
@@ -336,7 +329,7 @@
     if (files.length === 0) {
       const empty = document.createElement('div');
       empty.style.cssText = 'padding:10px;color:var(--fg-dim);font-style:italic;';
-      empty.textContent = '(空)';
+      empty.textContent = '(空，拖曳檔案到此或右鍵建立)';
       root.appendChild(empty);
     }
   }
@@ -448,64 +441,194 @@
     }
   }
 
-  async function uploadFile(file) {
+  function joinPath(parent, name) {
+    if (!parent) return name;
+    return parent.replace(/\/+$/, '') + '/' + name;
+  }
+
+  async function uploadFile(file, targetDir) {
     const fd = new FormData();
     fd.append('file', file);
-    fd.append('path', '');
+    fd.append('path', targetDir || '');
     try {
       const res = await fetch('/api/upload', { method: 'POST', body: fd });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || res.statusText);
       }
-      await loadTree();
-      toast('上傳成功');
+      toast('已上傳：' + file.name);
     } catch (e) {
-      toast('上傳失敗: ' + e.message, true);
+      toast('上傳失敗 ' + file.name + '：' + e.message, true);
     }
   }
 
-  async function mkdir() {
+  async function uploadFiles(files, targetDir) {
+    for (const f of files) {
+      await uploadFile(f, targetDir);
+    }
+    await loadTree();
+  }
+
+  function triggerUpload(targetDir) {
+    const input = $('upload-input');
+    input.value = '';
+    input.onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      e.target.value = '';
+      if (files.length) await uploadFiles(files, targetDir || '');
+    };
+    input.click();
+  }
+
+  async function mkdir(parentDir) {
     const name = prompt('輸入目錄名稱（可包含 / 建立巢狀）：');
     if (!name) return;
+    const path = joinPath(parentDir || '', name);
     try {
-      await api('/api/mkdir?path=' + encodeURIComponent(name), { method: 'POST' });
+      await api('/api/mkdir?path=' + encodeURIComponent(path), { method: 'POST' });
       await loadTree();
-      toast('已建立目錄');
+      toast('已建立目錄：' + path);
     } catch (e) {
-      toast('建立失敗: ' + e.message, true);
+      toast('建立失敗：' + e.message, true);
     }
   }
 
-  async function newFile() {
+  async function newFile(parentDir) {
     const name = prompt('輸入新檔名（包含副檔名，例如 page.html）：');
     if (!name) return;
+    const path = joinPath(parentDir || '', name);
     try {
-      await api('/api/file?path=' + encodeURIComponent(name), {
+      await api('/api/file?path=' + encodeURIComponent(path), {
         method: 'PUT',
         headers: { 'Content-Type': 'text/plain; charset=utf-8' },
         body: '',
       });
       await loadTree();
-      openFile(name);
+      openFile(path);
     } catch (e) {
-      toast('建立失敗: ' + e.message, true);
+      toast('建立失敗：' + e.message, true);
     }
   }
+
+  function showContextMenu(x, y, items) {
+    const m = $('context-menu');
+    m.innerHTML = '';
+    for (const it of items) {
+      if (it === '-') {
+        const sep = document.createElement('div');
+        sep.className = 'sep';
+        m.appendChild(sep);
+        continue;
+      }
+      const li = document.createElement('div');
+      li.className = 'item' + (it.danger ? ' danger' : '');
+      li.textContent = it.label;
+      li.onclick = (e) => {
+        e.stopPropagation();
+        hideContextMenu();
+        it.action();
+      };
+      m.appendChild(li);
+    }
+    m.style.display = 'block';
+    m.style.left = x + 'px';
+    m.style.top = y + 'px';
+    const r = m.getBoundingClientRect();
+    if (r.right > window.innerWidth) m.style.left = Math.max(0, window.innerWidth - r.width - 4) + 'px';
+    if (r.bottom > window.innerHeight) m.style.top = Math.max(0, window.innerHeight - r.height - 4) + 'px';
+  }
+  function hideContextMenu() { $('context-menu').style.display = 'none'; }
 
   function bindUI() {
     $('save-btn').onclick = saveCurrent;
     $('download-btn').onclick = () => currentPath && downloadFile(currentPath);
-    $('upload-btn').onclick = () => $('upload-input').click();
-    $('upload-input').onchange = (e) => {
-      const f = e.target.files[0];
-      if (f) uploadFile(f);
-      e.target.value = '';
-    };
-    $('mkdir-btn').onclick = mkdir;
-    $('newfile-btn').onclick = newFile;
     $('refresh-btn').onclick = loadTree;
     $('toggle-sidebar').onclick = () => $('sidebar').classList.toggle('collapsed');
+
+    const tree = $('file-tree');
+
+    function hasFiles(dt) {
+      return dt && Array.from(dt.types || []).includes('Files');
+    }
+    function clearDropHighlights() {
+      tree.classList.remove('drag-active');
+      document.querySelectorAll('.tree-node.drop-over').forEach(n => n.classList.remove('drop-over'));
+    }
+
+    tree.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const node = e.target.closest('.tree-node');
+      if (!node) {
+        showContextMenu(e.clientX, e.clientY, [
+          { label: '新增檔案', action: () => newFile('') },
+          { label: '新增目錄', action: () => mkdir('') },
+          { label: '上傳檔案…', action: () => triggerUpload('') },
+          '-',
+          { label: '重新整理', action: loadTree },
+        ]);
+        return;
+      }
+      const path = node.dataset.path;
+      const isDir = node.dataset.isDir === '1';
+      if (isDir) {
+        showContextMenu(e.clientX, e.clientY, [
+          { label: '在此新增檔案', action: () => newFile(path) },
+          { label: '在此新增目錄', action: () => mkdir(path) },
+          { label: '上傳到此處…', action: () => triggerUpload(path) },
+          '-',
+          { label: '刪除目錄', danger: true, action: () => deleteFile(path, true) },
+        ]);
+      } else {
+        showContextMenu(e.clientX, e.clientY, [
+          { label: '開啟', action: () => openFile(path) },
+          { label: '下載', action: () => downloadFile(path) },
+          '-',
+          { label: '刪除', danger: true, action: () => deleteFile(path, false) },
+        ]);
+      }
+    });
+    document.addEventListener('click', hideContextMenu);
+    document.addEventListener('contextmenu', (e) => {
+      if (!e.target.closest('#file-tree')) hideContextMenu();
+    });
+    window.addEventListener('blur', hideContextMenu);
+    window.addEventListener('resize', hideContextMenu);
+
+    let dragCounter = 0;
+    tree.addEventListener('dragenter', (e) => {
+      if (!hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      dragCounter++;
+      tree.classList.add('drag-active');
+    });
+    tree.addEventListener('dragover', (e) => {
+      if (!hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      const node = e.target.closest('.tree-node');
+      document.querySelectorAll('.tree-node.drop-over').forEach(n => n.classList.remove('drop-over'));
+      if (node && node.dataset.isDir === '1') node.classList.add('drop-over');
+    });
+    tree.addEventListener('dragleave', () => {
+      dragCounter--;
+      if (dragCounter <= 0) { dragCounter = 0; clearDropHighlights(); }
+    });
+    tree.addEventListener('drop', async (e) => {
+      if (!hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      dragCounter = 0;
+      const node = e.target.closest('.tree-node');
+      const targetDir = (node && node.dataset.isDir === '1') ? node.dataset.path : '';
+      clearDropHighlights();
+      const files = Array.from(e.dataTransfer.files || []);
+      if (files.length) await uploadFiles(files, targetDir);
+    });
+    window.addEventListener('dragover', (e) => {
+      if (hasFiles(e.dataTransfer)) e.preventDefault();
+    });
+    window.addEventListener('drop', (e) => {
+      if (hasFiles(e.dataTransfer)) e.preventDefault();
+    });
 
     document.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
