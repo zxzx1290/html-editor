@@ -347,11 +347,14 @@
   .upload-bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
   .upload-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.15s; }
   .upload-fill.error { background: var(--danger); }
+  #app-loading { position: fixed; inset: 0; background: var(--bg); z-index: 9999; display: flex; align-items: center; justify-content: center; }
+  #app-loading span { color: var(--fg-dim); font-size: 13px; }
 </style>
 </head>
 <body>
 
 <div id="app" v-cloak>
+  <div v-if="!appReady" id="app-loading"><span>載入中…</span></div>
   <div id="sidebar-backdrop" :class="{ visible: !sidebarCollapsed }" @click="sidebarCollapsed = true"></div>
   <aside id="sidebar" :class="{ collapsed: sidebarCollapsed }">
     <div id="sidebar-header">
@@ -565,7 +568,9 @@ window.editorPlugin = (function () {
         if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
         return r.text();
       });
+      let usedDefine = false;
       const customDefine = function (factory) {
+        usedDefine = true;
         const main = factory(null, {}, {});
         if (typeof main !== 'function') return;
         const imports = {};
@@ -574,10 +579,11 @@ window.editorPlugin = (function () {
           if (err) { console.error('[plugin load error]', err); return; }
           if (!provided) return;
           Object.values(provided).forEach(p => { if (p && typeof p.emit === 'function') p.emit('load'); });
-          console.log('[plugin] loaded:', url, '→', Object.keys(provided));
+          console.log('[plugin] loaded (define):', url, '→', Object.keys(provided));
         });
       };
       new Function('define', code)(customDefine);
+      if (!usedDefine) console.log('[plugin] loaded:', url);
     } catch (e) {
       console.error('[plugin] failed to load:', url, e);
     }
@@ -739,6 +745,7 @@ window.editorPlugin = (function () {
         ctxMenu: { visible: false, x: 0, y: 0, items: [] },
         imagePreviewSrc: '',
         editorReady: false,
+        appReady: false,
         uploads: [],
         dlg: { visible: false, title: '', inputMode: false, inputValue: '', placeholder: '', danger: false, confirmText: '確定', cancelText: '取消', _resolve: null },
       };
@@ -1364,6 +1371,7 @@ window.editorPlugin = (function () {
             if (isImagePath(path)) {
               tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
               this.tabsList.push({ path, dirty: false, isImage: true });
+              window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
             } else {
               const text = await this.api('/api/file?path=' + encodeURIComponent(path));
               const model = monaco.editor.createModel(text, detectLang(path));
@@ -1371,9 +1379,11 @@ window.editorPlugin = (function () {
               let isDirty = saved !== undefined && saved !== text;
               tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
               this.tabsList.push({ path, dirty: false, isImage: false });
+              window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
               if (isDirty) {
                 const storedHash = (session.baseHashes || {})[path];
                 if (storedHash !== undefined && storedHash !== simpleHash(text)) {
+                  console.warn('[session] hash mismatch:', path, '| stored:', storedHash, '| current:', simpleHash(text));
                   const fname = path.split('/').pop();
                   const keep = await this.dlgConfirm(
                     `「${fname}」在您離開後已被他人修改。\n是否仍要載入您的未儲存草稿？（儲存時將覆蓋他人的修改）`,
@@ -1546,14 +1556,16 @@ window.editorPlugin = (function () {
 
         this.editorReady = true;
         await this.loadTree();
-        await this.restoreSession();
 
         // Auto-load plugins listed in plugins.json (absent file = no plugins)
+        // Must run before restoreSession so plugin handlers are registered
+        // before open events are emitted for restored tabs.
         try {
           const res = await fetch('/static/plugins/plugins.json');
           if (res.ok) {
             const list = await res.json();
             if (Array.isArray(list)) {
+              console.log('[plugin] plugins.json:', list);
               for (const url of list) {
                 await window.editorPlugin.loadPlugin(url);
               }
@@ -1562,6 +1574,9 @@ window.editorPlugin = (function () {
         } catch (e) {
           console.warn('[plugin] plugins.json load error:', e);
         }
+
+        await this.restoreSession();
+        this.appReady = true;
       });
     },
   }).mount('#app');
