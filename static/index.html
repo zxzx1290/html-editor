@@ -488,7 +488,7 @@
         :placeholder="dlg.placeholder" ref="dlgInput"
         @keydown.enter="dlgOk" @keydown.esc="dlgCancel" />
       <div class="modal-actions">
-        <button class="btn" @click="dlgCancel">{{ dlg.cancelText }}</button>
+        <button v-if="dlg.cancelText" class="btn" @click="dlgCancel">{{ dlg.cancelText }}</button>
         <button class="btn" :class="dlg.danger ? 'danger' : 'primary'" @click="dlgOk">{{ dlg.confirmText }}</button>
       </div>
     </div>
@@ -509,6 +509,84 @@
 
 <script src="/static/vue.global.js"></script>
 <script src="/static/monaco/vs/loader.js"></script>
+
+<script>
+// ── Plugin System ─────────────────────────────────────────────────────────────
+window.editorPlugin = (function () {
+  class EventEmitter {
+    constructor() { this._l = {}; }
+    on(ev, fn)  { (this._l[ev] = this._l[ev] || []).push(fn); return this; }
+    off(ev, fn) { if (this._l[ev]) this._l[ev] = this._l[ev].filter(f => f !== fn); return this; }
+    emit(ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { console.error('[plugin emit]', ev, e); } }); }
+  }
+
+  function Plugin(author, consumes) { this._l = {}; }
+  Plugin.prototype.on  = function (ev, fn) { (this._l[ev] = this._l[ev] || []).push(fn); };
+  Plugin.prototype.emit = function (ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { console.error('[plugin]', e); } }); };
+  Plugin.prototype.freezePublicAPI = function () {};
+
+  const saveService = new EventEmitter();
+
+  const tabManagerSvc = new EventEmitter();
+  tabManagerSvc.getTabs = function () {
+    const app = window._editorApp;
+    return app ? app.tabsList.map(t => ({ path: t.path, document: { title: t.path.split('/').pop(), value: '' } })) : [];
+  };
+
+  const bubbleSvc = {
+    popup(msg) {
+      const app = window._editorApp;
+      if (app) app.showToast(String(msg));
+      else console.log('[bubble]', msg);
+    },
+  };
+
+  const dialogAlertSvc = {
+    show(title, body, detail, cb) {
+      const msg = [title, body, detail].filter(Boolean).join('\n');
+      const app = window._editorApp;
+      if (app) app.dlgAlert(msg).then(() => { if (cb) cb(); });
+      else { alert(msg); if (cb) cb(); }
+    },
+  };
+
+  const services = {
+    Plugin,
+    save: saveService,
+    'dialog.alert': dialogAlertSvc,
+    tabManager: tabManagerSvc,
+    'notification.bubble': bubbleSvc,
+    http: {},
+  };
+
+  async function loadPlugin(url) {
+    try {
+      const code = await fetch(url).then(r => {
+        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+        return r.text();
+      });
+      const customDefine = function (factory) {
+        const main = factory(null, {}, {});
+        if (typeof main !== 'function') return;
+        const imports = {};
+        (main.consumes || []).forEach(k => { if (services[k] !== undefined) imports[k] = services[k]; });
+        main({}, imports, function (err, provided) {
+          if (err) { console.error('[plugin load error]', err); return; }
+          if (!provided) return;
+          Object.values(provided).forEach(p => { if (p && typeof p.emit === 'function') p.emit('load'); });
+          console.log('[plugin] loaded:', url, '→', Object.keys(provided));
+        });
+      };
+      new Function('define', code)(customDefine);
+    } catch (e) {
+      console.error('[plugin] failed to load:', url, e);
+    }
+  }
+
+  return { services, saveService, tabManagerSvc, bubbleSvc, dialogAlertSvc, loadPlugin };
+})();
+</script>
+
 <script>
 (function () {
   const IMG_EXT = ['png','jpg','jpeg','gif','webp','ico'];
@@ -708,6 +786,9 @@
       dlgConfirm(title, opts) {
         return this._dlgShow({ title, ...(opts || {}) });
       },
+      dlgAlert(title) {
+        return this._dlgShow({ title, cancelText: '' });
+      },
       dlgPrompt(title, defaultValue, placeholder) {
         return this._dlgShow({ title, inputMode: true, defaultValue: defaultValue || '', placeholder: placeholder || '' });
       },
@@ -815,12 +896,14 @@
         if (isImagePath(path)) {
           tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
           this.tabsList.push({ path, dirty: false, isImage: true });
+          window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
         } else {
           try {
             const text = await this.api('/api/file?path=' + encodeURIComponent(path));
             const model = monaco.editor.createModel(text, detectLang(path));
             tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
             this.tabsList.push({ path, dirty: false, isImage: false });
+            window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
           } catch (e) {
             this.showToast('開啟失敗: ' + e.message, true);
             return;
@@ -864,6 +947,7 @@
         const tab = this.tabsList[idx];
         if (tab.dirty && !await this.dlgConfirm('「' + path.split('/').pop() + '」有未儲存的變更，確定要關閉嗎？')) return;
 
+        window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path } });
         const data = tabsData.get(path);
         if (data && data.model) data.model.dispose();
         tabsData.delete(path);
@@ -890,6 +974,7 @@
         const data = tabsData.get(this.activeTabPath);
         if (!data || !monacoEditor) return;
         const content = monacoEditor.getValue();
+        window.editorPlugin.saveService.emit('beforeSave', { value: content, path: this.activeTabPath });
         try {
           await this.api('/api/file?path=' + encodeURIComponent(this.activeTabPath), {
             method: 'PUT',
@@ -902,6 +987,11 @@
           this.clearDirtyEntry(this.activeTabPath);
           this.setStatus('已儲存：' + this.activeTabPath);
           this.showToast('儲存成功');
+          window.editorPlugin.saveService.emit('afterSave', {
+            path: this.activeTabPath,
+            document: { title: this.activeTabPath.split('/').pop() },
+            value: content,
+          });
         } catch (e) {
           this.showToast('儲存失敗: ' + e.message, true);
         }
@@ -1361,6 +1451,8 @@
     },
 
     mounted() {
+      window._editorApp = this;
+
       if (window.matchMedia('(max-width: 700px)').matches) {
         this.sidebarCollapsed = true;
       }
@@ -1455,6 +1547,21 @@
         this.editorReady = true;
         await this.loadTree();
         await this.restoreSession();
+
+        // Auto-load plugins listed in plugins.json (absent file = no plugins)
+        try {
+          const res = await fetch('/static/plugins/plugins.json');
+          if (res.ok) {
+            const list = await res.json();
+            if (Array.isArray(list)) {
+              for (const url of list) {
+                await window.editorPlugin.loadPlugin(url);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[plugin] plugins.json load error:', e);
+        }
       });
     },
   }).mount('#app');
