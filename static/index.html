@@ -933,9 +933,25 @@
         try {
           await this.api('/api/mkdir?path=' + encodeURIComponent(path), { method: 'POST' });
           await this.refreshDir(parentDir || '');
+          await this.expandToDir(path);
+          this.$nextTick(() => {
+            const el = document.querySelector(`[data-path="${CSS.escape(path)}"]`);
+            if (el) el.scrollIntoView({ block: 'nearest' });
+          });
           this.showToast('已建立目錄：' + path);
         } catch (e) {
           this.showToast('建立失敗：' + e.message, true);
+        }
+      },
+
+      async expandToDir(dirPath) {
+        const parts = dirPath.split('/');
+        let currentPath = '';
+        for (const part of parts) {
+          currentPath = currentPath ? currentPath + '/' + part : part;
+          const item = this.treeItems.find(t => t.path === currentPath && t.isDir);
+          if (!item) break;
+          if (!item.expanded) await this.expandDir(item);
         }
       },
 

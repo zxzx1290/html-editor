@@ -169,7 +169,7 @@ func (s *server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 		if entries[i].IsDir != entries[j].IsDir {
 			return entries[i].IsDir
 		}
-		return entries[i].Name < entries[j].Name
+		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"files": entries})
 }
