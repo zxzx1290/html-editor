@@ -530,9 +530,10 @@
   // meta  store: key='tabs' → { tabs:[...paths], activeTab:'...' }
   // dirty store: key=filePath → file content (string)
   const IDB_NAME    = 'html-editor-db';
-  const IDB_VER     = 1;
+  const IDB_VER     = 2;
   const STORE_META  = 'meta';
   const STORE_DIRTY = 'dirty';
+  const STORE_HASH  = 'basehash';
 
   function openDB() {
     return new Promise((resolve, reject) => {
@@ -541,6 +542,7 @@
         const db = e.target.result;
         if (!db.objectStoreNames.contains(STORE_META))  db.createObjectStore(STORE_META);
         if (!db.objectStoreNames.contains(STORE_DIRTY)) db.createObjectStore(STORE_DIRTY);
+        if (!db.objectStoreNames.contains(STORE_HASH))  db.createObjectStore(STORE_HASH);
       };
       req.onsuccess = e => resolve(e.target.result);
       req.onerror   = e => reject(e.target.error);
@@ -567,13 +569,20 @@
     }));
   }
 
+  function simpleHash(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+    return h.toString(36);
+  }
+
   async function loadSession() {
     try {
-      const [meta, dirtyContents] = await Promise.all([
+      const [meta, dirtyContents, baseHashes] = await Promise.all([
         idbOp(STORE_META, 'readonly', s => s.get('tabs')),
         idbAllEntries(STORE_DIRTY),
+        idbAllEntries(STORE_HASH),
       ]);
-      return meta ? { ...meta, dirtyContents } : null;
+      return meta ? { ...meta, dirtyContents, baseHashes } : null;
     } catch { return null; }
   }
 
@@ -589,6 +598,14 @@
 
   function deleteDirtyFile(path) {
     idbOp(STORE_DIRTY, 'readwrite', s => s.delete(path)).catch(() => {});
+  }
+
+  function saveBaseHash(path, hash) {
+    idbOp(STORE_HASH, 'readwrite', s => s.put(hash, path)).catch(() => {});
+  }
+
+  function deleteBaseHash(path) {
+    idbOp(STORE_HASH, 'readwrite', s => s.delete(path)).catch(() => {});
   }
 
   let monacoEditor = null;
@@ -802,7 +819,7 @@
           try {
             const text = await this.api('/api/file?path=' + encodeURIComponent(path));
             const model = monaco.editor.createModel(text, detectLang(path));
-            tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false });
+            tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
             this.tabsList.push({ path, dirty: false, isImage: false });
           } catch (e) {
             this.showToast('開啟失敗: ' + e.message, true);
@@ -1232,6 +1249,7 @@
           delete this._dirtyTimers[path];
         }
         deleteDirtyFile(path);
+        deleteBaseHash(path);
       },
 
       scheduleDirtySave(path) {
@@ -1239,7 +1257,10 @@
         clearTimeout(this._dirtyTimers[path]);
         this._dirtyTimers[path] = setTimeout(() => {
           const d = tabsData.get(path);
-          if (d && d.model) saveDirtyFile(path, d.model.getValue());
+          if (d && d.model) {
+            saveDirtyFile(path, d.model.getValue());
+            if (d.baseHash !== undefined) saveBaseHash(path, d.baseHash);
+          }
         }, 1500);
       },
 
@@ -1257,10 +1278,23 @@
               const text = await this.api('/api/file?path=' + encodeURIComponent(path));
               const model = monaco.editor.createModel(text, detectLang(path));
               const saved = dirtyContents[path];
-              const isDirty = saved !== undefined && saved !== text;
-              tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false });
-              this.tabsList.push({ path, dirty: isDirty, isImage: false });
-              if (isDirty) model.setValue(saved);
+              let isDirty = saved !== undefined && saved !== text;
+              tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
+              this.tabsList.push({ path, dirty: false, isImage: false });
+              if (isDirty) {
+                const storedHash = (session.baseHashes || {})[path];
+                if (storedHash !== undefined && storedHash !== simpleHash(text)) {
+                  const fname = path.split('/').pop();
+                  const keep = await this.dlgConfirm(
+                    `「${fname}」在您離開後已被他人修改。\n是否仍要載入您的未儲存草稿？（儲存時將覆蓋他人的修改）`,
+                    { confirmText: '載入草稿', cancelText: '使用伺服器版本', danger: true }
+                  );
+                  if (!keep) { isDirty = false; this.clearDirtyEntry(path); }
+                }
+                const tab = this.tabsList[this.tabsList.length - 1];
+                tab.dirty = isDirty;
+                if (isDirty) model.setValue(saved);
+              }
             }
           } catch { /* 檔案已不存在，略過 */ }
         }
