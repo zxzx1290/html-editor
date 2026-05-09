@@ -347,14 +347,40 @@
   .upload-bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
   .upload-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.15s; }
   .upload-fill.error { background: var(--danger); }
-  #app-loading { position: fixed; inset: 0; background: var(--bg); z-index: 9999; display: flex; align-items: center; justify-content: center; }
-  #app-loading span { color: var(--fg-dim); font-size: 13px; }
+  #app-loading { position: fixed; inset: 0; background: var(--bg); z-index: 9999; display: flex; align-items: center; justify-content: center; color: var(--fg) }
 </style>
 </head>
 <body>
 
 <div id="app" v-cloak>
-  <div v-if="!appReady" id="app-loading"><span>載入中…</span></div>
+  <div v-if="!appReady" id="app-loading">
+<svg
+    width="40"
+    height="40"
+    viewBox="0 0 50 50"
+    xmlns="http://www.w3.org/2000/svg"
+>
+    <circle
+        cx="25"
+        cy="25"
+        r="20"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="5"
+        stroke-linecap="round"
+        stroke-dasharray="90 150"
+    >
+        <animateTransform
+            attributeName="transform"
+            type="rotate"
+            from="0 25 25"
+            to="360 25 25"
+            dur="1s"
+            repeatCount="indefinite"
+        />
+    </circle>
+</svg>
+  </div>
   <div id="sidebar-backdrop" :class="{ visible: !sidebarCollapsed }" @click="sidebarCollapsed = true"></div>
   <aside id="sidebar" :class="{ collapsed: sidebarCollapsed }">
     <div id="sidebar-header">
