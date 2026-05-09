@@ -1,0 +1,8 @@
+workspace/
+node_modules/
+static/monaco/
+static/themes/
+html-editor
+html-editor.exe
+package-lock.json
+/.claude

@@ -1,0 +1,1238 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HTML Editor</title>
+<style>
+  :root {
+    --bg: #1e1e1e;
+    --bg-side: #252526;
+    --bg-bar: #333333;
+    --bg-hover: #2a2d2e;
+    --bg-active: #094771;
+    --fg: #cccccc;
+    --fg-dim: #858585;
+    --border: #333333;
+    --accent: #007acc;
+    --danger: #c84040;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", sans-serif;
+    font-size: 13px;
+    color: var(--fg);
+    background: var(--bg);
+    overflow: hidden;
+  }
+  [v-cloak] { display: none; }
+  #app { display: flex; height: 100vh; width: 100vw; }
+  #sidebar {
+    width: 250px;
+    flex: 0 0 250px;
+    background: var(--bg-side);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    transition: margin-left 0.2s ease;
+  }
+  #sidebar.collapsed { margin-left: -250px; }
+  #sidebar-header {
+    padding: 8px 10px;
+    background: var(--bg-bar);
+    font-weight: bold;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-dim);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  #file-tree {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .tree-node {
+    display: flex;
+    align-items: center;
+    padding: 3px 8px;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tree-node:hover { background: var(--bg-hover); }
+  .tree-node.active { background: var(--bg-active); color: #fff; }
+  .tree-node .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tree-icon { display: inline-block; width: 16px; text-align: center; margin-right: 4px; opacity: 0.7; }
+  .tree-arrow { display: inline-block; width: 14px; font-size: 9px; text-align: center; color: var(--fg-dim); flex-shrink: 0; }
+  .tree-node.drop-over {
+    background: rgba(0, 122, 204, 0.45) !important;
+    outline: 1px dashed var(--accent);
+    outline-offset: -2px;
+  }
+  #file-tree.drag-active {
+    background: rgba(0, 122, 204, 0.08);
+    outline: 2px dashed var(--accent);
+    outline-offset: -6px;
+  }
+  #context-menu {
+    position: fixed;
+    z-index: 1000;
+    background: #252526;
+    border: 1px solid #454545;
+    border-radius: 4px;
+    padding: 4px 0;
+    min-width: 170px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    font-size: 12px;
+    user-select: none;
+  }
+  #context-menu .item {
+    padding: 5px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    color: var(--fg);
+  }
+  #context-menu .item:hover { background: var(--bg-active); color: #fff; }
+  #context-menu .item.danger { color: #f48771; }
+  #context-menu .item.danger:hover { background: var(--danger); color: #fff; }
+  #context-menu .sep { height: 1px; background: #454545; margin: 4px 0; }
+  button.btn {
+    background: var(--bg-bar);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  button.btn:hover { background: #3c3c3c; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.btn.primary:hover { background: #1180d4; }
+  button.btn:disabled { opacity: 0.5; cursor: default; }
+  #settings-wrap { position: relative; }
+  #settings-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: #2d2d2d;
+    border: 1px solid #454545;
+    border-radius: 4px;
+    padding: 6px 0;
+    min-width: 240px;
+    z-index: 500;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  }
+  .settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 14px;
+    gap: 12px;
+  }
+  .settings-sep { height: 1px; background: #454545; margin: 4px 0; }
+  .settings-label { font-size: 12px; color: var(--fg-dim); flex-shrink: 0; }
+  .settings-select, .settings-number {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 3px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    cursor: pointer;
+    height: 26px;
+  }
+  .settings-select { flex: 1; min-width: 0; }
+  .settings-number { width: 52px; text-align: center; }
+  .toggle-switch { position: relative; display: inline-block; width: 34px; height: 18px; flex-shrink: 0; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; inset: 0; background: #555; border-radius: 18px; cursor: pointer; transition: .2s; }
+  .toggle-switch input:checked + .toggle-slider { background: var(--accent); }
+  .toggle-slider::before { content: ''; position: absolute; height: 12px; width: 12px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+  .toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); }
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #toolbar {
+    padding: 6px 12px;
+    background: var(--bg-bar);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 38px;
+    flex-shrink: 0;
+  }
+  #toggle-sidebar {
+    background: transparent;
+    border: none;
+    color: var(--fg);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+  }
+  #current-file { flex: 1; font-weight: 500; color: var(--fg); }
+  #tab-bar {
+    display: flex;
+    background: var(--bg-side);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-shrink: 0;
+    scrollbar-width: thin;
+    scrollbar-color: #555 transparent;
+  }
+  #tab-bar::-webkit-scrollbar { height: 3px; }
+  #tab-bar::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
+  .tab {
+    display: flex;
+    align-items: center;
+    padding: 0 6px 0 12px;
+    height: 34px;
+    border-right: 1px solid var(--border);
+    cursor: pointer;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--fg-dim);
+    background: var(--bg-side);
+    user-select: none;
+    gap: 5px;
+    max-width: 200px;
+    min-width: 80px;
+    flex-shrink: 0;
+  }
+  .tab:hover { background: var(--bg-hover); color: var(--fg); }
+  .tab.active {
+    background: var(--bg);
+    color: var(--fg);
+    border-top: 2px solid var(--accent);
+    padding-top: 2px;
+  }
+  .tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .tab-dirty { color: #e2c08d; font-size: 10px; flex-shrink: 0; line-height: 1; }
+  .tab-close {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: transparent;
+    cursor: pointer;
+    font-size: 15px;
+    padding: 0 2px;
+    line-height: 1;
+    border-radius: 3px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .tab:hover .tab-close,
+  .tab.active .tab-close { color: var(--fg-dim); }
+  .tab-close:hover { background: rgba(255,255,255,0.15); color: var(--fg) !important; }
+  #editor-host { flex: 1; position: relative; min-height: 0; }
+  #editor { position: absolute; inset: 0; }
+  #image-preview {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    overflow: auto;
+  }
+  #image-preview img { max-width: 100%; max-height: 100%; }
+  #empty-hint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-dim);
+    font-size: 14px;
+  }
+  #status {
+    padding: 4px 12px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    min-height: 22px;
+    flex-shrink: 0;
+  }
+  #toast {
+    position: fixed;
+    bottom: 30px;
+    right: 16px;
+    background: #333;
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    z-index: 9999;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    max-width: 360px;
+  }
+  #toast.error { background: var(--danger); }
+  @media (max-width: 700px) {
+    #sidebar { position: absolute; z-index: 10; height: 100%; }
+    #sidebar.collapsed { margin-left: -250px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app" v-cloak>
+  <aside id="sidebar" :class="{ collapsed: sidebarCollapsed }">
+    <div id="sidebar-header">
+      <span>WORKSPACE</span>
+      <button class="btn" @click="loadTree" title="重新整理" style="padding:2px 6px;">⟳</button>
+    </div>
+    <div
+      id="file-tree"
+      :class="{ 'drag-active': treeDragActive }"
+      title="拖曳檔案到此上傳，或右鍵開啟選單"
+      @contextmenu.prevent="onTreeContextMenu($event, null)"
+      @dragenter="onDragEnter"
+      @dragover="onDragOver"
+      @dragleave="onDragLeave"
+      @drop="onDrop"
+    >
+      <div v-if="treeItems.length === 0 && editorReady" style="padding:10px;color:var(--fg-dim);font-style:italic;">
+        (空，拖曳檔案到此或右鍵建立)
+      </div>
+      <div
+        v-for="item in treeItems"
+        :key="item.path"
+        class="tree-node"
+        :class="{ active: item.path === activeTabPath, 'drop-over': item.path === dropOverDir }"
+        :style="{ paddingLeft: (8 + item.depth * 14) + 'px' }"
+        :data-path="item.path"
+        :data-is-dir="item.isDir ? '1' : '0'"
+        @click="onNodeClick(item)"
+        @contextmenu.prevent.stop="onTreeContextMenu($event, item)"
+      >
+        <span class="tree-arrow">{{ item.isDir ? (item.expanded ? '▼' : '▶') : '' }}</span>
+        <span class="tree-icon">{{ item.isDir ? (item.expanded ? '📂' : '📁') : (isImagePath(item.path) ? '🖼' : '📄') }}</span>
+        <span class="name" :title="item.path">{{ item.name }}</span>
+      </div>
+    </div>
+    <input type="file" ref="uploadInput" multiple style="display:none" @change="onUploadChange" />
+  </aside>
+
+  <div id="main">
+    <div id="toolbar">
+      <button id="toggle-sidebar" @click="sidebarCollapsed = !sidebarCollapsed" title="切換側邊欄">☰</button>
+      <span id="current-file">{{ tabsList.length === 0 ? '尚未開啟檔案' : '' }}</span>
+      <div id="settings-wrap" @click.stop>
+        <button class="btn" @click="settingsOpen = !settingsOpen">⚙ 設定</button>
+        <div id="settings-panel" v-show="settingsOpen">
+          <div class="settings-row">
+            <span class="settings-label">主題</span>
+            <select v-model="settings.theme" class="settings-select" @change="onThemeChange">
+              <optgroup label="內建">
+                <option value="vs-dark">Dark</option>
+                <option value="vs">Light</option>
+                <option value="hc-black">HC Dark</option>
+                <option value="hc-light">HC Light</option>
+              </optgroup>
+              <optgroup label="擴充">
+                <option value="Monokai">Monokai</option>
+                <option value="Dracula">Dracula</option>
+                <option value="GitHub Dark">GitHub Dark</option>
+                <option value="GitHub Light">GitHub Light</option>
+                <option value="Night Owl">Night Owl</option>
+                <option value="Nord">Nord</option>
+                <option value="Cobalt2">Cobalt2</option>
+                <option value="Solarized-dark">Solarized Dark</option>
+                <option value="Solarized-light">Solarized Light</option>
+                <option value="Tomorrow-Night">Tomorrow Night</option>
+                <option value="Tomorrow-Night-Eighties">Tomorrow Night Eighties</option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="settings-sep"></div>
+          <div class="settings-row">
+            <span class="settings-label">字體</span>
+            <select v-model="settings.fontFamily" class="settings-select" @change="onFontFamilyChange">
+              <option value="">預設</option>
+              <option value="Consolas">Consolas</option>
+              <option value="'Cascadia Code'">Cascadia Code</option>
+              <option value="'Fira Code'">Fira Code</option>
+              <option value="'JetBrains Mono'">JetBrains Mono</option>
+              <option value="'Source Code Pro'">Source Code Pro</option>
+              <option value="Menlo">Menlo</option>
+              <option value="'Courier New'">Courier New</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">字體大小</span>
+            <input type="number" v-model.number="settings.fontSize" class="settings-number" min="10" max="32" @change="onFontSizeChange" />
+          </div>
+          <div class="settings-sep"></div>
+          <div class="settings-row">
+            <span class="settings-label">Minimap</span>
+            <label class="toggle-switch">
+              <input type="checkbox" v-model="settings.minimap" @change="onMinimapChange" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <button class="btn" :disabled="!activeTabPath" @click="activeTabPath && downloadFile(activeTabPath)">下載</button>
+      <button class="btn primary" :disabled="!activeTabPath || activeTabIsImage" @click="saveCurrent">儲存 (Ctrl+S)</button>
+    </div>
+
+    <div id="tab-bar" v-show="tabsList.length > 0">
+      <div
+        v-for="tab in tabsList"
+        :key="tab.path"
+        class="tab"
+        :class="{ active: tab.path === activeTabPath }"
+        @click="activateTab(tab.path)"
+      >
+        <span class="tab-title" :title="tab.path">{{ tab.path.split('/').pop() }}</span>
+        <span v-if="tab.dirty" class="tab-dirty">●</span>
+        <button class="tab-close" @click.stop="closeTab(tab.path)" title="關閉 (Ctrl+W)">×</button>
+      </div>
+    </div>
+
+    <div id="editor-host">
+      <div id="empty-hint" v-show="tabsList.length === 0">從左側選擇檔案開始編輯</div>
+      <div id="editor" ref="editorEl" v-show="activeTabPath && !activeTabIsImage"></div>
+      <div id="image-preview" v-show="activeTabIsImage">
+        <img :src="imagePreviewSrc" />
+      </div>
+    </div>
+
+    <div id="status">{{ statusMsg }}</div>
+  </div>
+
+  <div id="toast" v-show="toastVisible" :class="{ error: toastError }">{{ toastMsg }}</div>
+
+  <div
+    id="context-menu"
+    ref="contextMenuEl"
+    v-show="ctxMenu.visible"
+    :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
+  >
+    <template v-for="(item, i) in ctxMenu.items" :key="i">
+      <div v-if="item === '-'" class="sep"></div>
+      <div v-else class="item" :class="{ danger: item.danger }" @click="onCtxItemClick(item)">{{ item.label }}</div>
+    </template>
+  </div>
+</div>
+
+<script src="/static/vue.global.js"></script>
+<script src="/static/monaco/vs/loader.js"></script>
+<script>
+(function () {
+  const IMG_EXT = ['png','jpg','jpeg','gif','webp','ico'];
+  const LANG_MAP = {
+    html: 'html', htm: 'html',
+    css: 'css',
+    js: 'javascript',
+    json: 'json',
+    md: 'markdown',
+    txt: 'plaintext',
+    svg: 'xml',
+    php: 'php',
+  };
+  const SETTINGS_KEY = 'html-editor-settings';
+  // Monaco models and view states stored outside Vue reactivity
+  const tabsData = new Map(); // path → { model, originalContent, viewState, isImage }
+
+  // ── IndexedDB session persistence ─────────────────────────────────────────
+  // meta  store: key='tabs' → { tabs:[...paths], activeTab:'...' }
+  // dirty store: key=filePath → file content (string)
+  const IDB_NAME    = 'html-editor-db';
+  const IDB_VER     = 1;
+  const STORE_META  = 'meta';
+  const STORE_DIRTY = 'dirty';
+
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, IDB_VER);
+      req.onupgradeneeded = e => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(STORE_META))  db.createObjectStore(STORE_META);
+        if (!db.objectStoreNames.contains(STORE_DIRTY)) db.createObjectStore(STORE_DIRTY);
+      };
+      req.onsuccess = e => resolve(e.target.result);
+      req.onerror   = e => reject(e.target.error);
+    });
+  }
+
+  function idbOp(storeName, mode, fn) {
+    return openDB().then(db => new Promise((resolve, reject) => {
+      const req = fn(db.transaction(storeName, mode).objectStore(storeName));
+      req.onsuccess = e => resolve(e.target.result ?? null);
+      req.onerror   = e => reject(e.target.error);
+    }));
+  }
+
+  function idbAllEntries(storeName) {
+    return openDB().then(db => new Promise((resolve, reject) => {
+      const out = {};
+      const req = db.transaction(storeName, 'readonly').objectStore(storeName).openCursor();
+      req.onsuccess = e => {
+        const cur = e.target.result;
+        if (cur) { out[cur.key] = cur.value; cur.continue(); } else resolve(out);
+      };
+      req.onerror = e => reject(e.target.error);
+    }));
+  }
+
+  async function loadSession() {
+    try {
+      const [meta, dirtyContents] = await Promise.all([
+        idbOp(STORE_META, 'readonly', s => s.get('tabs')),
+        idbAllEntries(STORE_DIRTY),
+      ]);
+      return meta ? { ...meta, dirtyContents } : null;
+    } catch { return null; }
+  }
+
+  function saveMeta(tabsList, activeTabPath) {
+    idbOp(STORE_META, 'readwrite', s => s.put(
+      { tabs: tabsList.map(t => t.path), activeTab: activeTabPath }, 'tabs'
+    )).catch(() => {});
+  }
+
+  function saveDirtyFile(path, content) {
+    idbOp(STORE_DIRTY, 'readwrite', s => s.put(content, path)).catch(() => {});
+  }
+
+  function deleteDirtyFile(path) {
+    idbOp(STORE_DIRTY, 'readwrite', s => s.delete(path)).catch(() => {});
+  }
+
+  let monacoEditor = null;
+  let toastTimer = null;
+  const loadedThemes = new Set(['vs', 'vs-dark', 'hc-black', 'hc-light']);
+
+  function extOf(path) {
+    const m = /\.([^./]+)$/.exec(path);
+    return m ? m[1].toLowerCase() : '';
+  }
+
+  function isImagePath(path) {
+    return IMG_EXT.includes(extOf(path));
+  }
+
+  function detectLang(path) {
+    return LANG_MAP[extOf(path)] || 'plaintext';
+  }
+
+  function loadSettings() {
+    try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
+  }
+
+  function persistSettings(patch) {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
+  }
+
+  const { createApp } = Vue;
+
+  createApp({
+    data() {
+      const s = loadSettings();
+      return {
+        sidebarCollapsed: false,
+        treeItems: [],
+        treeDragActive: false,
+        dropOverDir: null,
+        dragCounter: 0,
+        uploadTargetDir: '',
+        tabsList: [],
+        activeTabPath: null,
+        settings: {
+          theme: s.theme || 'vs-dark',
+          fontSize: s.fontSize || 13,
+          fontFamily: s.fontFamily || '',
+          minimap: s.minimap !== false,
+        },
+        settingsOpen: false,
+        statusMsg: '',
+        toastMsg: '',
+        toastError: false,
+        toastVisible: false,
+        ctxMenu: { visible: false, x: 0, y: 0, items: [] },
+        imagePreviewSrc: '',
+        editorReady: false,
+      };
+    },
+
+    computed: {
+      activeTab() {
+        return this.tabsList.find(t => t.path === this.activeTabPath) || null;
+      },
+      activeTabIsImage() {
+        return this.activeTab ? this.activeTab.isImage : false;
+      },
+    },
+
+    methods: {
+      isImagePath,
+
+      showToast(msg, isError) {
+        this.toastMsg = msg;
+        this.toastError = !!isError;
+        this.toastVisible = true;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => { this.toastVisible = false; }, 2400);
+      },
+
+      setStatus(msg) {
+        this.statusMsg = msg || '';
+      },
+
+      async api(path, opts) {
+        opts = opts || {};
+        const res = await fetch(path, opts);
+        const ct = res.headers.get('content-type') || '';
+        if (!res.ok) {
+          let msg = res.statusText;
+          if (ct.includes('application/json')) {
+            try { msg = (await res.json()).error || msg; } catch {}
+          }
+          throw new Error(msg);
+        }
+        if (ct.includes('application/json')) return await res.json();
+        return await res.text();
+      },
+
+      // ── File tree ─────────────────────────────────────────────────────────
+
+      async fetchDir(path) {
+        const url = path ? '/api/files?path=' + encodeURIComponent(path) : '/api/files';
+        const data = await this.api(url);
+        return data.files || [];
+      },
+
+      async loadTree() {
+        try {
+          const files = await this.fetchDir('');
+          this.treeItems = files.map(f => ({
+            path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false,
+          }));
+        } catch (e) {
+          this.showToast('載入檔案列表失敗：' + e.message, true);
+        }
+      },
+
+      async expandDir(item) {
+        const idx = this.treeItems.indexOf(item);
+        if (idx < 0) return;
+        item.expanded = true;
+        try {
+          const files = await this.fetchDir(item.path);
+          const children = files.map(f => ({
+            path: f.path, name: f.name, isDir: f.isDir, depth: item.depth + 1, expanded: false,
+          }));
+          this.treeItems.splice(idx + 1, 0, ...children);
+        } catch (e) {
+          item.expanded = false;
+          this.showToast('載入目錄失敗：' + e.message, true);
+        }
+      },
+
+      collapseDir(item) {
+        item.expanded = false;
+        const idx = this.treeItems.indexOf(item);
+        if (idx < 0) return;
+        let end = idx + 1;
+        while (end < this.treeItems.length && this.treeItems[end].depth > item.depth) end++;
+        this.treeItems.splice(idx + 1, end - idx - 1);
+      },
+
+      async onNodeClick(item) {
+        if (item.isDir) {
+          if (item.expanded) this.collapseDir(item);
+          else await this.expandDir(item);
+        } else {
+          await this.openFile(item.path);
+        }
+      },
+
+      async refreshDir(dirPath) {
+        if (dirPath === '') {
+          await this.loadTree();
+        } else {
+          const item = this.treeItems.find(t => t.path === dirPath && t.isDir);
+          if (item && item.expanded) {
+            this.collapseDir(item);
+            await this.expandDir(item);
+          }
+        }
+      },
+
+      // ── Tabs ──────────────────────────────────────────────────────────────
+
+      async openFile(path) {
+        if (this.tabsList.find(t => t.path === path)) {
+          await this.activateTab(path);
+          return;
+        }
+
+        if (isImagePath(path)) {
+          tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
+          this.tabsList.push({ path, dirty: false, isImage: true });
+        } else {
+          try {
+            const text = await this.api('/api/file?path=' + encodeURIComponent(path));
+            const model = monaco.editor.createModel(text, detectLang(path));
+            tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false });
+            this.tabsList.push({ path, dirty: false, isImage: false });
+          } catch (e) {
+            this.showToast('開啟失敗: ' + e.message, true);
+            return;
+          }
+        }
+
+        await this.activateTab(path);
+        this.scheduleMetaSave();
+      },
+
+      async activateTab(path) {
+        if (this.activeTabPath === path) return;
+
+        if (this.activeTabPath) {
+          const cur = tabsData.get(this.activeTabPath);
+          if (cur && monacoEditor && !cur.isImage) cur.viewState = monacoEditor.saveViewState();
+        }
+
+        this.activeTabPath = path;
+        const data = tabsData.get(path);
+
+        if (data && data.isImage) {
+          this.imagePreviewSrc = '/api/file?path=' + encodeURIComponent(path) + '&t=' + Date.now();
+          this.setStatus('圖片預覽：' + path);
+        } else if (data && monacoEditor) {
+          monacoEditor.setModel(data.model);
+          if (data.viewState) monacoEditor.restoreViewState(data.viewState);
+          this.setStatus('已開啟：' + path);
+        }
+
+        this.scheduleMetaSave();
+        this.$nextTick(() => {
+          const el = document.querySelector('.tab.active');
+          if (el) el.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+        });
+      },
+
+      async closeTab(path) {
+        const idx = this.tabsList.findIndex(t => t.path === path);
+        if (idx < 0) return;
+        const tab = this.tabsList[idx];
+        if (tab.dirty && !confirm('「' + path.split('/').pop() + '」有未儲存的變更，確定要關閉嗎？')) return;
+
+        const data = tabsData.get(path);
+        if (data && data.model) data.model.dispose();
+        tabsData.delete(path);
+        this.tabsList.splice(idx, 1);
+        this.clearDirtyEntry(path);
+
+        if (this.activeTabPath === path) {
+          if (this.tabsList.length > 0) {
+            this.activeTabPath = null;
+            await this.activateTab(this.tabsList[Math.min(idx, this.tabsList.length - 1)].path);
+          } else {
+            this.activeTabPath = null;
+            if (monacoEditor) monacoEditor.setModel(null);
+            this.setStatus('');
+            this.scheduleMetaSave();
+          }
+        }
+      },
+
+      // ── File operations ───────────────────────────────────────────────────
+
+      async saveCurrent() {
+        if (!this.activeTabPath || this.activeTabIsImage) return;
+        const data = tabsData.get(this.activeTabPath);
+        if (!data || !monacoEditor) return;
+        const content = monacoEditor.getValue();
+        try {
+          await this.api('/api/file?path=' + encodeURIComponent(this.activeTabPath), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            body: content,
+          });
+          data.originalContent = content;
+          const tab = this.tabsList.find(t => t.path === this.activeTabPath);
+          if (tab) tab.dirty = false;
+          this.clearDirtyEntry(this.activeTabPath);
+          this.setStatus('已儲存：' + this.activeTabPath);
+          this.showToast('儲存成功');
+        } catch (e) {
+          this.showToast('儲存失敗: ' + e.message, true);
+        }
+      },
+
+      downloadFile(path) {
+        const a = document.createElement('a');
+        a.href = '/api/download?path=' + encodeURIComponent(path);
+        a.download = '';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      },
+
+      async deleteFile(path, isDir) {
+        if (!confirm('確定要刪除「' + path + '」嗎？' + (isDir ? '（會刪除目錄及內容）' : ''))) return;
+        if (!confirm('再次確認：此動作無法復原。')) return;
+        try {
+          await this.api('/api/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
+
+          const toClose = this.tabsList
+            .filter(t => t.path === path || (isDir && t.path.startsWith(path + '/')))
+            .map(t => t.path);
+
+          let needFallback = false;
+          for (const p of toClose) {
+            const d = tabsData.get(p);
+            if (d && d.model) d.model.dispose();
+            tabsData.delete(p);
+            const i = this.tabsList.findIndex(t => t.path === p);
+            if (i >= 0) this.tabsList.splice(i, 1);
+            if (this.activeTabPath === p) needFallback = true;
+            this.clearDirtyEntry(p);
+          }
+
+          if (needFallback) {
+            if (this.tabsList.length > 0) {
+              this.activeTabPath = null;
+              await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
+            } else {
+              this.activeTabPath = null;
+              if (monacoEditor) monacoEditor.setModel(null);
+              this.setStatus('');
+            }
+          }
+
+          const item = this.treeItems.find(t => t.path === path);
+          if (item) {
+            if (item.isDir && item.expanded) this.collapseDir(item);
+            const i = this.treeItems.indexOf(item);
+            if (i >= 0) this.treeItems.splice(i, 1);
+          }
+          this.showToast('已刪除');
+        } catch (e) {
+          this.showToast('刪除失敗: ' + e.message, true);
+        }
+      },
+
+      joinPath(parent, name) {
+        if (!parent) return name;
+        return parent.replace(/\/+$/, '') + '/' + name;
+      },
+
+      async uploadFile(file, targetDir) {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('path', targetDir || '');
+        try {
+          const res = await fetch('/api/upload', { method: 'POST', body: fd });
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            throw new Error(d.error || res.statusText);
+          }
+          this.showToast('已上傳：' + file.name);
+        } catch (e) {
+          this.showToast('上傳失敗 ' + file.name + '：' + e.message, true);
+        }
+      },
+
+      async uploadFiles(files, targetDir) {
+        for (const f of files) await this.uploadFile(f, targetDir);
+        await this.refreshDir(targetDir || '');
+      },
+
+      triggerUpload(targetDir) {
+        this.uploadTargetDir = targetDir || '';
+        this.$refs.uploadInput.value = '';
+        this.$refs.uploadInput.click();
+      },
+
+      async onUploadChange(e) {
+        const files = Array.from(e.target.files || []);
+        e.target.value = '';
+        if (files.length) await this.uploadFiles(files, this.uploadTargetDir);
+      },
+
+      async renameItem(item) {
+        const newName = prompt('重新命名：', item.name);
+        if (!newName || newName === item.name) return;
+        const lastSlash = item.path.lastIndexOf('/');
+        const parentDir = lastSlash >= 0 ? item.path.slice(0, lastSlash) : '';
+        const newPath = parentDir ? parentDir + '/' + newName : newName;
+        try {
+          await this.api('/api/rename?from=' + encodeURIComponent(item.path) + '&to=' + encodeURIComponent(newPath), { method: 'POST' });
+          if (!item.isDir) {
+            const tab = this.tabsList.find(t => t.path === item.path);
+            if (tab) {
+              const data = tabsData.get(item.path);
+              tabsData.delete(item.path);
+              tabsData.set(newPath, data);
+              if (data && data.model) monaco.editor.setModelLanguage(data.model, detectLang(newPath));
+              tab.path = newPath;
+              if (this.activeTabPath === item.path) this.activeTabPath = newPath;
+            }
+          } else {
+            const prefix = item.path + '/';
+            let needFallback = false;
+            for (let i = this.tabsList.length - 1; i >= 0; i--) {
+              const p = this.tabsList[i].path;
+              if (!p.startsWith(prefix)) continue;
+              const d = tabsData.get(p);
+              if (d && d.model) d.model.dispose();
+              tabsData.delete(p);
+              this.tabsList.splice(i, 1);
+              if (this.activeTabPath === p) needFallback = true;
+            }
+            if (needFallback) {
+              this.activeTabPath = null;
+              if (monacoEditor) monacoEditor.setModel(null);
+              this.setStatus('');
+              if (this.tabsList.length > 0) await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
+            }
+          }
+          await this.refreshDir(parentDir);
+          this.showToast('已重新命名為：' + newName);
+        } catch (e) {
+          this.showToast('重新命名失敗：' + e.message, true);
+        }
+      },
+
+      async forceRefreshDir(dirPath) {
+        if (!dirPath) {
+          await this.loadTree();
+          return;
+        }
+        const item = this.treeItems.find(t => t.path === dirPath && t.isDir);
+        if (!item) return;
+        if (item.expanded) this.collapseDir(item);
+        await this.expandDir(item);
+      },
+
+      async mkdir(parentDir) {
+        const name = prompt('輸入目錄名稱（可包含 / 建立巢狀）：');
+        if (!name) return;
+        const path = this.joinPath(parentDir || '', name);
+        try {
+          await this.api('/api/mkdir?path=' + encodeURIComponent(path), { method: 'POST' });
+          await this.refreshDir(parentDir || '');
+          this.showToast('已建立目錄：' + path);
+        } catch (e) {
+          this.showToast('建立失敗：' + e.message, true);
+        }
+      },
+
+      async newFile(parentDir) {
+        const name = prompt('輸入新檔名（包含副檔名，例如 page.html）：');
+        if (!name) return;
+        const path = this.joinPath(parentDir || '', name);
+        try {
+          await this.api('/api/file?path=' + encodeURIComponent(path), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            body: '',
+          });
+          await this.refreshDir(parentDir || '');
+          await this.openFile(path);
+        } catch (e) {
+          this.showToast('建立失敗：' + e.message, true);
+        }
+      },
+
+      // ── Context menu ──────────────────────────────────────────────────────
+
+      onTreeContextMenu(e, item) {
+        if (!item) {
+          this.showCtxMenu(e.clientX, e.clientY, [
+            { label: '新增檔案', action: () => this.newFile('') },
+            { label: '新增目錄', action: () => this.mkdir('') },
+            { label: '上傳檔案…', action: () => this.triggerUpload('') },
+            '-',
+            { label: '重新整理', action: () => this.loadTree() },
+          ]);
+        } else if (item.isDir) {
+          const path = item.path;
+          this.showCtxMenu(e.clientX, e.clientY, [
+            { label: '在此新增檔案', action: () => this.newFile(path) },
+            { label: '在此新增目錄', action: () => this.mkdir(path) },
+            { label: '上傳到此處…', action: () => this.triggerUpload(path) },
+            '-',
+            { label: '重新命名', action: () => this.renameItem(item) },
+            { label: '重新整理', action: () => this.forceRefreshDir(path) },
+            '-',
+            { label: '刪除目錄', danger: true, action: () => this.deleteFile(path, true) },
+          ]);
+        } else {
+          const path = item.path;
+          this.showCtxMenu(e.clientX, e.clientY, [
+            { label: '開啟', action: () => this.openFile(path) },
+            { label: '下載', action: () => this.downloadFile(path) },
+            { label: '重新命名', action: () => this.renameItem(item) },
+            '-',
+            { label: '刪除', danger: true, action: () => this.deleteFile(path, false) },
+          ]);
+        }
+      },
+
+      showCtxMenu(x, y, items) {
+        this.ctxMenu = { visible: true, x, y, items };
+        this.$nextTick(() => {
+          const el = this.$refs.contextMenuEl;
+          if (!el) return;
+          const r = el.getBoundingClientRect();
+          if (r.right > window.innerWidth) this.ctxMenu.x = Math.max(0, window.innerWidth - r.width - 4);
+          if (r.bottom > window.innerHeight) this.ctxMenu.y = Math.max(0, window.innerHeight - r.height - 4);
+        });
+      },
+
+      hideCtxMenu() {
+        this.ctxMenu.visible = false;
+      },
+
+      onCtxItemClick(item) {
+        this.hideCtxMenu();
+        item.action();
+      },
+
+      // ── Drag and drop ─────────────────────────────────────────────────────
+
+      hasFiles(dt) {
+        return dt && Array.from(dt.types || []).includes('Files');
+      },
+
+      onDragEnter(e) {
+        if (!this.hasFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        this.dragCounter++;
+        this.treeDragActive = true;
+      },
+
+      onDragOver(e) {
+        if (!this.hasFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        const node = e.target.closest('.tree-node');
+        this.dropOverDir = (node && node.dataset.isDir === '1') ? node.dataset.path : null;
+      },
+
+      onDragLeave() {
+        this.dragCounter--;
+        if (this.dragCounter <= 0) {
+          this.dragCounter = 0;
+          this.treeDragActive = false;
+          this.dropOverDir = null;
+        }
+      },
+
+      async onDrop(e) {
+        if (!this.hasFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        this.dragCounter = 0;
+        this.treeDragActive = false;
+        const node = e.target.closest('.tree-node');
+        const targetDir = (node && node.dataset.isDir === '1') ? node.dataset.path : '';
+        this.dropOverDir = null;
+        const files = Array.from(e.dataTransfer.files || []);
+        if (files.length) await this.uploadFiles(files, targetDir);
+      },
+
+      // ── Session ───────────────────────────────────────────────────────────
+
+      scheduleMetaSave() {
+        clearTimeout(this._metaTimer);
+        this._metaTimer = setTimeout(() => saveMeta(this.tabsList, this.activeTabPath), 300);
+      },
+
+      clearDirtyEntry(path) {
+        if (this._dirtyTimers && this._dirtyTimers[path]) {
+          clearTimeout(this._dirtyTimers[path]);
+          delete this._dirtyTimers[path];
+        }
+        deleteDirtyFile(path);
+      },
+
+      scheduleDirtySave(path) {
+        if (!this._dirtyTimers) this._dirtyTimers = {};
+        clearTimeout(this._dirtyTimers[path]);
+        this._dirtyTimers[path] = setTimeout(() => {
+          const d = tabsData.get(path);
+          if (d && d.model) saveDirtyFile(path, d.model.getValue());
+        }, 1500);
+      },
+
+      async restoreSession() {
+        const session = await loadSession();
+        if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) return;
+        const dirtyContents = session.dirtyContents || {};
+        for (const path of session.tabs) {
+          if (this.tabsList.find(t => t.path === path)) continue;
+          try {
+            if (isImagePath(path)) {
+              tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
+              this.tabsList.push({ path, dirty: false, isImage: true });
+            } else {
+              const text = await this.api('/api/file?path=' + encodeURIComponent(path));
+              const model = monaco.editor.createModel(text, detectLang(path));
+              const saved = dirtyContents[path];
+              const isDirty = saved !== undefined && saved !== text;
+              tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false });
+              this.tabsList.push({ path, dirty: isDirty, isImage: false });
+              if (isDirty) model.setValue(saved);
+            }
+          } catch { /* 檔案已不存在，略過 */ }
+        }
+        if (this.tabsList.length > 0) {
+          const target = this.tabsList.find(t => t.path === session.activeTab) || this.tabsList[0];
+          await this.activateTab(target.path);
+        }
+      },
+
+      // ── Settings ──────────────────────────────────────────────────────────
+
+      async ensureTheme(id) {
+        if (loadedThemes.has(id)) return;
+        const data = await this.api('/static/themes/' + encodeURIComponent(id) + '.json');
+        monaco.editor.defineTheme(id, data);
+        loadedThemes.add(id);
+      },
+
+      async onThemeChange() {
+        const theme = this.settings.theme;
+        const prev = loadSettings().theme || 'vs-dark';
+        try {
+          await this.ensureTheme(theme);
+          monaco.editor.setTheme(theme);
+          persistSettings({ theme });
+        } catch {
+          this.showToast('載入主題失敗', true);
+          this.settings.theme = prev;
+        }
+      },
+
+      onFontFamilyChange() {
+        if (monacoEditor) monacoEditor.updateOptions({ fontFamily: this.settings.fontFamily || undefined });
+        persistSettings({ fontFamily: this.settings.fontFamily });
+      },
+
+      onFontSizeChange() {
+        const size = Math.min(32, Math.max(10, parseInt(this.settings.fontSize, 10) || 13));
+        this.settings.fontSize = size;
+        if (monacoEditor) monacoEditor.updateOptions({ fontSize: size });
+        persistSettings({ fontSize: size });
+      },
+
+      onMinimapChange() {
+        if (monacoEditor) monacoEditor.updateOptions({ minimap: { enabled: this.settings.minimap } });
+        persistSettings({ minimap: this.settings.minimap });
+      },
+    },
+
+    mounted() {
+      if (window.matchMedia('(max-width: 700px)').matches) {
+        this.sidebarCollapsed = true;
+      }
+
+      document.addEventListener('click', () => {
+        this.hideCtxMenu();
+        this.settingsOpen = false;
+      });
+      document.addEventListener('contextmenu', (e) => {
+        if (!e.target.closest('#file-tree')) this.hideCtxMenu();
+      });
+      window.addEventListener('blur', () => { this.hideCtxMenu(); this.settingsOpen = false; });
+      window.addEventListener('resize', () => this.hideCtxMenu());
+
+      document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+          e.preventDefault();
+          this.saveCurrent();
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
+          e.preventDefault();
+          if (this.activeTabPath) this.closeTab(this.activeTabPath);
+        }
+      });
+
+      const flushSession = () => {
+        clearTimeout(this._metaTimer);
+        saveMeta(this.tabsList, this.activeTabPath);
+        if (this._dirtyTimers) {
+          for (const [path, timer] of Object.entries(this._dirtyTimers)) {
+            clearTimeout(timer);
+            const d = tabsData.get(path);
+            if (d && d.model) saveDirtyFile(path, d.model.getValue());
+          }
+          this._dirtyTimers = {};
+        }
+      };
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') flushSession();
+      });
+
+      window.addEventListener('beforeunload', () => {
+        flushSession();
+      });
+
+      window.addEventListener('dragover', (e) => { if (this.hasFiles(e.dataTransfer)) e.preventDefault(); });
+      window.addEventListener('drop', (e) => { if (this.hasFiles(e.dataTransfer)) e.preventDefault(); });
+
+      window.MonacoEnvironment = {
+        getWorker(moduleId, label) {
+          return new Worker(
+            window.location.origin + '/static/monaco/vs/base/worker/workerMain.js',
+            { credentials: 'include' }
+          );
+        }
+      };
+
+      require.config({ paths: { vs: '/static/monaco/vs' } });
+      require(['vs/editor/editor.main'], async () => {
+        const s = this.settings;
+        await this.ensureTheme(s.theme).catch(() => {});
+        const activeTheme = loadedThemes.has(s.theme) ? s.theme : 'vs-dark';
+
+        monacoEditor = monaco.editor.create(this.$refs.editorEl, {
+          value: '',
+          language: 'plaintext',
+          theme: activeTheme,
+          wordWrap: 'on',
+          automaticLayout: true,
+          fontSize: s.fontSize,
+          fontFamily: s.fontFamily || undefined,
+          minimap: { enabled: s.minimap },
+        });
+
+        monacoEditor.onDidChangeModelContent(() => {
+          if (!this.activeTabPath) return;
+          const data = tabsData.get(this.activeTabPath);
+          if (!data || data.isImage) return;
+          const isDirty = monacoEditor.getValue() !== data.originalContent;
+          const tab = this.tabsList.find(t => t.path === this.activeTabPath);
+          if (tab && isDirty !== tab.dirty) tab.dirty = isDirty;
+          if (isDirty) this.scheduleDirtySave(this.activeTabPath);
+          else this.clearDirtyEntry(this.activeTabPath);
+        });
+
+        this.editorReady = true;
+        await this.loadTree();
+        await this.restoreSession();
+      });
+    },
+  }).mount('#app');
+})();
+</script>
+</body>
+</html>
