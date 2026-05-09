@@ -9,8 +9,8 @@ console.log(`Copied ${src} → ${dst}`);
 
 // 只複製下拉選單實際使用的主題
 const THEMES = [
-  'Monokai', 'Dracula', 'GitHub Dark', 'GitHub Light',
-  'Night Owl', 'Nord', 'Cobalt2',
+  'Monokai', 'Dracula',
+  'Nord', 'Cobalt2',
   'Solarized-dark', 'Solarized-light',
   'Tomorrow-Night', 'Tomorrow-Night-Eighties',
 ];

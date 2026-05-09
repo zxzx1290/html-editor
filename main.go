@@ -211,6 +211,7 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "is a directory")
 		return
 	}
+	fmt.Printf("[open] %s\n", rel)
 	ct := mime.TypeByExtension(strings.ToLower(filepath.Ext(rel)))
 	if ct == "" {
 		ct = "application/octet-stream"
@@ -244,6 +245,7 @@ func (s *server) writeFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	fmt.Printf("[save] %s\n", rel)
 	writeOK(w)
 }
 

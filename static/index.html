@@ -282,15 +282,24 @@
     max-width: 360px;
   }
   #toast.error { background: var(--danger); }
+  #sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9;
+    background: rgba(0,0,0,0.4);
+  }
   @media (max-width: 700px) {
     #sidebar { position: absolute; z-index: 10; height: 100%; }
     #sidebar.collapsed { margin-left: -250px; }
+    #sidebar-backdrop.visible { display: block; }
   }
 </style>
 </head>
 <body>
 
 <div id="app" v-cloak>
+  <div id="sidebar-backdrop" :class="{ visible: !sidebarCollapsed }" @click="sidebarCollapsed = true"></div>
   <aside id="sidebar" :class="{ collapsed: sidebarCollapsed }">
     <div id="sidebar-header">
       <span>WORKSPACE</span>
@@ -347,9 +356,6 @@
               <optgroup label="擴充">
                 <option value="Monokai">Monokai</option>
                 <option value="Dracula">Dracula</option>
-                <option value="GitHub Dark">GitHub Dark</option>
-                <option value="GitHub Light">GitHub Light</option>
-                <option value="Night Owl">Night Owl</option>
                 <option value="Nord">Nord</option>
                 <option value="Cobalt2">Cobalt2</option>
                 <option value="Solarized-dark">Solarized Dark</option>
@@ -384,7 +390,6 @@
           </div>
         </div>
       </div>
-      <button class="btn" :disabled="!activeTabPath" @click="activeTabPath && downloadFile(activeTabPath)">下載</button>
       <button class="btn primary" :disabled="!activeTabPath || activeTabIsImage" @click="saveCurrent">儲存 (Ctrl+S)</button>
     </div>
 
