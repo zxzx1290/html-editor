@@ -1096,6 +1096,20 @@
         if (this.tabsList.length > 0) {
           const target = this.tabsList.find(t => t.path === session.activeTab) || this.tabsList[0];
           await this.activateTab(target.path);
+          await this.revealInTree(target.path);
+        }
+      },
+
+      async revealInTree(filePath) {
+        if (!filePath || !filePath.includes('/')) return;
+        const parts = filePath.split('/');
+        parts.pop();
+        let currentPath = '';
+        for (const part of parts) {
+          currentPath = currentPath ? currentPath + '/' + part : part;
+          const item = this.treeItems.find(t => t.path === currentPath && t.isDir);
+          if (!item) break;
+          if (!item.expanded) await this.expandDir(item);
         }
       },
 
