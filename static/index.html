@@ -4,6 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>HTML Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #1e1e1e;
@@ -362,12 +365,9 @@
             <select v-model="settings.fontFamily" class="settings-select" @change="onFontFamilyChange">
               <option value="">預設</option>
               <option value="Consolas">Consolas</option>
-              <option value="'Cascadia Code'">Cascadia Code</option>
-              <option value="'Fira Code'">Fira Code</option>
-              <option value="'JetBrains Mono'">JetBrains Mono</option>
-              <option value="'Source Code Pro'">Source Code Pro</option>
               <option value="Menlo">Menlo</option>
               <option value="'Courier New'">Courier New</option>
+              <option value="'Roboto Mono'">Roboto Mono</option>
             </select>
           </div>
           <div class="settings-row">
@@ -553,7 +553,7 @@
         activeTabPath: null,
         settings: {
           theme: s.theme || 'vs-dark',
-          fontSize: s.fontSize || 13,
+          fontSize: s.fontSize || 14,
           fontFamily: s.fontFamily || '',
           minimap: s.minimap !== false,
         },
@@ -1136,8 +1136,10 @@
       },
 
       onFontFamilyChange() {
-        if (monacoEditor) monacoEditor.updateOptions({ fontFamily: this.settings.fontFamily || undefined });
-        persistSettings({ fontFamily: this.settings.fontFamily });
+        const base = this.settings.fontFamily;
+        const family = base ? `${base}, 'Microsoft JhengHei', sans-serif` : undefined;
+        if (monacoEditor) monacoEditor.updateOptions({ fontFamily: family });
+        persistSettings({ fontFamily: base });
       },
 
       onFontSizeChange() {
@@ -1225,7 +1227,7 @@
           wordWrap: 'on',
           automaticLayout: true,
           fontSize: s.fontSize,
-          fontFamily: s.fontFamily || undefined,
+          fontFamily: s.fontFamily ? `${s.fontFamily}, 'Microsoft JhengHei', sans-serif` : undefined,
           minimap: { enabled: s.minimap },
         });
 
