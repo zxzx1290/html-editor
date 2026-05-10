@@ -417,12 +417,13 @@
   <div id="sidebar-backdrop" :class="{ visible: !sidebarCollapsed }" @click="sidebarCollapsed = true"></div>
   <aside id="sidebar" :class="{ collapsed: sidebarCollapsed }">
     <div id="sidebar-header">
-      <span>WORKSPACE</span>
+      <span>WORKSPACE<template v-if="currentUser"> · <span style="font-weight:normal;text-transform:none;letter-spacing:0;color:var(--fg);">{{ currentUser }}</span></template></span>
       <button class="btn" @click="loadTree" title="重新整理" style="padding:2px 6px;">⟳</button>
     </div>
     <div
       id="file-tree"
       :class="{ 'drag-active': treeDragActive, 'drop-over-root': treeDragActive && dropOverDir === '' }"
+      :style="isPasting ? { pointerEvents: 'none', opacity: '0.5' } : {}"
       title="拖曳檔案到此上傳，或右鍵開啟選單"
       @click="treeFocused = true"
       @contextmenu.prevent="onTreeContextMenu($event, null)"
@@ -439,14 +440,14 @@
         :key="item.path"
         class="tree-node"
         :class="{
-          active: item.path === selectedPath && treeFocused,
-          'active-blur': item.path === selectedPath && !treeFocused,
+          active: selectedPaths.includes(item.path) && treeFocused,
+          'active-blur': selectedPaths.includes(item.path) && !treeFocused,
           'drop-over': item.isDir && item.path === dropOverDir
         }"
         :style="{ paddingLeft: (8 + item.depth * 14) + 'px' }"
         :data-path="item.path"
         :data-is-dir="item.isDir ? '1' : '0'"
-        @click="onNodeClick(item)"
+        @click="onNodeClick(item, $event)"
         @contextmenu.prevent.stop="onTreeContextMenu($event, item)"
       >
         <span class="tree-arrow">{{ item.isDir ? (item.expanded ? '▼' : '▶') : '' }}</span>
@@ -768,15 +769,6 @@ window.editorPlugin = (function () {
 
   // ── Built-in: Session check & WS collaboration ────────────────────────────
 
-  const EDITOR_USER_COOKIE = 'editorUser';
-  const EDITOR_HASH_COOKIE = 'editorHash';
-
-  function getCookieByName(name) {
-    const v = '; ' + document.cookie;
-    const p = v.split('; ' + name + '=');
-    return p.length === 2 ? p.pop().split(';').shift() : '';
-  }
-
   function initSessionCheck(app) {
     let extending = false;
     const timer = setInterval(async function () {
@@ -828,16 +820,12 @@ window.editorPlugin = (function () {
 
     function fileOnOpen(path) {
       const { folder, file } = splitPath(path);
-      wsSend({ type: 'file_on_open', payload: {
-        user: getCookieByName(EDITOR_USER_COOKIE), path: folder, file,
-      }});
+      wsSend({ type: 'file_on_open', payload: { path: folder, file } });
     }
 
     function fileOnClose(path) {
       const { folder, file } = splitPath(path);
-      wsSend({ type: 'file_on_close', payload: {
-        user: getCookieByName(EDITOR_USER_COOKIE), path: folder, file,
-      }});
+      wsSend({ type: 'file_on_close', payload: { path: folder, file } });
     }
 
     function connect() {
@@ -891,15 +879,7 @@ window.editorPlugin = (function () {
     }
 
     window.editorPlugin.saveService.on('afterSave', function (e) {
-      const { folder, file } = splitPath(e.path);
-      wsSend({ type: 'after_save', payload: {
-        user: getCookieByName(EDITOR_USER_COOKIE),
-        hash: getCookieByName(EDITOR_HASH_COOKIE),
-        document: e.document.title,
-        path: e.path,
-        folder,
-        file,
-      }});
+      wsSend({ type: 'after_save', payload: { path: e.path } });
     });
 
     window.editorPlugin.tabManagerSvc.on('open', function (e) { fileOnOpen(e.tab.path); });
@@ -913,6 +893,7 @@ window.editorPlugin = (function () {
     try { cfg = await fetch('/api/config').then(r => r.json()); } catch { return; }
     if (cfg.sessionCheck) {
       app.sessionCheck = true;
+      app.currentUser = cfg.username || '';
       initSessionCheck(app);
       initWsCollab(app);
     }
@@ -943,6 +924,7 @@ window.editorPlugin = (function () {
           minimap: s.minimap !== false,
         },
         sessionCheck: false,
+        currentUser: '',
         settingsOpen: false,
         statusMsg: '',
         isSaving: false,
@@ -953,6 +935,10 @@ window.editorPlugin = (function () {
         appReady: false,
         uploads: [],
         dlg: { visible: false, title: '', inputMode: false, inputValue: '', placeholder: '', danger: false, confirmText: '確定', cancelText: '取消', _resolve: null },
+        clipboard: { items: [], mode: null },
+        isPasting: false,
+        selectedPaths: [],
+        anchorPath: null,
       };
     },
 
@@ -1083,13 +1069,31 @@ window.editorPlugin = (function () {
         this.treeItems.splice(idx + 1, end - idx - 1);
       },
 
-      async onNodeClick(item) {
-        this.selectedPath = item.path;
-        if (item.isDir) {
-          if (item.expanded) this.collapseDir(item);
-          else await this.expandDir(item);
+      async onNodeClick(item, event) {
+        if (event && (event.ctrlKey || event.metaKey)) {
+          const idx = this.selectedPaths.indexOf(item.path);
+          if (idx >= 0) this.selectedPaths.splice(idx, 1);
+          else this.selectedPaths.push(item.path);
+          this.selectedPath = item.path;
+          this.anchorPath = item.path;
+        } else if (event && event.shiftKey && this.anchorPath) {
+          const ai = this.treeItems.findIndex(t => t.path === this.anchorPath);
+          const bi = this.treeItems.indexOf(item);
+          if (ai >= 0 && bi >= 0) {
+            const s = Math.min(ai, bi), e2 = Math.max(ai, bi);
+            this.selectedPaths = this.treeItems.slice(s, e2 + 1).map(t => t.path);
+          }
+          this.selectedPath = item.path;
         } else {
-          await this.openFile(item.path);
+          this.selectedPath = item.path;
+          this.selectedPaths = [item.path];
+          this.anchorPath = item.path;
+          if (item.isDir) {
+            if (item.expanded) this.collapseDir(item);
+            else await this.expandDir(item);
+          } else {
+            await this.openFile(item.path);
+          }
         }
       },
 
@@ -1143,6 +1147,7 @@ window.editorPlugin = (function () {
       async activateTab(path) {
         if (this.activeTabPath === path) return;
         this.selectedPath = path;
+        this.selectedPaths = [path];
 
         if (this.activeTabPath) {
           const cur = tabsData.get(this.activeTabPath);
@@ -1448,36 +1453,184 @@ window.editorPlugin = (function () {
         }
       },
 
+      // ── Clipboard (cut / copy / paste) ───────────────────────────────────
+
+      clipboardCutItems(items) {
+        this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'cut' };
+        this.showToast(items.length > 1 ? `已剪下 ${items.length} 個` : '已剪下：' + items[0].path.split('/').pop());
+      },
+      clipboardCopyItems(items) {
+        this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'copy' };
+        this.showToast(items.length > 1 ? `已複製 ${items.length} 個` : '已複製：' + items[0].path.split('/').pop());
+      },
+      async clipboardPaste(targetDir) {
+        if (!this.clipboard.items.length || this.isPasting) return;
+        const { items, mode } = this.clipboard;
+        const total = items.length;
+        const verb = mode === 'cut' ? '移動' : '複製';
+        this.isPasting = true;
+        let ok = 0;
+        const errors = [];
+        try {
+          for (const { path: from, isDir } of items) {
+            const name = from.split('/').pop();
+            this.setStatus(`${verb}中… (${ok + 1}/${total}) ${name}`);
+            const to = targetDir ? targetDir + '/' + name : name;
+            try {
+              let actualTo = to;
+              if (mode === 'cut') {
+                const res = await this.api('/api/rename?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + '&auto=1', { method: 'POST' });
+                actualTo = (res && res.to) ? res.to : to;
+                if (!isDir) {
+                  const tab = this.tabsList.find(t => t.path === from);
+                  if (tab) {
+                    const d = tabsData.get(from);
+                    tabsData.delete(from);
+                    tabsData.set(actualTo, d);
+                    if (d && d.model) monaco.editor.setModelLanguage(d.model, detectLang(actualTo));
+                    tab.path = actualTo;
+                    if (this.activeTabPath === from) this.activeTabPath = actualTo;
+                  }
+                } else {
+                  const prefix = from + '/';
+                  let needFallback = false;
+                  for (let i = this.tabsList.length - 1; i >= 0; i--) {
+                    const p = this.tabsList[i].path;
+                    if (!p.startsWith(prefix)) continue;
+                    const d = tabsData.get(p);
+                    if (d && d.model) d.model.dispose();
+                    tabsData.delete(p);
+                    this.tabsList.splice(i, 1);
+                    if (this.activeTabPath === p) needFallback = true;
+                  }
+                  if (needFallback) {
+                    this.activeTabPath = null;
+                    if (monacoEditor) monacoEditor.setModel(null);
+                    this.setStatus('');
+                    if (this.tabsList.length > 0) await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
+                  }
+                }
+              } else {
+                const res = await this.api('/api/copy?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to), { method: 'POST' });
+                actualTo = (res && res.path) ? res.path : to;
+              }
+              ok++;
+            } catch (e) {
+              errors.push(name + '：' + e.message);
+            }
+          }
+          if (mode === 'cut') this.clipboard = { items: [], mode: null };
+          const destParent = targetDir || '';
+          const srcParents = new Set(items.map(({ path }) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''));
+          await this.refreshDir(destParent);
+          if (mode === 'cut') for (const p of srcParents) { if (p !== destParent) await this.refreshDir(p); }
+          this.scheduleMetaSave();
+          if (ok > 0) this.showToast(`${verb}成功：${ok} 個`);
+          if (errors.length) this.showError(`${verb}失敗：` + errors.join('、'));
+        } finally {
+          this.isPasting = false;
+          this.setStatus('');
+        }
+      },
+      async deleteSelected(selItems) {
+        const n = selItems.length;
+        if (!await this.dlgConfirm(`確定要刪除 ${n} 個項目嗎？\n此動作無法復原。`, { confirmText: '刪除', danger: true })) return;
+        let needFallback = false;
+        for (const { path, isDir } of selItems) {
+          try {
+            await this.api('/api/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
+            const toClose = this.tabsList.filter(t => t.path === path || (isDir && t.path.startsWith(path + '/'))).map(t => t.path);
+            for (const p of toClose) {
+              const d = tabsData.get(p);
+              if (d && d.model) d.model.dispose();
+              tabsData.delete(p);
+              const i = this.tabsList.findIndex(t => t.path === p);
+              if (i >= 0) this.tabsList.splice(i, 1);
+              if (this.activeTabPath === p) needFallback = true;
+              this.clearDirtyEntry(p);
+            }
+            const ti = this.treeItems.findIndex(t => t.path === path);
+            if (ti >= 0) {
+              if (isDir && this.treeItems[ti].expanded) this.collapseDir(this.treeItems[ti]);
+              this.treeItems.splice(ti, 1);
+            }
+          } catch (e) {
+            this.showError('刪除失敗 ' + path + '：' + e.message);
+          }
+        }
+        if (needFallback) {
+          if (this.tabsList.length > 0) {
+            this.activeTabPath = null;
+            await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
+          } else {
+            this.activeTabPath = null;
+            if (monacoEditor) monacoEditor.setModel(null);
+            this.setStatus('');
+          }
+        }
+        this.selectedPaths = [];
+        this.showToast(`已刪除 ${n} 個項目`);
+      },
+
       // ── Context menu ──────────────────────────────────────────────────────
 
       onTreeContextMenu(e, item) {
-        this.selectedPath = item ? item.path : null;
         this.treeFocused = true;
-        if (!item) {
+        const hasCb = this.clipboard.items.length > 0;
+        if (item && this.selectedPaths.length > 1 && this.selectedPaths.includes(item.path)) {
+          const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
+          const n = selItems.length;
           this.showCtxMenu(e.clientX, e.clientY, [
+            { label: `剪下 ${n} 個`, action: () => this.clipboardCutItems(selItems) },
+            { label: `複製 ${n} 個`, action: () => this.clipboardCopyItems(selItems) },
+            '-',
+            { label: `刪除 ${n} 個`, danger: true, action: () => this.deleteSelected(selItems) },
+          ]);
+          return;
+        }
+        if (!item) {
+          this.selectedPath = null;
+          this.selectedPaths = [];
+          const menuItems = [
             { label: '新增檔案', action: () => this.newFile('') },
             { label: '新增目錄', action: () => this.mkdir('') },
             { label: '上傳檔案…', action: () => this.triggerUpload('') },
-            '-',
-            { label: '重新整理', action: () => this.loadTree() },
-          ]);
+          ];
+          if (hasCb) menuItems.push('-', { label: '貼上', action: () => this.clipboardPaste('') });
+          menuItems.push('-', { label: '重新整理', action: () => this.loadTree() });
+          this.showCtxMenu(e.clientX, e.clientY, menuItems);
         } else if (item.isDir) {
+          this.selectedPath = item.path;
+          this.selectedPaths = [item.path];
           const path = item.path;
-          this.showCtxMenu(e.clientX, e.clientY, [
+          const menuItems = [
             { label: '新增檔案', action: () => this.newFile(path) },
             { label: '新增目錄', action: () => this.mkdir(path) },
             { label: '上傳到此處…', action: () => this.triggerUpload(path) },
+            '-',
+            { label: '剪下', action: () => this.clipboardCutItems([item]) },
+            { label: '複製', action: () => this.clipboardCopyItems([item]) },
+          ];
+          if (hasCb) menuItems.push({ label: '貼上', action: () => this.clipboardPaste(path) });
+          menuItems.push(
             '-',
             { label: '重新命名', action: () => this.renameItem(item) },
             { label: '重新整理', action: () => this.forceRefreshDir(path) },
             '-',
             { label: '刪除目錄', danger: true, action: () => this.deleteFile(path, true) },
-          ]);
+          );
+          this.showCtxMenu(e.clientX, e.clientY, menuItems);
         } else {
+          this.selectedPath = item.path;
+          this.selectedPaths = [item.path];
           const path = item.path;
           this.showCtxMenu(e.clientX, e.clientY, [
             { label: '開啟', action: () => this.openFile(path) },
             { label: '下載', action: () => this.downloadFile(path) },
+            '-',
+            { label: '剪下', action: () => this.clipboardCutItems([item]) },
+            { label: '複製', action: () => this.clipboardCopyItems([item]) },
+            '-',
             { label: '重新命名', action: () => this.renameItem(item) },
             '-',
             { label: '刪除', danger: true, action: () => this.deleteFile(path, false) },
@@ -1721,6 +1874,26 @@ window.editorPlugin = (function () {
         if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
           e.preventDefault();
           if (this.activeTabPath) this.closeTab(this.activeTabPath);
+        }
+        if (this.treeFocused && (e.ctrlKey || e.metaKey)) {
+          const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
+          const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
+          if (e.key === 'x' && selItems.length) {
+            e.preventDefault();
+            this.clipboardCutItems(selItems);
+          } else if (e.key === 'c' && selItems.length) {
+            e.preventDefault();
+            this.clipboardCopyItems(selItems);
+          } else if (e.key === 'v' && this.clipboard.items.length) {
+            e.preventDefault();
+            let pasteTarget = '';
+            if (selItem) {
+              pasteTarget = selItem.isDir
+                ? selItem.path
+                : selItem.path.includes('/') ? selItem.path.slice(0, selItem.path.lastIndexOf('/')) : '';
+            }
+            this.clipboardPaste(pasteTarget);
+          }
         }
       });
 

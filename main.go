@@ -340,6 +340,7 @@ func main() {
 	mux.HandleFunc("/api/download", s.sessionAndWorkspace(s.handleDownload))
 	mux.HandleFunc("/api/mkdir",    s.sessionAndWorkspace(s.handleMkdir))
 	mux.HandleFunc("/api/rename",   s.sessionAndWorkspace(s.handleRename))
+	mux.HandleFunc("/api/copy",     s.sessionAndWorkspace(s.handleCopy))
 	mux.Handle("/static/",          http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	mux.HandleFunc("/favicon.ico",  func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, filepath.Join("static", "favicon.ico")) })
 	mux.HandleFunc("/",             s.checkSession(s.handleIndex))
@@ -621,7 +622,15 @@ func (s *server) handleExtend(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleApiConfig(w http.ResponseWriter, r *http.Request) {
 	sessionCheck := s.config != nil && len(s.config.Users) > 0
-	writeJSON(w, http.StatusOK, map[string]any{"sessionCheck": sessionCheck})
+	resp := map[string]any{"sessionCheck": sessionCheck}
+	if sessionCheck {
+		if c, err := r.Cookie("editorHash"); err == nil {
+			if username, ok := s.validateSession(c.Value); ok {
+				resp["username"] = username
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ─── WebSocket ────────────────────────────────────────────────────────────────
@@ -1009,7 +1018,9 @@ func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid to path")
 		return
 	}
-	if _, err := os.Stat(absTo); err == nil {
+	if r.URL.Query().Get("auto") == "1" {
+		absTo = availableDest(absTo)
+	} else if _, err := os.Stat(absTo); err == nil {
 		writeError(w, http.StatusConflict, "destination already exists")
 		return
 	}
@@ -1017,8 +1028,10 @@ func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	logf("[file-rename] %s -> %s\n", from, to)
-	writeOK(w)
+	relTo, _ := filepath.Rel(ws, absTo)
+	relTo = filepath.ToSlash(relTo)
+	logf("[file-rename] %s -> %s\n", from, relTo)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "to": relTo})
 }
 
 func (s *server) handleMkdir(w http.ResponseWriter, r *http.Request) {
@@ -1044,7 +1057,109 @@ func (s *server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 	writeOK(w)
 }
 
+func (s *server) handleCopy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	ws := workspaceFromCtx(r)
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	if from == "" || to == "" {
+		writeError(w, http.StatusBadRequest, "missing from or to")
+		return
+	}
+	absFrom, err := resolvePath(ws, from)
+	if err != nil || absFrom == ws {
+		writeError(w, http.StatusForbidden, "invalid from path")
+		return
+	}
+	absTo, err := resolvePath(ws, to)
+	if err != nil || absTo == ws {
+		writeError(w, http.StatusForbidden, "invalid to path")
+		return
+	}
+	absTo = availableDest(absTo)
+	if err := copyPath(absFrom, absTo); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	relTo, _ := filepath.Rel(ws, absTo)
+	relTo = filepath.ToSlash(relTo)
+	logf("[file-copy] %s -> %s\n", from, relTo)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": relTo})
+}
+
+func copyPath(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return copyDir(src, dst)
+	}
+	return copyFile(src, dst)
+}
+
+func copyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func copyDir(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		s := filepath.Join(src, entry.Name())
+		d := filepath.Join(dst, entry.Name())
+		if entry.IsDir() {
+			if err := copyDir(s, d); err != nil {
+				return err
+			}
+		} else {
+			if err := copyFile(s, d); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// availableDest returns abs if it doesn't exist, otherwise inserts an incrementing
+// counter before the extension: note.txt → note.1.txt → note.2.txt …
+func availableDest(abs string) string {
+	if _, err := os.Stat(abs); os.IsNotExist(err) {
+		return abs
+	}
+	ext := filepath.Ext(abs)
+	base := strings.TrimSuffix(abs, ext)
+	for i := 1; ; i++ {
+		candidate := fmt.Sprintf("%s.%d%s", base, i, ext)
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
+}
 
 func logf(format string, args ...any) {
 	fmt.Printf(time.Now().Format("2006/01/02 15:04:05")+" "+format, args...)
