@@ -654,10 +654,21 @@ func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 	client.readPump(s)
 }
 
+const (
+	wsPingInterval = 30 * time.Second
+	wsReadDeadline = 70 * time.Second
+)
+
 func (c *WsClient) readPump(s *server) {
 	defer c.conn.Close()
 	defer s.hub.unregister(c)
 	defer logf("[ws] disconnect user=%s\n", c.username)
+
+	c.conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
+		return nil
+	})
 
 	for {
 		_, data, err := c.conn.ReadMessage()
@@ -712,10 +723,22 @@ func (c *WsClient) readPump(s *server) {
 }
 
 func (c *WsClient) writePump() {
+	ticker := time.NewTicker(wsPingInterval)
+	defer ticker.Stop()
 	defer c.conn.Close()
-	for data := range c.send {
-		if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			return
+	for {
+		select {
+		case data, ok := <-c.send:
+			if !ok {
+				return
+			}
+			if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+				return
+			}
+		case <-ticker.C:
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }
