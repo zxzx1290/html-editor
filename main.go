@@ -295,7 +295,7 @@ func main() {
 			os.Exit(1)
 		}
 		s.config = &cfg
-		fmt.Printf("[config] %d user(s) loaded\n", len(cfg.Users))
+		logf("[config] %d user(s) loaded\n", len(cfg.Users))
 
 		// Apply host/port from config only when the CLI flag was not explicitly set.
 		set := make(map[string]bool)
@@ -323,7 +323,7 @@ func main() {
 				}
 				return true
 			})
-			fmt.Printf("[status] sessions=%d ws_clients=%d\n", sessionCount, s.hub.clientCount())
+			logf("[status] sessions=%d ws_clients=%d\n", sessionCount, s.hub.clientCount())
 		}
 	}()
 
@@ -345,7 +345,7 @@ func main() {
 	mux.HandleFunc("/",             s.checkSession(s.handleIndex))
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)
-	fmt.Printf("html-editor listening on http://%s  workspace=%s  config=%v\n", addr, abs, *configFile != "")
+	logf("html-editor listening on http://%s  workspace=%s  config=%v\n", addr, abs, *configFile != "")
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -365,6 +365,7 @@ func (s *server) checkSession(next http.HandlerFunc) http.HandlerFunc {
 		}
 		ip := clientIP(r)
 		if s.limiter.isBlocked(ip) {
+			logf("[rate-limit] ip=%s blocked\n", ip)
 			p := r.URL.Path
 			if strings.HasPrefix(p, "/api/") || p == "/check" || p == "/extend" {
 				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
@@ -381,7 +382,7 @@ func (s *server) checkSession(next http.HandlerFunc) http.HandlerFunc {
 		username, ok := s.validateSession(cookie.Value)
 		if !ok {
 			s.limiter.record(ip)
-			fmt.Printf("[session] invalid token ip=%s\n", ip)
+			logf("[session] invalid token ip=%s\n", ip)
 			s.redirectOrUnauth(w, r)
 			return
 		}
@@ -539,6 +540,7 @@ func clientIP(r *http.Request) string {
 func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if s.limiter.isBlocked(ip) {
+		logf("[rate-limit] ip=%s blocked\n", ip)
 		http.Redirect(w, r, "/login?error=blocked", http.StatusFound)
 		return
 	}
@@ -551,7 +553,7 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	userCfg, ok := s.config.Users[username]
 	if !ok || !totp.Validate(code, userCfg.TotpSecret) {
 		s.limiter.record(ip)
-		fmt.Printf("[session] invalid credentials ip=%s\n", ip)
+		logf("[session] invalid credentials ip=%s\n", ip)
 		http.Redirect(w, r, "/login?error=1", http.StatusFound)
 		return
 	}
@@ -565,7 +567,7 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 		Name: "editorHash", Value: token,
 		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure,
 	})
-	fmt.Printf("[login] user=%s ip=%s\n", username, ip)
+	logf("[login] user=%s ip=%s\n", username, ip)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -581,7 +583,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if reason == "" {
 		reason = "manual"
 	}
-	fmt.Printf("[logout] user=%s ip=%s reason=%s\n", username, clientIP(r), reason)
+	logf("[logout] user=%s ip=%s reason=%s\n", username, clientIP(r), reason)
 	http.SetCookie(w, &http.Cookie{Name: "editorUser", Value: "", MaxAge: -1, Path: "/"})
 	http.SetCookie(w, &http.Cookie{Name: "editorHash", Value: "", MaxAge: -1, Path: "/"})
 	http.Redirect(w, r, "/login", http.StatusFound)
@@ -643,7 +645,7 @@ func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 		return
 	}
-	fmt.Printf("[ws] connect user=%s\n", username)
+	logf("[ws] connect user=%s\n", username)
 	go client.writePump()
 	client.readPump(s)
 }
@@ -651,7 +653,7 @@ func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 func (c *WsClient) readPump(s *server) {
 	defer c.conn.Close()
 	defer s.hub.unregister(c)
-	defer fmt.Printf("[ws] disconnect user=%s\n", c.username)
+	defer logf("[ws] disconnect user=%s\n", c.username)
 
 	for {
 		_, data, err := c.conn.ReadMessage()
@@ -674,7 +676,7 @@ func (c *WsClient) readPump(s *server) {
 			}
 			others := s.hub.fileOpen(c.username, p.Path, p.File)
 			for _, u := range others {
-				fmt.Printf("[same_file_open] %s/%s opener=%s existing=%s\n", p.Path, p.File, c.username, u)
+				logf("[same_file_open] %s/%s opener=%s existing=%s\n", p.Path, p.File, c.username, u)
 				s.hub.sendTo(c.username, wsOutMsg{Type: "same_file_open", Payload: map[string]string{
 					"user": u, "path": p.Path, "file": p.File,
 				}})
@@ -700,7 +702,7 @@ func (c *WsClient) readPump(s *server) {
 			if err := json.Unmarshal(msg.Payload, &p); err != nil {
 				continue
 			}
-			fmt.Printf("[ws] after_save user=%s path=%s\n", c.username, p.Path)
+			logf("[ws] after_save user=%s path=%s\n", c.username, p.Path)
 		}
 	}
 }
@@ -805,7 +807,7 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "is a directory")
 		return
 	}
-	fmt.Printf("[open] %s\n", rel)
+	logf("[file-open] %s\n", rel)
 	http.ServeFile(w, r, abs)
 }
 
@@ -834,7 +836,7 @@ func (s *server) writeFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	fmt.Printf("[save] %s\n", rel)
+	logf("[file-save] %s\n", rel)
 	writeOK(w)
 }
 
@@ -870,7 +872,7 @@ func (s *server) deleteFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	fmt.Printf("[del] %s\n", rel)
+	logf("[file-del] %s\n", rel)
 	writeOK(w)
 }
 
@@ -922,7 +924,7 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel, _ := filepath.Rel(ws, dstResolved)
-	fmt.Printf("[upload] %s\n", filepath.ToSlash(rel))
+	logf("[file-upload] %s\n", filepath.ToSlash(rel))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": filepath.ToSlash(rel)})
 }
 
@@ -988,7 +990,7 @@ func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	fmt.Printf("[rename] %s -> %s\n", from, to)
+	logf("[file-rename] %s -> %s\n", from, to)
 	writeOK(w)
 }
 
@@ -1011,11 +1013,15 @@ func (s *server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	fmt.Printf("[mkdir] %s\n", rel)
+	logf("[file-mkdir] %s\n", rel)
 	writeOK(w)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+func logf(format string, args ...any) {
+	fmt.Printf(time.Now().Format("2006/01/02 15:04:05")+" "+format, args...)
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

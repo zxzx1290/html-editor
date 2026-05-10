@@ -3,6 +3,7 @@ node_modules/
 static/monaco/
 static/themes/
 static/plugins/
+static/favicon.ico
 html-editor
 html-editor.exe
 package-lock.json
