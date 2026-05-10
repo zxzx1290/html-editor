@@ -968,7 +968,11 @@ window.editorPlugin = (function () {
           });
           this.$nextTick(() => {
             const el = this.$refs.dlgInput;
-            if (el) { el.focus(); el.select(); }
+            if (el) {
+              el.focus();
+              if (opts.selectEnd !== undefined) el.setSelectionRange(0, opts.selectEnd);
+              else el.select();
+            }
           });
         });
       },
@@ -990,8 +994,8 @@ window.editorPlugin = (function () {
       dlgAlert(title) {
         return this._dlgShow({ title, cancelText: null });
       },
-      dlgPrompt(title, defaultValue, placeholder) {
-        return this._dlgShow({ title, inputMode: true, defaultValue: defaultValue || '', placeholder: placeholder || '' });
+      dlgPrompt(title, defaultValue, placeholder, opts) {
+        return this._dlgShow({ title, inputMode: true, defaultValue: defaultValue || '', placeholder: placeholder || '', ...(opts || {}) });
       },
 
       _pushToast(msg, error) {
@@ -1353,7 +1357,9 @@ window.editorPlugin = (function () {
       },
 
       async renameItem(item) {
-        const newName = await this.dlgPrompt('重新命名：', item.name);
+        const dotIdx = item.isDir ? -1 : item.name.lastIndexOf('.');
+        const selectEnd = dotIdx > 0 ? dotIdx : item.name.length;
+        const newName = await this.dlgPrompt('重新命名：', item.name, '', { selectEnd });
         if (!newName || newName === item.name) return;
         const lastSlash = item.path.lastIndexOf('/');
         const parentDir = lastSlash >= 0 ? item.path.slice(0, lastSlash) : '';
@@ -1624,17 +1630,22 @@ window.editorPlugin = (function () {
           this.selectedPath = item.path;
           this.selectedPaths = [item.path];
           const path = item.path;
-          this.showCtxMenu(e.clientX, e.clientY, [
+          const parentDir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+          const fileMenuItems = [
             { label: '開啟', action: () => this.openFile(path) },
             { label: '下載', action: () => this.downloadFile(path) },
             '-',
             { label: '剪下', action: () => this.clipboardCutItems([item]) },
             { label: '複製', action: () => this.clipboardCopyItems([item]) },
+          ];
+          if (hasCb) fileMenuItems.push({ label: '貼上', action: () => this.clipboardPaste(parentDir) });
+          fileMenuItems.push(
             '-',
             { label: '重新命名', action: () => this.renameItem(item) },
             '-',
             { label: '刪除', danger: true, action: () => this.deleteFile(path, false) },
-          ]);
+          );
+          this.showCtxMenu(e.clientX, e.clientY, fileMenuItems);
         }
       },
 
