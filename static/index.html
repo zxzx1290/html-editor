@@ -95,6 +95,7 @@
   }
   .tree-node:hover { background: var(--bg-hover); }
   .tree-node.active { background: var(--bg-active); color: #fff; }
+  .tree-node.active-blur { background: rgba(9, 71, 113, 0.4); color: var(--fg); }
   .tree-node .name {
     flex: 1;
     overflow: hidden;
@@ -416,6 +417,7 @@
       id="file-tree"
       :class="{ 'drag-active': treeDragActive, 'drop-over-root': treeDragActive && dropOverDir === '' }"
       title="拖曳檔案到此上傳，或右鍵開啟選單"
+      @click="treeFocused = true"
       @contextmenu.prevent="onTreeContextMenu($event, null)"
       @dragenter="onDragEnter"
       @dragover="onDragOver"
@@ -429,7 +431,11 @@
         v-for="item in treeItems"
         :key="item.path"
         class="tree-node"
-        :class="{ active: item.path === activeTabPath, 'drop-over': item.isDir && item.path === dropOverDir }"
+        :class="{
+          active: item.path === selectedPath && treeFocused,
+          'active-blur': item.path === selectedPath && !treeFocused,
+          'drop-over': item.isDir && item.path === dropOverDir
+        }"
         :style="{ paddingLeft: (8 + item.depth * 14) + 'px' }"
         :data-path="item.path"
         :data-is-dir="item.isDir ? '1' : '0'"
@@ -756,6 +762,8 @@ window.editorPlugin = (function () {
       return {
         sidebarCollapsed: false,
         treeItems: [],
+        selectedPath: null,
+        treeFocused: false,
         treeDragActive: false,
         dropOverDir: null,
         dragCounter: 0,
@@ -907,6 +915,7 @@ window.editorPlugin = (function () {
       },
 
       async onNodeClick(item) {
+        this.selectedPath = item.path;
         if (item.isDir) {
           if (item.expanded) this.collapseDir(item);
           else await this.expandDir(item);
@@ -964,6 +973,7 @@ window.editorPlugin = (function () {
 
       async activateTab(path) {
         if (this.activeTabPath === path) return;
+        this.selectedPath = path;
 
         if (this.activeTabPath) {
           const cur = tabsData.get(this.activeTabPath);
@@ -982,10 +992,13 @@ window.editorPlugin = (function () {
           this.setStatus('已開啟：' + path);
         }
 
+        await this.revealInTree(path);
         this.scheduleMetaSave();
         this.$nextTick(() => {
-          const el = document.querySelector('.tab.active');
-          if (el) el.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+          const tabEl = document.querySelector('.tab.active');
+          if (tabEl) tabEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+          const treeEl = document.querySelector(`[data-path="${CSS.escape(path)}"]`);
+          if (treeEl) treeEl.scrollIntoView({ block: 'nearest' });
         });
       },
 
@@ -1269,6 +1282,8 @@ window.editorPlugin = (function () {
       // ── Context menu ──────────────────────────────────────────────────────
 
       onTreeContextMenu(e, item) {
+        this.selectedPath = item ? item.path : null;
+        this.treeFocused = true;
         if (!item) {
           this.showCtxMenu(e.clientX, e.clientY, [
             { label: '新增檔案', action: () => this.newFile('') },
@@ -1280,8 +1295,8 @@ window.editorPlugin = (function () {
         } else if (item.isDir) {
           const path = item.path;
           this.showCtxMenu(e.clientX, e.clientY, [
-            { label: '在此新增檔案', action: () => this.newFile(path) },
-            { label: '在此新增目錄', action: () => this.mkdir(path) },
+            { label: '新增檔案', action: () => this.newFile(path) },
+            { label: '新增目錄', action: () => this.mkdir(path) },
             { label: '上傳到此處…', action: () => this.triggerUpload(path) },
             '-',
             { label: '重新命名', action: () => this.renameItem(item) },
@@ -1511,9 +1526,10 @@ window.editorPlugin = (function () {
         this.sidebarCollapsed = true;
       }
 
-      document.addEventListener('click', () => {
+      document.addEventListener('click', (e) => {
         this.hideCtxMenu();
         this.settingsOpen = false;
+        if (!e.target.closest('#file-tree')) this.treeFocused = false;
       });
       document.addEventListener('contextmenu', (e) => {
         if (!e.target.closest('#file-tree')) this.hideCtxMenu();
@@ -1599,6 +1615,8 @@ window.editorPlugin = (function () {
         });
 
         this.editorReady = true;
+
+        // Load file tree
         await this.loadTree();
 
         // Auto-load plugins listed in plugins.json (absent file = no plugins)
@@ -1619,7 +1637,9 @@ window.editorPlugin = (function () {
           console.warn('[plugin] plugins.json load error:', e);
         }
 
+        // Restore session (tabs, active tab, unsaved contents)
         await this.restoreSession();
+
         this.appReady = true;
       });
     },
