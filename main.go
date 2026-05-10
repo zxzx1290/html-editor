@@ -38,8 +38,10 @@ type UserConfig struct {
 }
 
 type Config struct {
+	Host          string                `json:"host"`          // overrides -host flag if flag not set
+	Port          int                   `json:"port"`          // overrides -port flag if flag not set
 	SessionTTL    int64                 `json:"sessionTTL"`    // seconds; 0 → 86400
-	MaxUploadSize int64                 `json:"s.maxUploadSize()"` // bytes; 0 → 50MB
+	MaxUploadSize int64                 `json:"maxUploadSize"` // bytes; 0 → 50MB
 	Users         map[string]UserConfig `json:"users"`
 }
 
@@ -294,6 +296,16 @@ func main() {
 		}
 		s.config = &cfg
 		fmt.Printf("[config] %d user(s) loaded\n", len(cfg.Users))
+
+		// Apply host/port from config only when the CLI flag was not explicitly set.
+		set := make(map[string]bool)
+		flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
+		if !set["host"] && cfg.Host != "" {
+			*host = cfg.Host
+		}
+		if !set["port"] && cfg.Port != 0 {
+			*port = cfg.Port
+		}
 	}
 
 	// Background: clean up expired sessions hourly + log server status
