@@ -345,7 +345,11 @@ func main() {
 	mux.HandleFunc("/",             s.checkSession(s.handleIndex))
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)
-	logf("html-editor listening on http://%s  workspace=%s  config=%v\n", addr, abs, *configFile != "")
+	if *configFile != "" {
+		logf("html-editor listening on http://%s  config=%s\n", addr, *configFile)
+	} else {
+		logf("html-editor listening on http://%s  workspace=%s\n", addr, abs)
+	}
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

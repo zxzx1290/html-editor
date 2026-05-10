@@ -23,7 +23,10 @@
 - 圖片預覽（`.png` `.jpg` `.jpeg` `.gif` `.webp` `.ico`）
 - 懶載入樹狀目錄，點擊展開子目錄；建立新目錄後自動展開並捲動到位
 - 拖曳上傳（可拖入側邊欄或指定目錄）、上傳進度條顯示
-- 右鍵選單：新增/重新命名/刪除/下載/上傳
+- 右鍵選單：
+  - 空白處：新增檔案、新增目錄、上傳、重新整理
+  - 目錄：新增檔案、新增目錄、上傳到此處、重新命名、重新整理、刪除目錄
+  - 檔案：開啟、下載、重新命名、刪除
 - Ctrl+S 儲存、Ctrl+W 關閉 tab
 - IndexedDB session 還原：重新整理後自動恢復上次開啟的 tab 與未儲存草稿；session 還原後自動展開樹狀目錄至 active 檔案所在位置
 - 快取衝突偵測：session 還原時若檔案已被他人修改，提示選擇保留草稿或使用伺服器版本
@@ -34,7 +37,10 @@
   - **Minimap**：開／關切換
 - 預設啟用自動換行（Word Wrap）
 - TOTP 二步驟登入（可選）：以 `config.json` 設定帳號，每位使用者擁有獨立 workspace
-- WebSocket：多人同時開啟同一檔案時互相通知
+- Session 自動延長：前端每 60 秒檢查剩餘時間，TTL 不足 12 小時時自動呼叫 `/extend` 延長
+- WebSocket 即時協作（需啟用 config）：
+  - 多人同時開啟同一檔案時互相通知
+  - 每位使用者限一條連線；斷線後 30 秒自動重連
 - Plugin 系統：啟動時自動載入 `static/plugins/plugins.json` 列出的插件
 - 響應式版面，行動裝置支援側邊欄遮罩
 
@@ -104,6 +110,8 @@ go build -o html-editor.exe .
 
 ```json
 {
+  "host": "127.0.0.1",
+  "port": 8080,
   "sessionTTL": 86400,
   "maxUploadSize": 52428800,
   "users": {
@@ -121,6 +129,8 @@ go build -o html-editor.exe .
 
 | 欄位 | 說明 |
 |------|------|
+| `host` | 監聽 host（覆蓋 `-host` flag，CLI flag 若有明確指定則優先） |
+| `port` | 監聽 port（覆蓋 `-port` flag，CLI flag 若有明確指定則優先） |
 | `sessionTTL` | session 有效期（秒）；預設 86400（24 小時） |
 | `maxUploadSize` | 單檔上傳上限（bytes）；預設 52428800（50 MB） |
 | `users.<name>.totpSecret` | TOTP 金鑰（Base32），可用 Google Authenticator 等 App 掃碼 |
@@ -255,9 +265,9 @@ static/
 | `GET` | `/api/config` | 回傳 `{ sessionCheck: bool }`，前端據此決定是否啟用登入流程 |
 | `POST` | `/login` | 登入（form: username, code） |
 | `GET` | `/logout` | 登出並清除 session cookie |
-| `GET` | `/check` | 回傳目前 session 剩餘秒數 |
-| `POST` | `/extend` | 延長 session 有效期 |
-| `GET` | `/ws` | WebSocket 連線；用於同檔案開啟互相通知 |
+| `GET` | `/check` | 回傳 `{ "data": <剩餘秒數> }`；需啟用 config，無 session 回傳 401 |
+| `POST` | `/extend` | 延長 session 有效期；需啟用 config |
+| `GET` | `/ws` | WebSocket 連線；需啟用 config，用於同檔案開啟互相通知 |
 
 所有路徑均以 workspace 為根目錄，後端會阻擋路徑逃逸（`../` 等）。
 
