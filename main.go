@@ -280,6 +280,7 @@ func (s *server) deleteFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	fmt.Printf("[del] %s\n", rel)
 	writeOK(w)
 }
 
@@ -332,6 +333,7 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel, _ := filepath.Rel(s.workspace, dstResolved)
+	fmt.Printf("[upload] %s\n", filepath.ToSlash(rel))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": filepath.ToSlash(rel)})
 }
 
@@ -396,6 +398,7 @@ func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	fmt.Printf("[rename] %s -> %s\n", from, to)
 	writeOK(w)
 }
 
@@ -418,5 +421,6 @@ func (s *server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	fmt.Printf("[mkdir] %s\n", rel)
 	writeOK(w)
 }
