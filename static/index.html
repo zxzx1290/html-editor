@@ -614,9 +614,7 @@ window.editorPlugin = (function () {
   const dialogAlertSvc = {
     show(title, body, detail, cb) {
       const msg = [title, body, detail].filter(Boolean).join('\n');
-      const app = window._editorApp;
-      if (app) app.dlgAlert(msg).then(() => { if (cb) cb(); });
-      else { alert(msg); if (cb) cb(); }
+      window._editorApp.dlgAlert(msg).then(() => { if (cb) cb(); });
     },
   };
 
@@ -979,7 +977,7 @@ window.editorPlugin = (function () {
             visible: true, title: opts.title || '',
             inputMode: !!opts.inputMode, inputValue: opts.defaultValue || '',
             placeholder: opts.placeholder || '', danger: !!opts.danger,
-            confirmText: opts.confirmText || '確定', cancelText: opts.cancelText || '取消',
+            confirmText: opts.confirmText || '確定', cancelText: 'cancelText' in opts ? opts.cancelText : '取消',
             _resolve: resolve,
           });
           this.$nextTick(() => {
@@ -1004,7 +1002,7 @@ window.editorPlugin = (function () {
         return this._dlgShow({ title, ...(opts || {}) });
       },
       dlgAlert(title) {
-        return this._dlgShow({ title, cancelText: '' });
+        return this._dlgShow({ title, cancelText: null });
       },
       dlgPrompt(title, defaultValue, placeholder) {
         return this._dlgShow({ title, inputMode: true, defaultValue: defaultValue || '', placeholder: placeholder || '' });
