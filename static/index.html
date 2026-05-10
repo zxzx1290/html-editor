@@ -480,7 +480,7 @@
           </div>
         </div>
       </div>
-      <button class="btn primary" :disabled="!activeTabPath || activeTabIsImage" @click="saveCurrent">儲存 (Ctrl+S)</button>
+      <button class="btn primary" :disabled="!activeTabPath || activeTabIsImage || !activeTabDirty || isSaving" @click="saveCurrent">{{ isSaving ? '儲存中…' : '儲存 (Ctrl+S)' }}</button>
     </div>
 
     <div id="tab-bar" v-show="tabsList.length > 0">
@@ -765,6 +765,7 @@ window.editorPlugin = (function () {
         },
         settingsOpen: false,
         statusMsg: '',
+        isSaving: false,
         toastMsg: '',
         toastError: false,
         toastVisible: false,
@@ -783,6 +784,9 @@ window.editorPlugin = (function () {
       },
       activeTabIsImage() {
         return this.activeTab ? this.activeTab.isImage : false;
+      },
+      activeTabDirty() {
+        return this.activeTab ? this.activeTab.dirty : false;
       },
     },
 
@@ -1003,9 +1007,10 @@ window.editorPlugin = (function () {
       // ── File operations ───────────────────────────────────────────────────
 
       async saveCurrent() {
-        if (!this.activeTabPath || this.activeTabIsImage) return;
+        if (!this.activeTabPath || this.activeTabIsImage || this.isSaving) return;
         const data = tabsData.get(this.activeTabPath);
         if (!data || !monacoEditor) return;
+        this.isSaving = true;
         const content = monacoEditor.getValue();
         window.editorPlugin.saveService.emit('beforeSave', { value: content, path: this.activeTabPath });
         try {
@@ -1027,6 +1032,8 @@ window.editorPlugin = (function () {
           });
         } catch (e) {
           this.showToast('儲存失敗: ' + e.message, true);
+        } finally {
+          this.isSaving = false;
         }
       },
 
