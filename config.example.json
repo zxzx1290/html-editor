@@ -1,0 +1,14 @@
+{
+  "sessionTTL": 86400,
+  "maxUploadSize": 52428800,
+  "users": {
+    "alice": {
+      "totpSecret": "JBSWY3DPEHPK3PXP",
+      "workspace": "./workspace/alice"
+    },
+    "bob": {
+      "totpSecret": "JBSWY3DPEHPK3PXP",
+      "workspace": "./workspace/bob"
+    }
+  }
+}

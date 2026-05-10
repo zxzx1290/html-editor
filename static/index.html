@@ -19,6 +19,7 @@
     --border: #333333;
     --accent: #007acc;
     --danger: #c84040;
+    --danger-fg: #f48771;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -136,7 +137,7 @@
     color: var(--fg);
   }
   #context-menu .item:hover { background: var(--bg-active); color: #fff; }
-  #context-menu .item.danger { color: #f48771; }
+  #context-menu .item.danger { color: var(--danger-fg); }
   #context-menu .item.danger:hover { background: var(--danger); color: #fff; }
   #context-menu .sep { height: 1px; background: #454545; margin: 4px 0; }
   button.btn {
@@ -298,20 +299,26 @@
     min-height: 22px;
     flex-shrink: 0;
   }
-  #toast {
+  #toast-container {
     position: fixed;
     bottom: 30px;
     right: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 9999;
+    align-items: flex-end;
+  }
+  .toast-item {
     background: #333;
     color: #fff;
     padding: 8px 14px;
     border-radius: 4px;
     border: 1px solid var(--border);
-    z-index: 9999;
     box-shadow: 0 4px 10px rgba(0,0,0,0.4);
     max-width: 360px;
   }
-  #toast.error { background: var(--danger); }
+  .toast-item.error { background: var(--danger); }
   #sidebar-backdrop {
     display: none;
     position: fixed;
@@ -509,6 +516,12 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+          <template v-if="sessionCheck">
+            <div class="settings-sep"></div>
+            <div class="settings-row">
+              <button class="btn" style="width:100%;border-color:var(--danger-fg);color:var(--danger-fg)" @click="doLogout">登出</button>
+            </div>
+          </template>
         </div>
       </div>
       <button class="btn primary" :disabled="!activeTabPath || activeTabIsImage || !activeTabDirty || isSaving" @click="saveCurrent">{{ isSaving ? '儲存中…' : '儲存 (Ctrl+S)' }}</button>
@@ -539,7 +552,9 @@
     <div id="status">{{ statusMsg }}</div>
   </div>
 
-  <div id="toast" v-show="toastVisible" :class="{ error: toastError }">{{ toastMsg }}</div>
+  <div id="toast-container">
+    <div v-for="t in toasts" :key="t.id" class="toast-item" :class="{ error: t.error }">{{ t.msg }}</div>
+  </div>
 
   <div id="modal-overlay" v-show="dlg.visible" @click.self="dlgCancel">
     <div id="modal-box">
@@ -730,7 +745,6 @@ window.editorPlugin = (function () {
   }
 
   let monacoEditor = null;
-  let toastTimer = null;
   const loadedThemes = new Set(['vs', 'vs-dark', 'hc-black', 'hc-light']);
 
   function extOf(path) {
@@ -754,6 +768,160 @@ window.editorPlugin = (function () {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
   }
 
+  // ── Built-in: Session check & WS collaboration ────────────────────────────
+
+  const EDITOR_USER_COOKIE = 'editorUser';
+  const EDITOR_HASH_COOKIE = 'editorHash';
+
+  function getCookieByName(name) {
+    const v = '; ' + document.cookie;
+    const p = v.split('; ' + name + '=');
+    return p.length === 2 ? p.pop().split(';').shift() : '';
+  }
+
+  function initSessionCheck(app) {
+    let extending = false;
+    const timer = setInterval(async function () {
+      try {
+        const r = await fetch('/check');
+        if (r.status === 401) {
+          clearInterval(timer);
+          alert('登入會話期限已到，請重新登入');
+          window.location.href = '/login';
+          return;
+        }
+        if (!r.ok) return;
+        const data = await r.json();
+        const ttl = parseInt(data.data, 10);
+        if (Number.isInteger(ttl) && ttl < 43200 && !extending) {
+          extending = true;
+          fetch('/extend').then(r2 => {
+            if (r2.ok) app.showToast('延長登入時間成功');
+            else if (r2.status === 401) {
+              clearInterval(timer);
+              alert('登入會話已失效，請重新登入');
+              window.location.href = '/login';
+            }
+          }).catch(() => {
+            app.showError('延長登入時間失敗，重新嘗試中');
+          }).finally(() => { extending = false; });
+        }
+      } catch {
+        app.showError('連線失敗，無法確認 session 狀態');
+      }
+    }, 60000);
+  }
+
+  function initWsCollab(app) {
+    const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+    let socket = null;
+    let dupCount = 0;
+
+    function wsSend(data) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify(data));
+    }
+
+    function splitPath(path) {
+      const i = path.lastIndexOf('/');
+      return i >= 0 ? { folder: path.slice(0, i), file: path.slice(i + 1) }
+                    : { folder: '', file: path };
+    }
+
+    function fileOnOpen(path) {
+      const { folder, file } = splitPath(path);
+      wsSend({ type: 'file_on_open', payload: {
+        user: getCookieByName(EDITOR_USER_COOKIE), path: folder, file,
+      }});
+    }
+
+    function fileOnClose(path) {
+      const { folder, file } = splitPath(path);
+      wsSend({ type: 'file_on_close', payload: {
+        user: getCookieByName(EDITOR_USER_COOKIE), path: folder, file,
+      }});
+    }
+
+    function connect() {
+      if (socket && socket.readyState !== WebSocket.CLOSED) return;
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = function () {
+        app.showToast('已上線');
+        window.editorPlugin.tabManagerSvc.getTabs().forEach(t => fileOnOpen(t.path));
+      };
+
+      socket.onmessage = function (event) {
+        const msg = JSON.parse(event.data);
+        switch (msg.type) {
+          case 'error':
+            if (msg.payload === 'duplicate connect') {
+              dupCount++;
+              app.showError('重複連線 #' + dupCount);
+              if (dupCount > 2) window.location.href = '/logout?reason=duplicate_connect';
+            }
+            break;
+          case 'message':
+            app.showToast(msg.payload);
+            break;
+          case 'kick':
+            window.location.href = '/logout?reason=kick';
+            break;
+          case 'same_file_open': {
+            const info = msg.payload;
+            window.editorPlugin.dialogAlertSvc.show(
+              '注意',
+              '重複開啟檔案 ' + info.path + '/' + info.file,
+              '人員：' + info.user,
+              function () {}
+            );
+            break;
+          }
+        }
+      };
+
+      socket.onerror = function (err) {
+        console.error('[ws-collab] error', err);
+      };
+
+      socket.onclose = function () {
+        socket = null;
+        app.showError('已離線，將自動重新連線');
+        console.warn('[ws-collab] connection closed, retrying');
+        setTimeout(connect, 30000);
+      };
+    }
+
+    window.editorPlugin.saveService.on('afterSave', function (e) {
+      const { folder, file } = splitPath(e.path);
+      wsSend({ type: 'after_save', payload: {
+        user: getCookieByName(EDITOR_USER_COOKIE),
+        hash: getCookieByName(EDITOR_HASH_COOKIE),
+        document: e.document.title,
+        path: e.path,
+        folder,
+        file,
+      }});
+    });
+
+    window.editorPlugin.tabManagerSvc.on('open', function (e) { fileOnOpen(e.tab.path); });
+    window.editorPlugin.tabManagerSvc.on('tabDestroy', function (e) { fileOnClose(e.tab.path); });
+
+    connect();
+  }
+
+  async function initBuiltins(app) {
+    let cfg;
+    try { cfg = await fetch('/api/config').then(r => r.json()); } catch { return; }
+    if (cfg.sessionCheck) {
+      app.sessionCheck = true;
+      initSessionCheck(app);
+      initWsCollab(app);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+
   const { createApp } = Vue;
 
   createApp({
@@ -776,12 +944,11 @@ window.editorPlugin = (function () {
           fontFamily: s.fontFamily || '',
           minimap: s.minimap !== false,
         },
+        sessionCheck: false,
         settingsOpen: false,
         statusMsg: '',
         isSaving: false,
-        toastMsg: '',
-        toastError: false,
-        toastVisible: false,
+        toasts: [],
         ctxMenu: { visible: false, x: 0, y: 0, items: [] },
         imagePreviewSrc: '',
         editorReady: false,
@@ -843,13 +1010,17 @@ window.editorPlugin = (function () {
         return this._dlgShow({ title, inputMode: true, defaultValue: defaultValue || '', placeholder: placeholder || '' });
       },
 
-      showToast(msg, isError) {
-        this.toastMsg = msg;
-        this.toastError = !!isError;
-        this.toastVisible = true;
-        clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => { this.toastVisible = false; }, 2400);
+      _pushToast(msg, error) {
+        const id = Date.now() + Math.random();
+        this.toasts.push({ id, msg, error });
+        setTimeout(() => {
+          const i = this.toasts.findIndex(t => t.id === id);
+          if (i >= 0) this.toasts.splice(i, 1);
+        }, 3000);
       },
+
+      showToast(msg) { this._pushToast(msg, false); },
+      showError(msg) { this._pushToast(msg, true); },
 
       setStatus(msg) {
         this.statusMsg = msg || '';
@@ -885,7 +1056,7 @@ window.editorPlugin = (function () {
             path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false,
           }));
         } catch (e) {
-          this.showToast('載入檔案列表失敗：' + e.message, true);
+          this.showError('載入檔案列表失敗：' + e.message);
         }
       },
 
@@ -901,7 +1072,7 @@ window.editorPlugin = (function () {
           this.treeItems.splice(idx + 1, 0, ...children);
         } catch (e) {
           item.expanded = false;
-          this.showToast('載入目錄失敗：' + e.message, true);
+          this.showError('載入目錄失敗：' + e.message);
         }
       },
 
@@ -959,7 +1130,7 @@ window.editorPlugin = (function () {
               this.tabsList.push({ path, dirty: false, isImage: false });
               window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
             } catch (e) {
-              this.showToast('開啟失敗: ' + e.message, true);
+              this.showError('開啟失敗: ' + e.message);
               return;
             }
           }
@@ -1055,7 +1226,7 @@ window.editorPlugin = (function () {
             value: content,
           });
         } catch (e) {
-          this.showToast('儲存失敗: ' + e.message, true);
+          this.showError('儲存失敗: ' + e.message);
         } finally {
           this.isSaving = false;
         }
@@ -1109,7 +1280,7 @@ window.editorPlugin = (function () {
           }
           this.showToast('已刪除');
         } catch (e) {
-          this.showToast('刪除失敗: ' + e.message, true);
+          this.showError('刪除失敗: ' + e.message);
         }
       },
 
@@ -1145,14 +1316,14 @@ window.editorPlugin = (function () {
               let msg = xhr.statusText;
               try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
               entry.error = true;
-              this.showToast('上傳失敗 ' + file.name + '：' + msg, true);
+              this.showError('上傳失敗 ' + file.name + '：' + msg);
               remove(3000);
               reject(new Error(msg));
             }
           };
           xhr.onerror = () => {
             entry.error = true;
-            this.showToast('上傳失敗 ' + file.name + '：網路錯誤', true);
+            this.showError('上傳失敗 ' + file.name + '：網路錯誤');
             remove(3000);
             reject(new Error('網路錯誤'));
           };
@@ -1218,7 +1389,7 @@ window.editorPlugin = (function () {
           await this.refreshDir(parentDir);
           this.showToast('已重新命名為：' + newName);
         } catch (e) {
-          this.showToast('重新命名失敗：' + e.message, true);
+          this.showError('重新命名失敗：' + e.message);
         }
       },
 
@@ -1247,7 +1418,7 @@ window.editorPlugin = (function () {
           });
           this.showToast('已建立目錄：' + path);
         } catch (e) {
-          this.showToast('建立失敗：' + e.message, true);
+          this.showError('建立失敗：' + e.message);
         }
       },
 
@@ -1275,7 +1446,7 @@ window.editorPlugin = (function () {
           await this.refreshDir(parentDir || '');
           await this.openFile(path);
         } catch (e) {
-          this.showToast('建立失敗：' + e.message, true);
+          this.showError('建立失敗：' + e.message);
         }
       },
 
@@ -1494,7 +1665,7 @@ window.editorPlugin = (function () {
           monaco.editor.setTheme(theme);
           persistSettings({ theme });
         } catch {
-          this.showToast('載入主題失敗', true);
+          this.showError('載入主題失敗');
           this.settings.theme = prev;
         }
       },
@@ -1517,6 +1688,8 @@ window.editorPlugin = (function () {
         if (monacoEditor) monacoEditor.updateOptions({ minimap: { enabled: this.settings.minimap } });
         persistSettings({ minimap: this.settings.minimap });
       },
+
+      doLogout() { window.location.href = '/logout'; },
     },
 
     mounted() {
@@ -1636,6 +1809,9 @@ window.editorPlugin = (function () {
         } catch (e) {
           console.warn('[plugin] plugins.json load error:', e);
         }
+
+        // Init built-in session check + WS collaboration
+        await initBuiltins(this);
 
         // Restore session (tabs, active tab, unsaved contents)
         await this.restoreSession();

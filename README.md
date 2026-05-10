@@ -1,6 +1,6 @@
 # HTML Editor
 
-基於 Go + Monaco Editor 的網頁檔案編輯器，可離線運作，不依賴任何第三方 Go 套件。
+基於 Go + Monaco Editor 的網頁檔案編輯器，可離線運作。
 
 ## 功能
 
@@ -33,7 +33,8 @@
   - **字體大小**：10–32 px
   - **Minimap**：開／關切換
 - 預設啟用自動換行（Word Wrap）
-- 可選 HTTP Basic Auth 保護
+- TOTP 二步驟登入（可選）：以 `config.json` 設定帳號，每位使用者擁有獨立 workspace
+- WebSocket：多人同時開啟同一檔案時互相通知
 - Plugin 系統：啟動時自動載入 `static/plugins/plugins.json` 列出的插件
 - 響應式版面，行動裝置支援側邊欄遮罩
 
@@ -72,11 +73,14 @@ go build -o html-editor.exe .
 # 本機使用（無密碼）
 ./html-editor
 
-# 開放外部連線並啟用密碼保護
-./html-editor -host 0.0.0.0 -port 8080 -username admin -password yourpassword
-
 # 指定 workspace 目錄
 ./html-editor -workspace /path/to/your/files
+
+# 啟用 TOTP 登入（需先建立 config.json，見下方說明）
+./html-editor -config config.json
+
+# 開放外部連線並指定 port
+./html-editor -host 0.0.0.0 -port 8080 -config config.json
 ```
 
 啟動後開啟瀏覽器前往 [http://127.0.0.1:8080](http://127.0.0.1:8080)。
@@ -89,22 +93,55 @@ go build -o html-editor.exe .
 |------|--------|------|
 | `-host` | `127.0.0.1` | 監聽 host（`0.0.0.0` 表示允許外部連線） |
 | `-port` | `8080` | 監聽 port |
-| `-workspace` | `./workspace` | 檔案存放目錄，不存在時自動建立 |
-| `-username` | `admin` | Basic Auth 帳號（需搭配 `-password` 才生效） |
-| `-password` | _(空)_ | Basic Auth 密碼；**對外部開放時強烈建議設定** |
+| `-workspace` | `./workspace` | 無 config 時的檔案存放目錄，不存在時自動建立 |
+| `-config` | _(空)_ | config.json 路徑；若省略且當前目錄存在 `config.json` 則自動載入 |
 
-> **注意**：若未設定 `-password`，任何人皆可存取編輯器，請勿在公開網路上使用預設設定。
+> **注意**：未設定 `-config` 時，任何人皆可存取編輯器，請勿在公開網路上使用預設設定。
+
+## config.json 設定
+
+`config.json` 用於啟用 TOTP 登入與多使用者 workspace 隔離：
+
+```json
+{
+  "sessionTTL": 86400,
+  "maxUploadSize": 52428800,
+  "users": {
+    "alice": {
+      "totpSecret": "JBSWY3DPEHPK3PXP",
+      "workspace": "./workspace/alice"
+    },
+    "bob": {
+      "totpSecret": "JBSWY3DPEHPK3PXP",
+      "workspace": "./workspace/bob"
+    }
+  }
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| `sessionTTL` | session 有效期（秒）；預設 86400（24 小時） |
+| `maxUploadSize` | 單檔上傳上限（bytes）；預設 52428800（50 MB） |
+| `users.<name>.totpSecret` | TOTP 金鑰（Base32），可用 Google Authenticator 等 App 掃碼 |
+| `users.<name>.workspace` | 該使用者的 workspace 目錄 |
+
+登入頁面（`/login`）要求輸入帳號與 TOTP 驗證碼。同一 IP 5 分鐘內登入失敗 5 次將被暫時封鎖。
 
 ## 目錄結構
 
 ```
 html-editor/
-├── main.go               # Go 後端（單一檔案，無第三方依賴）
+├── main.go               # Go 後端
 ├── go.mod
+├── go.sum
+├── config.json           # 可選，TOTP 登入設定（不進 git）
+├── config.example.json   # 設定範例
 ├── package.json          # 僅用於安裝靜態資源
 ├── setup-monaco.js       # 建置腳本（npm install 時自動執行）
 ├── static/
 │   ├── index.html        # 前端（Vue 3 + Monaco，單一 HTML 檔案）
+│   ├── login.html        # 登入頁面（啟用 config.json 時使用）
 │   ├── vue.global.js     # Vue 3 runtime
 │   ├── monaco/           # Monaco 靜態檔案（由 npm install 產生，不進 git）
 │   ├── themes/           # 語法高亮主題 JSON（由 npm install 產生，不進 git）
@@ -189,8 +226,10 @@ Plugin 為 IIFE，透過 `window.editorPlugin.services` 取得各服務：
 
 ```
 html-editor（或 html-editor.exe）
+config.json   ← 若啟用 TOTP 登入
 static/
   index.html
+  login.html
   vue.global.js
   monaco/
   themes/
@@ -213,6 +252,12 @@ static/
 | `GET` | `/api/download?path=` | 下載檔案（含 Content-Disposition） |
 | `POST` | `/api/mkdir?path=` | 建立目錄（含巢狀） |
 | `POST` | `/api/rename?from=&to=` | 重新命名或移動 |
+| `GET` | `/api/config` | 回傳 `{ sessionCheck: bool }`，前端據此決定是否啟用登入流程 |
+| `POST` | `/login` | 登入（form: username, code） |
+| `GET` | `/logout` | 登出並清除 session cookie |
+| `GET` | `/check` | 回傳目前 session 剩餘秒數 |
+| `POST` | `/extend` | 延長 session 有效期 |
+| `GET` | `/ws` | WebSocket 連線；用於同檔案開啟互相通知 |
 
 所有路徑均以 workspace 為根目錄，後端會阻擋路徑逃逸（`../` 等）。
 
@@ -222,4 +267,4 @@ static/
 
 前端圖片預覽支援（點擊後顯示預覽而非開啟編輯器）：`.png` `.jpg` `.jpeg` `.gif` `.webp` `.ico`
 
-單檔上傳上限：50 MB。
+單檔上傳上限：50 MB（可透過 config.json `maxUploadSize` 調整）。

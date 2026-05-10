@@ -7,3 +7,4 @@ html-editor
 html-editor.exe
 package-lock.json
 /.claude
+/config.json
