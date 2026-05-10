@@ -43,6 +43,7 @@
   #sidebar.collapsed { margin-left: -250px; }
   #sidebar-header {
     padding: 8px 10px;
+    min-height: 38px;
     background: var(--bg-bar);
     font-weight: bold;
     font-size: 11px;
@@ -55,8 +56,33 @@
   }
   #file-tree {
     flex: 1;
-    overflow-y: auto;
+    overflow: auto;
     padding: 4px 0;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  #file-tree:hover {
+    scrollbar-color: #555 transparent;
+  }
+  #file-tree::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  #file-tree::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  #file-tree::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  #file-tree::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 4px;
+  }
+  #file-tree:hover::-webkit-scrollbar-thumb {
+    background: #555;
+  }
+  #file-tree::-webkit-scrollbar-thumb:hover {
+    background: #888;
   }
   .tree-node {
     display: flex;
@@ -65,8 +91,7 @@
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    min-width: max-content;
   }
   .tree-node:hover { background: var(--bg-hover); }
   .tree-node.active { background: var(--bg-active); color: #fff; }
@@ -168,13 +193,13 @@
   .toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); }
   #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   #toolbar {
-    padding: 6px 12px;
+    padding: 0 12px;
     background: var(--bg-bar);
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
     gap: 10px;
-    min-height: 38px;
+    height: 38px;
     flex-shrink: 0;
   }
   #toggle-sidebar {
@@ -594,22 +619,8 @@ window.editorPlugin = (function () {
         if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
         return r.text();
       });
-      let usedDefine = false;
-      const customDefine = function (factory) {
-        usedDefine = true;
-        const main = factory(null, {}, {});
-        if (typeof main !== 'function') return;
-        const imports = {};
-        (main.consumes || []).forEach(k => { if (services[k] !== undefined) imports[k] = services[k]; });
-        main({}, imports, function (err, provided) {
-          if (err) { console.error('[plugin load error]', err); return; }
-          if (!provided) return;
-          Object.values(provided).forEach(p => { if (p && typeof p.emit === 'function') p.emit('load'); });
-          console.log('[plugin] loaded (define):', url, '→', Object.keys(provided));
-        });
-      };
-      new Function('define', code)(customDefine);
-      if (!usedDefine) console.log('[plugin] loaded:', url);
+      new Function(code)();
+      console.log('[plugin] loaded:', url);
     } catch (e) {
       console.error('[plugin] failed to load:', url, e);
     }

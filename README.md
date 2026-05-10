@@ -4,15 +4,35 @@
 
 ## 功能
 
-- Monaco Editor（VS Code 編輯器核心），支援 HTML/CSS/JS/JSON/Markdown/PHP 等語法高亮
-- 多 tab 開檔，支援同時編輯多個檔案
-- 圖片預覽（PNG、JPG、GIF、WebP、ICO）
-- 懶載入樹狀目錄，點擊展開子目錄
-- 拖曳上傳、右鍵選單、新增/重新命名/刪除/下載檔案
+- Monaco Editor（VS Code 編輯器核心），語法高亮對應：
+
+  | 副檔名 | 語言 |
+  |--------|------|
+  | `.html` `.htm` | HTML |
+  | `.css` | CSS |
+  | `.js` | JavaScript |
+  | `.json` | JSON |
+  | `.md` | Markdown |
+  | `.txt` | Plain Text |
+  | `.svg` | XML |
+  | `.php` | PHP |
+  | 其他 | Plain Text |
+
+- 多 tab 開檔，支援同時編輯多個檔案；tab 標題顯示 ● 代表有未儲存變更
+- 儲存按鈕：有未儲存變更時才可點擊；儲存中顯示「儲存中…」並阻擋重複觸發
+- 圖片預覽（`.png` `.jpg` `.jpeg` `.gif` `.webp` `.ico`）
+- 懶載入樹狀目錄，點擊展開子目錄；建立新目錄後自動展開並捲動到位
+- 拖曳上傳（可拖入側邊欄或指定目錄）、上傳進度條顯示
+- 右鍵選單：新增/重新命名/刪除/下載/上傳
 - Ctrl+S 儲存、Ctrl+W 關閉 tab
-- IndexedDB session 還原：重新整理後自動恢復上次開啟的 tab 與未儲存內容
+- IndexedDB session 還原：重新整理後自動恢復上次開啟的 tab 與未儲存草稿；session 還原後自動展開樹狀目錄至 active 檔案所在位置
 - 快取衝突偵測：session 還原時若檔案已被他人修改，提示選擇保留草稿或使用伺服器版本
-- 編輯器設定（主題、字體、字體大小、Minimap），儲存於 localStorage
+- 編輯器設定（儲存於 localStorage）：
+  - **主題**：Dark、Light、HC Dark、HC Light（內建）；Monokai、Dracula、Nord、Cobalt2、Solarized Dark、Solarized Light、Tomorrow Night、Tomorrow Night Eighties（擴充）
+  - **字體**：預設、Consolas、Menlo、Courier New、Roboto Mono
+  - **字體大小**：10–32 px
+  - **Minimap**：開／關切換
+- 預設啟用自動換行（Word Wrap）
 - 可選 HTTP Basic Auth 保護
 - Plugin 系統：啟動時自動載入 `static/plugins/plugins.json` 列出的插件
 - 響應式版面，行動裝置支援側邊欄遮罩
@@ -134,15 +154,15 @@ Plugin 為 IIFE，透過 `window.editorPlugin.services` 取得各服務：
 
     tabManager.on('open', function (e) {
         // e.tab.path           — 開啟的檔案路徑
-        // e.tab.document.value — 檔案內容
+        // e.tab.document.value — 檔案內容（初次開啟時為實際內容；session 還原時亦會觸發）
     });
 
     tabManager.on('tabDestroy', function (e) {
         // e.tab.path — 關閉的檔案路徑
     });
 
-    // 取得目前已開啟的所有 tab
-    var tabs = tabManager.getTabs(); // [{ path, document: { title } }, ...]
+    // 取得目前已開啟的所有 tab（document.value 永遠為空字串，請透過 open 事件取得內容）
+    var tabs = tabManager.getTabs(); // [{ path, document: { title, value: '' } }, ...]
 
     // 顯示 toast 通知
     bubble.popup('訊息文字');
@@ -151,6 +171,18 @@ Plugin 為 IIFE，透過 `window.editorPlugin.services` 取得各服務：
     alertDia.show('標題', '內文', '細節', function () { /* 關閉後回呼 */ });
 })();
 ```
+
+#### 可用服務一覽
+
+| 服務名稱 | 說明 |
+|----------|------|
+| `save` | beforeSave / afterSave 事件 |
+| `tabManager` | open / tabDestroy 事件；`getTabs()` |
+| `notification.bubble` | `popup(msg)` — toast 通知 |
+| `dialog.alert` | `show(title, body, detail, cb)` — 警告對話框 |
+| `http` | 保留，尚未實作（空物件） |
+
+> **注意**：Plugin 在 session 還原之前載入，因此 `tabManager.on('open', ...)` 的處理器會在 session 還原時對每個還原的 tab 觸發一次。
 
 ## 部署
 
@@ -174,7 +206,7 @@ static/
 
 | 方法 | 路徑 | 說明 |
 |------|------|------|
-| `GET` | `/api/files?path=` | 列出目錄內容 |
+| `GET` | `/api/files?path=` | 列出目錄內容；回傳 `{ files: [{ path, name, isDir, size }] }`，目錄排在前，同層按名稱排序 |
 | `GET` | `/api/file?path=` | 讀取檔案 |
 | `PUT` | `/api/file?path=` | 寫入檔案（body 為純文字） |
 | `DELETE` | `/api/file?path=` | 刪除檔案或目錄 |
