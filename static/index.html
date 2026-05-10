@@ -574,11 +574,6 @@ window.editorPlugin = (function () {
     emit(ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { console.error('[plugin emit]', ev, e); } }); }
   }
 
-  function Plugin(author, consumes) { this._l = {}; }
-  Plugin.prototype.on  = function (ev, fn) { (this._l[ev] = this._l[ev] || []).push(fn); };
-  Plugin.prototype.emit = function (ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { console.error('[plugin]', e); } }); };
-  Plugin.prototype.freezePublicAPI = function () {};
-
   const saveService = new EventEmitter();
 
   const tabManagerSvc = new EventEmitter();
@@ -605,12 +600,10 @@ window.editorPlugin = (function () {
   };
 
   const services = {
-    Plugin,
     save: saveService,
     'dialog.alert': dialogAlertSvc,
     tabManager: tabManagerSvc,
     'notification.bubble': bubbleSvc,
-    http: {},
   };
 
   async function loadPlugin(url) {
@@ -646,6 +639,7 @@ window.editorPlugin = (function () {
   const SETTINGS_KEY = 'html-editor-settings';
   // Monaco models and view states stored outside Vue reactivity
   const tabsData = new Map(); // path → { model, originalContent, viewState, isImage }
+  const openingPaths = new Set(); // paths currently being fetched (race-condition guard)
 
   // ── IndexedDB session persistence ─────────────────────────────────────────
   // meta  store: key='tabs' → { tabs:[...paths], activeTab:'...' }
@@ -940,26 +934,32 @@ window.editorPlugin = (function () {
           await this.activateTab(path);
           return;
         }
+        if (openingPaths.has(path)) return;
+        openingPaths.add(path);
 
-        if (isImagePath(path)) {
-          tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
-          this.tabsList.push({ path, dirty: false, isImage: true });
-          window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
-        } else {
-          try {
-            const text = await this.api('/api/file?path=' + encodeURIComponent(path));
-            const model = monaco.editor.createModel(text, detectLang(path));
-            tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
-            this.tabsList.push({ path, dirty: false, isImage: false });
-            window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
-          } catch (e) {
-            this.showToast('開啟失敗: ' + e.message, true);
-            return;
+        try {
+          if (isImagePath(path)) {
+            tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
+            this.tabsList.push({ path, dirty: false, isImage: true });
+            window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
+          } else {
+            try {
+              const text = await this.api('/api/file?path=' + encodeURIComponent(path));
+              const model = monaco.editor.createModel(text, detectLang(path));
+              tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
+              this.tabsList.push({ path, dirty: false, isImage: false });
+              window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
+            } catch (e) {
+              this.showToast('開啟失敗: ' + e.message, true);
+              return;
+            }
           }
-        }
 
-        await this.activateTab(path);
-        this.scheduleMetaSave();
+          await this.activateTab(path);
+          this.scheduleMetaSave();
+        } finally {
+          openingPaths.delete(path);
+        }
       },
 
       async activateTab(path) {

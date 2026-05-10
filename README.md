@@ -180,7 +180,6 @@ Plugin 為 IIFE，透過 `window.editorPlugin.services` 取得各服務：
 | `tabManager` | open / tabDestroy 事件；`getTabs()` |
 | `notification.bubble` | `popup(msg)` — toast 通知 |
 | `dialog.alert` | `show(title, body, detail, cb)` — 警告對話框 |
-| `http` | 保留，尚未實作（空物件） |
 
 > **注意**：Plugin 在 session 還原之前載入，因此 `tabManager.on('open', ...)` 的處理器會在 session 還原時對每個還原的 tab 觸發一次。
 
