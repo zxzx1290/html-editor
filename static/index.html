@@ -1886,6 +1886,17 @@ window.editorPlugin = (function () {
           e.preventDefault();
           if (this.activeTabPath) this.closeTab(this.activeTabPath);
         }
+        if (this.treeFocused && e.key === 'Delete' && !e.ctrlKey && !e.metaKey) {
+          const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
+          const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
+          if (selItems.length > 1) {
+            e.preventDefault();
+            this.deleteSelected(selItems);
+          } else if (selItem) {
+            e.preventDefault();
+            this.deleteFile(selItem.path, selItem.isDir);
+          }
+        }
         if (this.treeFocused && (e.ctrlKey || e.metaKey)) {
           const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
           const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
