@@ -445,6 +445,11 @@ func workspaceFromCtx(r *http.Request) string {
 	return ws
 }
 
+func usernameFromCtx(r *http.Request) string {
+	u, _ := r.Context().Value(ctxUsername).(string)
+	return u
+}
+
 func tokenFromCtx(r *http.Request) string {
 	t, _ := r.Context().Value(ctxToken).(string)
 	return t
@@ -843,7 +848,7 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "is a directory")
 		return
 	}
-	logf("[file-open] %s\n", rel)
+	logf("[file-open] user=%s %s\n", usernameFromCtx(r), rel)
 	http.ServeFile(w, r, abs)
 }
 
@@ -872,7 +877,7 @@ func (s *server) writeFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	logf("[file-save] %s\n", rel)
+	logf("[file-save] user=%s %s\n", usernameFromCtx(r), rel)
 	writeOK(w)
 }
 
@@ -908,7 +913,7 @@ func (s *server) deleteFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	logf("[file-del] %s\n", rel)
+	logf("[file-del] user=%s %s\n", usernameFromCtx(r), rel)
 	writeOK(w)
 }
 
@@ -960,7 +965,7 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel, _ := filepath.Rel(ws, dstResolved)
-	logf("[file-upload] %s\n", filepath.ToSlash(rel))
+	logf("[file-upload] user=%s %s\n", usernameFromCtx(r), filepath.ToSlash(rel))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": filepath.ToSlash(rel)})
 }
 
@@ -1030,7 +1035,7 @@ func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
 	}
 	relTo, _ := filepath.Rel(ws, absTo)
 	relTo = filepath.ToSlash(relTo)
-	logf("[file-rename] %s -> %s\n", from, relTo)
+	logf("[file-rename] user=%s %s -> %s\n", usernameFromCtx(r), from, relTo)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "to": relTo})
 }
 
@@ -1053,7 +1058,7 @@ func (s *server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	logf("[file-mkdir] %s\n", rel)
+	logf("[file-mkdir] user=%s %s\n", usernameFromCtx(r), rel)
 	writeOK(w)
 }
 
@@ -1086,7 +1091,7 @@ func (s *server) handleCopy(w http.ResponseWriter, r *http.Request) {
 	}
 	relTo, _ := filepath.Rel(ws, absTo)
 	relTo = filepath.ToSlash(relTo)
-	logf("[file-copy] %s -> %s\n", from, relTo)
+	logf("[file-copy] user=%s %s -> %s\n", usernameFromCtx(r), from, relTo)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": relTo})
 }
 

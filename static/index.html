@@ -212,7 +212,7 @@
     font-size: 16px;
     padding: 0 4px;
   }
-  #current-file { flex: 1; font-weight: 500; color: var(--fg); }
+  #top-status { flex: 1; font-weight: 500; color: var(--fg); }
   #tab-bar {
     display: flex;
     background: var(--bg-side);
@@ -469,7 +469,7 @@
   <div id="main">
     <div id="toolbar">
       <button id="toggle-sidebar" @click="sidebarCollapsed = !sidebarCollapsed" title="切換側邊欄">☰</button>
-      <span id="current-file">{{ tabsList.length === 0 ? '尚未開啟檔案' : '' }}</span>
+      <span id="top-status"></span>
       <div id="settings-wrap" @click.stop>
         <button class="btn" @click="settingsOpen = !settingsOpen">⚙ 設定</button>
         <div id="settings-panel" v-show="settingsOpen">
