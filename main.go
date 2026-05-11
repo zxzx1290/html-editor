@@ -37,12 +37,15 @@ type UserConfig struct {
 }
 
 type Config struct {
-	Host          string                `json:"host"`
-	Port          int                   `json:"port"`
-	SessionTTL    int64                 `json:"sessionTTL"`    // seconds; 0 → 86400
-	MaxUploadSize int64                 `json:"maxUploadSize"` // bytes; 0 → 50MB
-	Title         string                `json:"title"`         // app display name; default "HTML Editor"
-	Users         map[string]UserConfig `json:"users"`
+	Host                 string                `json:"host"`
+	Port                 int                   `json:"port"`
+	SessionTTL           int64                 `json:"sessionTTL"`           // seconds; 0 → 86400
+	MaxUploadSize        int64                 `json:"maxUploadSize"`        // bytes; 0 → 50MB
+	Title                string                `json:"title"`                // app display name; default "HTML Editor"
+	RateLimitWindow      int64                 `json:"rateLimitWindow"`      // seconds; 0 → 300
+	RateLimitMaxAttempts int                   `json:"rateLimitMaxAttempts"` // 0 → 5
+	RateLimitBanDuration int64                 `json:"rateLimitBanDuration"` // seconds; 0 → same as window
+	Users                map[string]UserConfig `json:"users"`
 }
 
 // ─── Session ──────────────────────────────────────────────────────────────────
@@ -55,32 +58,59 @@ type Session struct {
 // ─── Rate limiter (in-memory, resets on restart) ──────────────────────────────
 
 type rateLimiter struct {
-	mu       sync.Mutex
-	attempts map[string][]time.Time
+	mu          sync.Mutex
+	attempts    map[string][]time.Time
+	bans        map[string]time.Time
+	window      time.Duration
+	maxAttempts int
+	banDuration time.Duration
 }
 
-func newRateLimiter() *rateLimiter {
-	return &rateLimiter{attempts: make(map[string][]time.Time)}
+func newRateLimiter(window time.Duration, maxAttempts int, banDuration time.Duration) *rateLimiter {
+	return &rateLimiter{
+		attempts:    make(map[string][]time.Time),
+		bans:        make(map[string]time.Time),
+		window:      window,
+		maxAttempts: maxAttempts,
+		banDuration: banDuration,
+	}
 }
 
 func (rl *rateLimiter) isBlocked(ip string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	now := time.Now()
+	if expiry, ok := rl.bans[ip]; ok {
+		if now.Before(expiry) {
+			return true
+		}
+		delete(rl.bans, ip)
+		delete(rl.attempts, ip)
+	}
 	var recent []time.Time
 	for _, t := range rl.attempts[ip] {
-		if now.Sub(t) < 5*time.Minute {
+		if now.Sub(t) < rl.window {
 			recent = append(recent, t)
 		}
 	}
 	rl.attempts[ip] = recent
-	return len(recent) >= 5
+	return len(recent) >= rl.maxAttempts
 }
 
 func (rl *rateLimiter) record(ip string) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-	rl.attempts[ip] = append(rl.attempts[ip], time.Now())
+	now := time.Now()
+	rl.attempts[ip] = append(rl.attempts[ip], now)
+	var recent int
+	for _, t := range rl.attempts[ip] {
+		if now.Sub(t) < rl.window {
+			recent++
+		}
+	}
+	if recent >= rl.maxAttempts {
+		rl.bans[ip] = now.Add(rl.banDuration)
+	}
 }
 
 // ─── WebSocket types ──────────────────────────────────────────────────────────
@@ -340,10 +370,23 @@ func main() {
 		port = cfg.Port
 	}
 
+	rlWindow := time.Duration(cfg.RateLimitWindow) * time.Second
+	if rlWindow <= 0 {
+		rlWindow = 5 * time.Minute
+	}
+	rlMax := cfg.RateLimitMaxAttempts
+	if rlMax <= 0 {
+		rlMax = 5
+	}
+	rlBan := time.Duration(cfg.RateLimitBanDuration) * time.Second
+	if rlBan <= 0 {
+		rlBan = rlWindow
+	}
+
 	s := &server{
 		config:  &cfg,
 		hub:     newHub(),
-		limiter: newRateLimiter(),
+		limiter: newRateLimiter(rlWindow, rlMax, rlBan),
 	}
 	logf("[config] %d user(s) loaded\n", len(cfg.Users))
 

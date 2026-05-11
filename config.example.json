@@ -3,6 +3,9 @@
   "port": 8080,
   "sessionTTL": 86400,
   "maxUploadSize": 52428800,
+  "rateLimitWindow": 300,
+  "rateLimitMaxAttempts": 5,
+  "rateLimitBanDuration": 300,
   "users": {
     "alice": {
       "totpSecret": "JBSWY3DPEHPK3PXP",

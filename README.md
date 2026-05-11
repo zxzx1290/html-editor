@@ -113,6 +113,9 @@ Windows：
   "sessionTTL": 86400,
   "maxUploadSize": 52428800,
   "title": "HTML Editor",
+  "rateLimitWindow": 300,
+  "rateLimitMaxAttempts": 5,
+  "rateLimitBanDuration": 300,
   "users": {
     "alice": {
       "totpSecret": "JBSWY3DPEHPK3PXP",
@@ -133,10 +136,13 @@ Windows：
 | `sessionTTL` | session 有效期（秒）；預設 86400（24 小時） |
 | `maxUploadSize` | 單檔上傳上限（bytes）；預設 52428800（50 MB） |
 | `title` | 瀏覽器標籤與頁面顯示名稱；預設 `HTML Editor` |
+| `rateLimitWindow` | 失敗次數計算的時間視窗（秒）；預設 300 |
+| `rateLimitMaxAttempts` | 視窗內最大失敗次數；達到後觸發封鎖；預設 5 |
+| `rateLimitBanDuration` | 觸發封鎖後的封鎖時長（秒）；預設同 `rateLimitWindow` |
 | `users.<name>.totpSecret` | TOTP 金鑰（Base32），可用 Google Authenticator 等 App 掃碼 |
 | `users.<name>.workspace` | 該使用者的 workspace 目錄 |
 
-登入頁面（`/login`）要求輸入帳號與 TOTP 驗證碼。同一 IP 5 分鐘內登入失敗 5 次將被暫時封鎖。
+登入頁面（`/login`）要求輸入帳號與 TOTP 驗證碼。同一 IP 在 `rateLimitWindow` 秒內登入失敗達 `rateLimitMaxAttempts` 次，將被封鎖 `rateLimitBanDuration` 秒。
 
 ## 目錄結構
 
