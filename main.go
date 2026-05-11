@@ -151,6 +151,7 @@ func (h *Hub) unregister(c *WsClient) {
 			}
 			if len(filtered) == 0 {
 				delete(h.openFiles, key)
+				logf("[ws] unregister_clear_file user=%s key=%s\n", c.username, key)
 			} else {
 				h.openFiles[key] = filtered
 			}
@@ -687,10 +688,14 @@ func (c *WsClient) readPump(s *server) {
 	for {
 		_, data, err := c.conn.ReadMessage()
 		if err != nil {
+			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
+				logf("[ws] read_error user=%s err=%v\n", c.username, err)
+			}
 			break
 		}
 		var msg wsInMsg
 		if err := json.Unmarshal(data, &msg); err != nil {
+			logf("[ws] bad_json user=%s err=%v\n", c.username, err)
 			continue
 		}
 
@@ -701,11 +706,13 @@ func (c *WsClient) readPump(s *server) {
 				File string `json:"file"`
 			}
 			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				logf("[ws] file_on_open bad_payload user=%s err=%v\n", c.username, err)
 				continue
 			}
+			logf("[ws] file_on_open user=%s path=%s file=%s\n", c.username, p.Path, p.File)
 			others := s.hub.fileOpen(c.username, p.Path, p.File)
 			for _, u := range others {
-				logf("[same_file_open] %s/%s opener=%s existing=%s\n", p.Path, p.File, c.username, u)
+				logf("[ws] same_file_open path=%s file=%s opener=%s existing=%s\n", p.Path, p.File, c.username, u)
 				s.hub.sendTo(c.username, wsOutMsg{Type: "same_file_open", Payload: map[string]string{
 					"user": u, "path": p.Path, "file": p.File,
 				}})
@@ -720,8 +727,10 @@ func (c *WsClient) readPump(s *server) {
 				File string `json:"file"`
 			}
 			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				logf("[ws] file_on_close bad_payload user=%s err=%v\n", c.username, err)
 				continue
 			}
+			logf("[ws] file_on_close user=%s path=%s file=%s\n", c.username, p.Path, p.File)
 			s.hub.fileClose(c.username, p.Path, p.File)
 
 		case "after_save":
@@ -729,9 +738,13 @@ func (c *WsClient) readPump(s *server) {
 				Path string `json:"path"`
 			}
 			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				logf("[ws] after_save bad_payload user=%s err=%v\n", c.username, err)
 				continue
 			}
 			logf("[ws] after_save user=%s path=%s\n", c.username, p.Path)
+
+		default:
+			logf("[ws] unknown_type user=%s type=%s\n", c.username, msg.Type)
 		}
 	}
 }
