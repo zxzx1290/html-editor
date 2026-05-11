@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>登入 - HTML Editor</title>
+<title>登入 - {{APP_TITLE}}</title>
 <style>
   :root {
     --bg: #1e1e1e;
@@ -78,6 +78,9 @@
   input[type="text"]:focus, input[type="password"]:focus {
     border-color: var(--accent);
   }
+  #username {
+    font-size: 18px;
+  }
   input[inputmode="numeric"] {
     letter-spacing: 4px;
     font-size: 18px;
@@ -101,7 +104,7 @@
 </head>
 <body>
 <div class="card">
-  <h2>HTML Editor</h2>
+  <h2>{{APP_TITLE}}</h2>
   <div id="error-msg" class="error-msg"></div>
   <form method="POST" action="/login" autocomplete="off">
     <label for="username">帳號</label>

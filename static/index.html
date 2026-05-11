@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>HTML Editor</title>
+<title>{{APP_TITLE}}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono&display=swap" rel="stylesheet">
@@ -517,6 +517,20 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+          <div class="settings-row">
+            <span class="settings-label">顯示隱形字元</span>
+            <label class="toggle-switch">
+              <input type="checkbox" v-model="settings.showInvisible" @change="onShowInvisibleChange" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">儲存移除空白</span>
+            <label class="toggle-switch">
+              <input type="checkbox" v-model="settings.trimOnSave" @change="onTrimOnSaveChange" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
           <template v-if="sessionCheck">
             <div class="settings-sep"></div>
             <div class="settings-row">
@@ -538,7 +552,7 @@
       >
         <span class="tab-title" :title="tab.path">{{ tab.path.split('/').pop() }}</span>
         <span v-if="tab.dirty" class="tab-dirty">●</span>
-        <button class="tab-close" @click.stop="closeTab(tab.path)" title="關閉 (Ctrl+W)">×</button>
+        <button class="tab-close" @click.stop="closeTab(tab.path)" title="關閉">×</button>
       </div>
     </div>
 
@@ -839,6 +853,7 @@ window.editorPlugin = (function () {
 
       socket.onmessage = function (event) {
         const msg = JSON.parse(event.data);
+        console.log('[ws]', msg.type, msg);
         switch (msg.type) {
           case 'error':
             if (msg.payload === 'duplicate connect') {
@@ -861,6 +876,24 @@ window.editorPlugin = (function () {
               '人員：' + info.user,
               function () {}
             );
+            break;
+          }
+          case 'user_online':
+            app.showToast(msg.payload.user + ' 已上線');
+            break;
+          case 'user_offline':
+            app.showToast(msg.payload.user + ' 已離線');
+            break;
+          case 'file_opened': {
+            const fp = msg.payload;
+            const name = fp.file || (fp.path ? fp.path.split('/').pop() : '');
+            app.showToast(fp.user + ' 開啟了 ' + name);
+            break;
+          }
+          case 'file_closed': {
+            const fp = msg.payload;
+            const name = fp.file || (fp.path ? fp.path.split('/').pop() : '');
+            app.showToast(fp.user + ' 關閉了 ' + name);
             break;
           }
         }
@@ -922,6 +955,8 @@ window.editorPlugin = (function () {
           fontSize: s.fontSize || 14,
           fontFamily: s.fontFamily || '',
           minimap: s.minimap !== false,
+          showInvisible: s.showInvisible === true,
+          trimOnSave: s.trimOnSave !== false,
         },
         sessionCheck: false,
         currentUser: '',
@@ -1209,10 +1244,23 @@ window.editorPlugin = (function () {
       // ── File operations ───────────────────────────────────────────────────
 
       async saveCurrent() {
-        if (!this.activeTabPath || this.activeTabIsImage || this.isSaving) return;
+        if (!this.activeTabPath || this.activeTabIsImage || this.isSaving || !this.activeTabDirty) return;
         const data = tabsData.get(this.activeTabPath);
         if (!data || !monacoEditor) return;
         this.isSaving = true;
+        if (this.settings.trimOnSave) {
+          const model = monacoEditor.getModel();
+          const lineCount = model.getLineCount();
+          const edits = [];
+          for (let i = 1; i <= lineCount; i++) {
+            const line = model.getLineContent(i);
+            const trimmed = line.trimEnd();
+            if (trimmed.length < line.length) {
+              edits.push({ range: new monaco.Range(i, trimmed.length + 1, i, line.length + 1), text: '' });
+            }
+          }
+          if (edits.length > 0) model.pushEditOperations([], edits, () => null);
+        }
         const content = monacoEditor.getValue();
         window.editorPlugin.saveService.emit('beforeSave', { value: content, path: this.activeTabPath });
         try {
@@ -1340,7 +1388,26 @@ window.editorPlugin = (function () {
       },
 
       async uploadFiles(files, targetDir) {
-        await Promise.allSettled(files.map(f => this.uploadFile(f, targetDir)));
+        let existing = new Set();
+        try {
+          const res = await this.api('/api/files?path=' + encodeURIComponent(targetDir || ''));
+          for (const f of (res.files || [])) {
+            if (!f.isDir) existing.add(f.name);
+          }
+        } catch {}
+
+        const toUpload = [];
+        for (const f of files) {
+          if (existing.has(f.name)) {
+            const ok = await this.dlgConfirm(
+              '「' + f.name + '」已存在於目標位置，是否覆蓋？',
+              { confirmText: '覆蓋', danger: true }
+            );
+            if (!ok) continue;
+          }
+          toUpload.push(f);
+        }
+        await Promise.allSettled(toUpload.map(f => this.uploadFile(f, targetDir)));
         await this.refreshDir(targetDir || '');
       },
 
@@ -1851,6 +1918,15 @@ window.editorPlugin = (function () {
         persistSettings({ minimap: this.settings.minimap });
       },
 
+      onShowInvisibleChange() {
+        if (monacoEditor) monacoEditor.updateOptions({ renderWhitespace: this.settings.showInvisible ? 'all' : 'none' });
+        persistSettings({ showInvisible: this.settings.showInvisible });
+      },
+
+      onTrimOnSaveChange() {
+        persistSettings({ trimOnSave: this.settings.trimOnSave });
+      },
+
       doLogout() { window.location.href = '/logout'; },
     },
 
@@ -1878,13 +1954,9 @@ window.editorPlugin = (function () {
           if (e.key === 'Enter' && !this.dlg.inputMode) { e.preventDefault(); this.dlgOk(); }
           return;
         }
-        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
           e.preventDefault();
           this.saveCurrent();
-        }
-        if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
-          e.preventDefault();
-          if (this.activeTabPath) this.closeTab(this.activeTabPath);
         }
         if (this.treeFocused && e.key === 'Delete' && !e.ctrlKey && !e.metaKey) {
           const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
@@ -1967,6 +2039,47 @@ window.editorPlugin = (function () {
           fontSize: s.fontSize,
           fontFamily: s.fontFamily ? `${s.fontFamily}, 'Microsoft JhengHei', sans-serif` : undefined,
           minimap: { enabled: s.minimap },
+          renderWhitespace: s.showInvisible ? 'all' : 'none',
+        });
+
+        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Slash, () => {
+          const model = monacoEditor.getModel();
+          if (!model || model.getLanguageId() !== 'php') {
+            monacoEditor.trigger('', 'editor.action.commentLine', null);
+            return;
+          }
+          const pos = monacoEditor.getPosition();
+          const textBefore = model.getValueInRange({
+            startLineNumber: 1, startColumn: 1,
+            endLineNumber: pos.lineNumber, endColumn: pos.column,
+          });
+          const opens  = (textBefore.match(/<\?(?:php\b)?/gi) || []).length;
+          const closes = (textBefore.match(/\?>/g) || []).length;
+          if (opens > closes) {
+            monacoEditor.trigger('', 'editor.action.commentLine', null);
+            return;
+          }
+          // HTML context: toggle <!-- -->
+          const sel = monacoEditor.getSelection();
+          const startLine = sel.startLineNumber;
+          const endLine   = sel.isEmpty() ? startLine : sel.endLineNumber;
+          const lines = [];
+          for (let i = startLine; i <= endLine; i++) lines.push(model.getLineContent(i));
+          const allCommented = lines.every(l => /^\s*<!--.*-->\s*$/.test(l) || l.trim() === '');
+          const edits = [];
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const lineNum = startLine + i;
+            if (allCommented) {
+              const uncommented = line.replace(/^(\s*)<!--\s?/, '$1').replace(/\s?-->\s*$/, '');
+              edits.push({ range: new monaco.Range(lineNum, 1, lineNum, line.length + 1), text: uncommented });
+            } else {
+              const indent   = (line.match(/^(\s*)/) || ['', ''])[1];
+              const content  = line.trimStart();
+              edits.push({ range: new monaco.Range(lineNum, 1, lineNum, line.length + 1), text: indent + '<!-- ' + content + ' -->' });
+            }
+          }
+          if (edits.length) model.pushEditOperations([], edits, () => null);
         });
 
         monacoEditor.onDidChangeModelContent(() => {

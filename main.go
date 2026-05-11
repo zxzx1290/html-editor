@@ -42,6 +42,7 @@ type Config struct {
 	Port          int                   `json:"port"`          // overrides -port flag if flag not set
 	SessionTTL    int64                 `json:"sessionTTL"`    // seconds; 0 → 86400
 	MaxUploadSize int64                 `json:"maxUploadSize"` // bytes; 0 → 50MB
+	Title         string                `json:"title"`         // app display name; default "HTML Editor"
 	Users         map[string]UserConfig `json:"users"`
 }
 
@@ -139,8 +140,11 @@ func (h *Hub) register(c *WsClient) bool {
 }
 
 func (h *Hub) unregister(c *WsClient) {
+	wasRegistered := false
+	var closedKeys []string
 	h.mu.Lock()
 	if c.username != "" && h.clients[c.username] == c {
+		wasRegistered = true
 		delete(h.clients, c.username)
 		for key, users := range h.openFiles {
 			filtered := users[:0]
@@ -155,10 +159,38 @@ func (h *Hub) unregister(c *WsClient) {
 			} else {
 				h.openFiles[key] = filtered
 			}
+			closedKeys = append(closedKeys, key)
 		}
 	}
 	h.mu.Unlock()
 	c.closeOnce.Do(func() { close(c.send) })
+	if wasRegistered {
+		for _, key := range closedKeys {
+			// key format: "path/file" or just "file"
+			path, file := "", key
+			if i := strings.LastIndex(key, "/"); i >= 0 {
+				path, file = key[:i], key[i+1:]
+			}
+			h.broadcast(wsOutMsg{Type: "file_closed", Payload: map[string]string{
+				"user": c.username, "path": path, "file": file,
+			}}, c.username)
+		}
+		h.broadcast(wsOutMsg{Type: "user_offline", Payload: map[string]string{"user": c.username}}, c.username)
+	}
+}
+
+func (h *Hub) broadcast(msg any, excludeUsername string) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for username, c := range h.clients {
+		if username != excludeUsername {
+			safelySend(c.send, data)
+		}
+	}
 }
 
 // fileOpen records opener and returns list of other users who already have file open.
@@ -235,6 +267,25 @@ func (s *server) maxUploadSize() int64 {
 		return s.config.MaxUploadSize
 	}
 	return defaultMax
+}
+
+func (s *server) appTitle() string {
+	if s.config != nil && s.config.Title != "" {
+		return s.config.Title
+	}
+	return "HTML Editor"
+}
+
+func (s *server) serveWithTitle(w http.ResponseWriter, r *http.Request, file string) {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	out := strings.ReplaceAll(string(data), "{{APP_TITLE}}", s.appTitle())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(out))
 }
 
 type fileEntry struct {
@@ -529,7 +580,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		http.ServeFile(w, r, filepath.Join("static", "login.html"))
+		s.serveWithTitle(w, r, filepath.Join("static", "login.html"))
 	case http.MethodPost:
 		s.processLogin(w, r)
 	default:
@@ -665,6 +716,7 @@ func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logf("[ws] connect user=%s\n", username)
+	s.hub.broadcast(wsOutMsg{Type: "user_online", Payload: map[string]string{"user": username}}, username)
 	go client.writePump()
 	client.readPump(s)
 }
@@ -720,6 +772,9 @@ func (c *WsClient) readPump(s *server) {
 					"user": c.username, "path": p.Path, "file": p.File,
 				}})
 			}
+			s.hub.broadcast(wsOutMsg{Type: "file_opened", Payload: map[string]string{
+				"user": c.username, "path": p.Path, "file": p.File,
+			}}, c.username)
 
 		case "file_on_close":
 			var p struct {
@@ -732,6 +787,9 @@ func (c *WsClient) readPump(s *server) {
 			}
 			logf("[ws] file_on_close user=%s path=%s file=%s\n", c.username, p.Path, p.File)
 			s.hub.fileClose(c.username, p.Path, p.File)
+			s.hub.broadcast(wsOutMsg{Type: "file_closed", Payload: map[string]string{
+				"user": c.username, "path": p.Path, "file": p.File,
+			}}, c.username)
 
 		case "after_save":
 			var p struct {
@@ -778,7 +836,7 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	http.ServeFile(w, r, filepath.Join("static", "index.html"))
+	s.serveWithTitle(w, r, filepath.Join("static", "index.html"))
 }
 
 func (s *server) handleListFiles(w http.ResponseWriter, r *http.Request) {
