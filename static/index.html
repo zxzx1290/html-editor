@@ -782,7 +782,6 @@ window.editorPlugin = (function () {
   // ── Built-in: Session check & WS collaboration ────────────────────────────
 
   function initSessionCheck(app) {
-    let extending = false;
     const timer = setInterval(async function () {
       try {
         const r = await fetch('/check');
@@ -793,19 +792,7 @@ window.editorPlugin = (function () {
         }
         if (!r.ok) return;
         const data = await r.json();
-        const ttl = parseInt(data.data, 10);
-        if (Number.isInteger(ttl) && ttl < 43200 && !extending) {
-          extending = true;
-          fetch('/extend').then(r2 => {
-            if (r2.ok) app.showToast('延長登入時間成功');
-            else if (r2.status === 401) {
-              clearInterval(timer);
-              window.location.href = '/login';
-            }
-          }).catch(() => {
-            app.showError('延長登入時間失敗，重新嘗試中');
-          }).finally(() => { extending = false; });
-        }
+        if (data.extended) app.showToast('延長登入時間成功');
       } catch {
         app.showError('連線失敗，無法確認 session 狀態');
       }

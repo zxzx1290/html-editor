@@ -40,7 +40,9 @@
   - **儲存時移除尾端空白**：開（預設）／關切換
 - 預設啟用自動換行（Word Wrap）
 - TOTP 二步驟登入：以 `config.json` 設定帳號，每位使用者擁有獨立 workspace
-- Session 自動延長：前端每 60 秒檢查剩餘時間，TTL 不足 12 小時時自動呼叫 `/extend` 延長
+- Session 以 JWT（HS256）儲存於 `editorToken` cookie，無伺服器端 session 記錄；`jwtSecret` 必須於 `config.json` 設定，否則程式拒絕啟動
+- Session 驗證時同時確認帳號仍存在於 `config.json`，從 config 移除的帳號下次請求即自動失效
+- Session 自動延長：前端每 60 秒呼叫 `/check`；TTL 不足 `sessionTTL / 2` 時伺服器自動延長並回傳新 JWT cookie，回應中 `extended: true` 時顯示提示
 - WebSocket 即時協作：
   - 使用者上下線廣播（`user_online` / `user_offline`）
   - 檔案開啟與關閉廣播（`file_opened` / `file_closed`）
@@ -116,6 +118,7 @@ Windows：
   "rateLimitWindow": 300,
   "rateLimitMaxAttempts": 5,
   "rateLimitBanDuration": 300,
+  "jwtSecret": "change-this-to-a-long-random-string",
   "users": {
     "alice": {
       "totpSecret": "JBSWY3DPEHPK3PXP",
@@ -139,6 +142,7 @@ Windows：
 | `rateLimitWindow` | 失敗次數計算的時間視窗（秒）；預設 300 |
 | `rateLimitMaxAttempts` | 視窗內最大失敗次數；達到後觸發封鎖；預設 5 |
 | `rateLimitBanDuration` | 觸發封鎖後的封鎖時長（秒）；預設同 `rateLimitWindow` |
+| `jwtSecret` | JWT 簽署金鑰（**必填**）；建議使用長度 32 字元以上的隨機字串 |
 | `users.<name>.totpSecret` | TOTP 金鑰（Base32），可用 Google Authenticator 等 App 掃碼 |
 | `users.<name>.workspace` | 該使用者的 workspace 目錄 |
 
@@ -271,9 +275,8 @@ static/
 | `POST` | `/api/copy?from=&to=` | 複製檔案或目錄（遞迴）；目的地已存在自動加序號 |
 | `GET` | `/api/config` | 回傳 `{ username?: string }`；`username` 在 session 有效時附上目前登入帳號 |
 | `POST` | `/login` | 登入（form: username, code） |
-| `GET` | `/logout` | 登出並清除 session cookie |
-| `GET` | `/check` | 回傳 `{ "data": <剩餘秒數> }`；無 session 回傳 401 |
-| `POST` | `/extend` | 延長 session 有效期 |
+| `GET` | `/logout` | 登出並清除 `editorToken` cookie |
+| `GET` | `/check` | 回傳 `{ "data": <剩餘秒數>, "extended": bool }`；TTL 不足 `sessionTTL / 2` 時自動延長並寫入新 JWT cookie；無效 token 回傳 401 |
 | `GET` | `/ws` | WebSocket 連線；用於使用者上下線與同檔案開啟互相通知 |
 
 所有路徑均以 workspace 為根目錄，後端會阻擋路徑逃逸（`../` 等）。

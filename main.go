@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/pquerna/otp/totp"
 )
@@ -45,14 +45,15 @@ type Config struct {
 	RateLimitWindow      int64                 `json:"rateLimitWindow"`      // seconds; 0 → 300
 	RateLimitMaxAttempts int                   `json:"rateLimitMaxAttempts"` // 0 → 5
 	RateLimitBanDuration int64                 `json:"rateLimitBanDuration"` // seconds; 0 → same as window
+	JwtSecret            string                `json:"jwtSecret"`            // JWT signing secret; random if empty
 	Users                map[string]UserConfig `json:"users"`
 }
 
-// ─── Session ──────────────────────────────────────────────────────────────────
+// ─── JWT claims ───────────────────────────────────────────────────────────────
 
-type Session struct {
-	Username string
-	Expires  time.Time
+type jwtClaims struct {
+	Username string `json:"sub"`
+	jwt.RegisteredClaims
 }
 
 // ─── Rate limiter (in-memory, resets on restart) ──────────────────────────────
@@ -325,10 +326,10 @@ type fileEntry struct {
 }
 
 type server struct {
-	config  *Config
-	sessions sync.Map
-	hub      *Hub
-	limiter  *rateLimiter
+	config    *Config
+	jwtSecret []byte
+	hub       *Hub
+	limiter   *rateLimiter
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -383,29 +384,25 @@ func main() {
 		rlBan = rlWindow
 	}
 
+	if cfg.JwtSecret == "" {
+		fmt.Fprintln(os.Stderr, "config.json must set jwtSecret")
+		os.Exit(1)
+	}
+	secret := []byte(cfg.JwtSecret)
+
 	s := &server{
-		config:  &cfg,
-		hub:     newHub(),
-		limiter: newRateLimiter(rlWindow, rlMax, rlBan),
+		config:    &cfg,
+		jwtSecret: secret,
+		hub:       newHub(),
+		limiter:   newRateLimiter(rlWindow, rlMax, rlBan),
 	}
 	logf("[config] %d user(s) loaded\n", len(cfg.Users))
 
-	// Background: clean up expired sessions hourly + log server status
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for range t.C {
-			now := time.Now()
-			var sessionCount int
-			s.sessions.Range(func(k, v any) bool {
-				if now.After(v.(Session).Expires) {
-					s.sessions.Delete(k)
-				} else {
-					sessionCount++
-				}
-				return true
-			})
-			logf("[status] sessions=%d ws_clients=%d\n", sessionCount, s.hub.clientCount())
+			logf("[status] ws_clients=%d\n", s.hub.clientCount())
 		}
 	}()
 
@@ -413,7 +410,6 @@ func main() {
 	mux.HandleFunc("/login",        s.handleLogin)
 	mux.HandleFunc("/logout",       s.handleLogout)
 	mux.HandleFunc("/check",        s.checkSession(s.handleCheck))
-	mux.HandleFunc("/extend",       s.checkSession(s.handleExtend))
 	mux.HandleFunc("/ws",           s.checkSession(s.handleWs))
 	mux.HandleFunc("/api/config",   s.handleApiConfig)
 	mux.HandleFunc("/api/files",    s.sessionAndWorkspace(s.handleListFiles))
@@ -445,14 +441,14 @@ func (s *server) checkSession(next http.HandlerFunc) http.HandlerFunc {
 		if s.limiter.isBlocked(ip) {
 			logf("[rate-limit] ip=%s blocked\n", ip)
 			p := r.URL.Path
-			if strings.HasPrefix(p, "/api/") || p == "/check" || p == "/extend" {
+			if strings.HasPrefix(p, "/api/") || p == "/check" {
 				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			} else {
 				http.Redirect(w, r, "/login?error=blocked", http.StatusFound)
 			}
 			return
 		}
-		cookie, err := r.Cookie("editorHash")
+		cookie, err := r.Cookie("editorToken")
 		if err != nil {
 			s.redirectOrUnauth(w, r)
 			return
@@ -473,7 +469,7 @@ func (s *server) checkSession(next http.HandlerFunc) http.HandlerFunc {
 // redirectOrUnauth sends 401 for API / session endpoints; redirects browser routes.
 func (s *server) redirectOrUnauth(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
-	if strings.HasPrefix(p, "/api/") || p == "/check" || p == "/extend" {
+	if strings.HasPrefix(p, "/api/") || p == "/check" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	} else {
 		http.Redirect(w, r, "/login", http.StatusFound)
@@ -534,52 +530,42 @@ func (s *server) sessionTTL() time.Duration {
 }
 
 func (s *server) newSession(username string) string {
-	token := strings.ToLower(rand.Text())
-	s.sessions.Store(token, Session{Username: username, Expires: time.Now().Add(s.sessionTTL())})
-	return token
+	claims := jwtClaims{
+		Username: username,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.sessionTTL())),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, _ := token.SignedString(s.jwtSecret)
+	return signed
 }
 
-func validToken(token string) bool {
-	const tokenLen = 26
-	if len(token) != tokenLen {
-		return false
-	}
-	for _, c := range token {
-		if !((c >= 'a' && c <= 'z') || (c >= '2' && c <= '7')) {
-			return false
+func (s *server) validateSession(tokenStr string) (string, bool) {
+	var claims jwtClaims
+	token, err := jwt.ParseWithClaims(tokenStr, &claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
 		}
-	}
-	return true
-}
-
-func (s *server) validateSession(token string) (string, bool) {
-	if !validToken(token) {
+		return s.jwtSecret, nil
+	})
+	if err != nil || !token.Valid {
 		return "", false
 	}
-	v, ok := s.sessions.Load(token)
+	if _, ok := s.config.Users[claims.Username]; !ok {
+		return "", false
+	}
+	return claims.Username, true
+}
+
+// extendSession validates the token and returns a new JWT with a fresh expiry.
+func (s *server) extendSession(tokenStr string) (string, bool) {
+	username, ok := s.validateSession(tokenStr)
 	if !ok {
 		return "", false
 	}
-	sess := v.(Session)
-	if time.Now().After(sess.Expires) {
-		s.sessions.Delete(token)
-		return "", false
-	}
-	return sess.Username, true
-}
-
-func (s *server) extendSession(token string) bool {
-	v, ok := s.sessions.Load(token)
-	if !ok {
-		return false
-	}
-	sess := v.(Session)
-	if time.Now().After(sess.Expires) {
-		return false
-	}
-	sess.Expires = time.Now().Add(s.sessionTTL())
-	s.sessions.Store(token, sess)
-	return true
+	return s.newSession(username), true
 }
 
 // ─── Auth handlers ────────────────────────────────────────────────────────────
@@ -587,7 +573,7 @@ func (s *server) extendSession(token string) bool {
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		if c, err := r.Cookie("editorHash"); err == nil {
+		if c, err := r.Cookie("editorToken"); err == nil {
 			if _, ok := s.validateSession(c.Value); ok {
 				http.Redirect(w, r, "/", http.StatusFound)
 				return
@@ -635,7 +621,7 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	token := s.newSession(username)
 	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
-		Name: "editorHash", Value: token,
+		Name: "editorToken", Value: token,
 		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure,
 	})
 	logf("[login] user=%s ip=%s\n", username, ip)
@@ -644,42 +630,48 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	username := ""
-	if c, err := r.Cookie("editorHash"); err == nil {
+	if c, err := r.Cookie("editorToken"); err == nil {
 		if u, ok := s.validateSession(c.Value); ok {
 			username = u
 		}
-		s.sessions.Delete(c.Value)
 	}
 	reason := r.URL.Query().Get("reason")
 	if reason == "" {
 		reason = "manual"
 	}
 	logf("[logout] user=%s ip=%s reason=%s\n", username, clientIP(r), reason)
-	http.SetCookie(w, &http.Cookie{Name: "editorHash", Value: "", MaxAge: -1, Path: "/"})
+	http.SetCookie(w, &http.Cookie{Name: "editorToken", Value: "", MaxAge: -1, Path: "/"})
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
 func (s *server) handleCheck(w http.ResponseWriter, r *http.Request) {
-	v, ok := s.sessions.Load(tokenFromCtx(r))
-	if !ok {
+	var claims jwtClaims
+	token, err := jwt.ParseWithClaims(tokenFromCtx(r), &claims, func(t *jwt.Token) (any, error) {
+		return s.jwtSecret, nil
+	})
+	if err != nil || !token.Valid || claims.ExpiresAt == nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	ttl := int64(time.Until(v.(Session).Expires).Seconds())
-	writeJSON(w, http.StatusOK, map[string]any{"data": ttl})
-}
-
-func (s *server) handleExtend(w http.ResponseWriter, r *http.Request) {
-	if !s.extendSession(tokenFromCtx(r)) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
+	ttl := int64(time.Until(claims.ExpiresAt.Time).Seconds())
+	extended := false
+	if ttl < int64(s.sessionTTL()/2/time.Second) {
+		if newToken, ok := s.extendSession(tokenFromCtx(r)); ok {
+			secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+			http.SetCookie(w, &http.Cookie{
+				Name: "editorToken", Value: newToken,
+				Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure,
+			})
+			ttl = int64(s.sessionTTL() / time.Second)
+			extended = true
+		}
 	}
-	w.WriteHeader(http.StatusOK)
+	writeJSON(w, http.StatusOK, map[string]any{"data": ttl, "extended": extended})
 }
 
 func (s *server) handleApiConfig(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"sessionCheck": true}
-	if c, err := r.Cookie("editorHash"); err == nil {
+	if c, err := r.Cookie("editorToken"); err == nil {
 		if username, ok := s.validateSession(c.Value); ok {
 			resp["username"] = username
 		}

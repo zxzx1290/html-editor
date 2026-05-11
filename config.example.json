@@ -6,6 +6,7 @@
   "rateLimitWindow": 300,
   "rateLimitMaxAttempts": 5,
   "rateLimitBanDuration": 300,
+  "jwtSecret": "change-this-to-a-long-random-string",
   "users": {
     "alice": {
       "totpSecret": "JBSWY3DPEHPK3PXP",
