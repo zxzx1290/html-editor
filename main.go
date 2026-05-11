@@ -621,7 +621,7 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	token := s.newSession(username)
 	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
-		Name: "editorToken", Value: token,
+		Name: "editorToken", Value: token, MaxAge: int(s.sessionTTL().Seconds()),
 		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure,
 	})
 	logf("[login] user=%s ip=%s\n", username, ip)
@@ -659,11 +659,12 @@ func (s *server) handleCheck(w http.ResponseWriter, r *http.Request) {
 		if newToken, ok := s.extendSession(tokenFromCtx(r)); ok {
 			secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 			http.SetCookie(w, &http.Cookie{
-				Name: "editorToken", Value: newToken,
+				Name: "editorToken", Value: newToken, MaxAge: int(s.sessionTTL().Seconds()),
 				Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure,
 			})
 			ttl = int64(s.sessionTTL() / time.Second)
 			extended = true
+			logf("[session] extended user=%s\n", claims.Username)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": ttl, "extended": extended})
