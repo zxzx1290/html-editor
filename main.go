@@ -636,7 +636,9 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	reason := r.URL.Query().Get("reason")
-	if reason == "" {
+	switch reason {
+	case "duplicate_connect", "kick":
+	default:
 		reason = "manual"
 	}
 	logf("[logout] user=%s ip=%s reason=%s\n", username, clientIP(r), reason)
