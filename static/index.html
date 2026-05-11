@@ -531,12 +531,10 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
-          <template v-if="sessionCheck">
-            <div class="settings-sep"></div>
-            <div class="settings-row">
-              <button class="btn" style="width:100%;border-color:var(--danger-fg);color:var(--danger-fg)" @click="doLogout">登出</button>
-            </div>
-          </template>
+          <div class="settings-sep"></div>
+          <div class="settings-row">
+            <button class="btn" style="width:100%;border-color:var(--danger-fg);color:var(--danger-fg)" @click="doLogout">登出</button>
+          </div>
         </div>
       </div>
       <button class="btn primary" :disabled="!activeTabPath || activeTabIsImage || !activeTabDirty || isSaving" @click="saveCurrent">{{ isSaving ? '儲存中…' : '儲存 (Ctrl+S)' }}</button>
@@ -790,7 +788,6 @@ window.editorPlugin = (function () {
         const r = await fetch('/check');
         if (r.status === 401) {
           clearInterval(timer);
-          alert('登入會話期限已到，請重新登入');
           window.location.href = '/login';
           return;
         }
@@ -803,7 +800,6 @@ window.editorPlugin = (function () {
             if (r2.ok) app.showToast('延長登入時間成功');
             else if (r2.status === 401) {
               clearInterval(timer);
-              alert('登入會話已失效，請重新登入');
               window.location.href = '/login';
             }
           }).catch(() => {
@@ -924,12 +920,9 @@ window.editorPlugin = (function () {
   async function initBuiltins(app) {
     let cfg;
     try { cfg = await fetch('/api/config').then(r => r.json()); } catch { return; }
-    if (cfg.sessionCheck) {
-      app.sessionCheck = true;
-      app.currentUser = cfg.username || '';
-      initSessionCheck(app);
-      initWsCollab(app);
-    }
+    app.currentUser = cfg.username || '';
+    initSessionCheck(app);
+    initWsCollab(app);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -958,7 +951,6 @@ window.editorPlugin = (function () {
           showInvisible: s.showInvisible === true,
           trimOnSave: s.trimOnSave !== false,
         },
-        sessionCheck: false,
         currentUser: '',
         settingsOpen: false,
         statusMsg: '',

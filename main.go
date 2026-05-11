@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,8 +37,8 @@ type UserConfig struct {
 }
 
 type Config struct {
-	Host          string                `json:"host"`          // overrides -host flag if flag not set
-	Port          int                   `json:"port"`          // overrides -port flag if flag not set
+	Host          string                `json:"host"`
+	Port          int                   `json:"port"`
 	SessionTTL    int64                 `json:"sessionTTL"`    // seconds; 0 → 86400
 	MaxUploadSize int64                 `json:"maxUploadSize"` // bytes; 0 → 50MB
 	Title         string                `json:"title"`         // app display name; default "HTML Editor"
@@ -263,14 +262,14 @@ func safelySend(ch chan []byte, data []byte) {
 
 func (s *server) maxUploadSize() int64 {
 	const defaultMax = 50 * 1024 * 1024
-	if s.config != nil && s.config.MaxUploadSize > 0 {
+	if s.config.MaxUploadSize > 0 {
 		return s.config.MaxUploadSize
 	}
 	return defaultMax
 }
 
 func (s *server) appTitle() string {
-	if s.config != nil && s.config.Title != "" {
+	if s.config.Title != "" {
 		return s.config.Title
 	}
 	return "HTML Editor"
@@ -296,69 +295,57 @@ type fileEntry struct {
 }
 
 type server struct {
-	workspace string
-	config    *Config
-	sessions  sync.Map
-	hub       *Hub
-	limiter   *rateLimiter
+	config  *Config
+	sessions sync.Map
+	hub      *Hub
+	limiter  *rateLimiter
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 func main() {
-	var (
-		port       = flag.Int("port", 8080, "listen port")
-		host       = flag.String("host", "127.0.0.1", "listen host")
-		workspace  = flag.String("workspace", "./workspace", "workspace directory (used when no --config)")
-		configFile = flag.String("config", "", "path to config.json (default: auto-load ./config.json if exists)")
-	)
-	flag.Parse()
-	if *configFile == "" {
-		if _, err := os.Stat("config.json"); err == nil {
-			*configFile = "config.json"
+	data, err := os.ReadFile("config.json")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config.json not found:", err)
+		os.Exit(1)
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		fmt.Fprintln(os.Stderr, "invalid config.json:", err)
+		os.Exit(1)
+	}
+	if len(cfg.Users) == 0 {
+		fmt.Fprintln(os.Stderr, "config.json must define at least one user")
+		os.Exit(1)
+	}
+
+	for username, userCfg := range cfg.Users {
+		abs, err := filepath.Abs(userCfg.Workspace)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid workspace for user %s: %v\n", username, err)
+			os.Exit(1)
+		}
+		if err := os.MkdirAll(abs, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to create workspace for user %s: %v\n", username, err)
+			os.Exit(1)
 		}
 	}
 
-	abs, err := filepath.Abs(*workspace)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid workspace path: %v\n", err)
-		os.Exit(1)
+	host := "127.0.0.1"
+	port := 8080
+	if cfg.Host != "" {
+		host = cfg.Host
 	}
-	if err := os.MkdirAll(abs, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create workspace: %v\n", err)
-		os.Exit(1)
+	if cfg.Port != 0 {
+		port = cfg.Port
 	}
 
 	s := &server{
-		workspace: abs,
-		hub:       newHub(),
-		limiter:   newRateLimiter(),
+		config:  &cfg,
+		hub:     newHub(),
+		limiter: newRateLimiter(),
 	}
-
-	if *configFile != "" {
-		data, err := os.ReadFile(*configFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to read config: %v\n", err)
-			os.Exit(1)
-		}
-		var cfg Config
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "invalid config JSON: %v\n", err)
-			os.Exit(1)
-		}
-		s.config = &cfg
-		logf("[config] %d user(s) loaded\n", len(cfg.Users))
-
-		// Apply host/port from config only when the CLI flag was not explicitly set.
-		set := make(map[string]bool)
-		flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
-		if !set["host"] && cfg.Host != "" {
-			*host = cfg.Host
-		}
-		if !set["port"] && cfg.Port != 0 {
-			*port = cfg.Port
-		}
-	}
+	logf("[config] %d user(s) loaded\n", len(cfg.Users))
 
 	// Background: clean up expired sessions hourly + log server status
 	go func() {
@@ -397,12 +384,8 @@ func main() {
 	mux.HandleFunc("/favicon.ico",  func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, filepath.Join("static", "favicon.ico")) })
 	mux.HandleFunc("/",             s.checkSession(s.handleIndex))
 
-	addr := fmt.Sprintf("%s:%d", *host, *port)
-	if *configFile != "" {
-		logf("html-editor listening on http://%s  config=%s\n", addr, *configFile)
-	} else {
-		logf("html-editor listening on http://%s  workspace=%s\n", addr, abs)
-	}
+	addr := fmt.Sprintf("%s:%d", host, port)
+	logf("html-editor listening on http://%s\n", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -413,13 +396,8 @@ func main() {
 
 // checkSession validates the session cookie and injects ctxUsername + ctxToken.
 // Browser routes redirect to /login on failure; API / session routes return 401.
-// Passes through without check when auth is not configured.
 func (s *server) checkSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.config == nil || len(s.config.Users) == 0 {
-			next(w, r)
-			return
-		}
 		ip := clientIP(r)
 		if s.limiter.isBlocked(ip) {
 			logf("[rate-limit] ip=%s blocked\n", ip)
@@ -463,26 +441,22 @@ func (s *server) redirectOrUnauth(w http.ResponseWriter, r *http.Request) {
 // ctxWorkspace. Must be called after checkSession (needs ctxUsername in context).
 func (s *server) withWorkspaceH(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ws := s.workspace
-		if s.config != nil && len(s.config.Users) > 0 {
-			username, _ := r.Context().Value(ctxUsername).(string)
-			if username == "" {
-				http.Error(w, "Forbidden", http.StatusForbidden)
-				return
-			}
-			userCfg, ok := s.config.Users[username]
-			if !ok {
-				http.Error(w, "Forbidden", http.StatusForbidden)
-				return
-			}
-			abs, err := filepath.Abs(userCfg.Workspace)
-			if err != nil {
-				http.Error(w, "Forbidden", http.StatusForbidden)
-				return
-			}
-			ws = abs
+		username, _ := r.Context().Value(ctxUsername).(string)
+		if username == "" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
 		}
-		ctx := context.WithValue(r.Context(), ctxWorkspace, ws)
+		userCfg, ok := s.config.Users[username]
+		if !ok {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		abs, err := filepath.Abs(userCfg.Workspace)
+		if err != nil {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		ctx := context.WithValue(r.Context(), ctxWorkspace, abs)
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -568,10 +542,6 @@ func (s *server) extendSession(token string) bool {
 // ─── Auth handlers ────────────────────────────────────────────────────────────
 
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if s.config == nil || len(s.config.Users) == 0 {
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
 	switch r.Method {
 	case http.MethodGet:
 		if c, err := r.Cookie("editorHash"); err == nil {
@@ -622,10 +592,6 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	token := s.newSession(username)
 	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
-		Name: "editorUser", Value: username,
-		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure,
-	})
-	http.SetCookie(w, &http.Cookie{
 		Name: "editorHash", Value: token,
 		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure,
 	})
@@ -634,28 +600,23 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie("editorHash"); err == nil {
-		s.sessions.Delete(c.Value)
-	}
 	username := ""
-	if c, err := r.Cookie("editorUser"); err == nil {
-		username = c.Value
+	if c, err := r.Cookie("editorHash"); err == nil {
+		if u, ok := s.validateSession(c.Value); ok {
+			username = u
+		}
+		s.sessions.Delete(c.Value)
 	}
 	reason := r.URL.Query().Get("reason")
 	if reason == "" {
 		reason = "manual"
 	}
 	logf("[logout] user=%s ip=%s reason=%s\n", username, clientIP(r), reason)
-	http.SetCookie(w, &http.Cookie{Name: "editorUser", Value: "", MaxAge: -1, Path: "/"})
 	http.SetCookie(w, &http.Cookie{Name: "editorHash", Value: "", MaxAge: -1, Path: "/"})
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
 func (s *server) handleCheck(w http.ResponseWriter, r *http.Request) {
-	if s.config == nil {
-		http.NotFound(w, r)
-		return
-	}
 	v, ok := s.sessions.Load(tokenFromCtx(r))
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -666,10 +627,6 @@ func (s *server) handleCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleExtend(w http.ResponseWriter, r *http.Request) {
-	if s.config == nil {
-		http.NotFound(w, r)
-		return
-	}
 	if !s.extendSession(tokenFromCtx(r)) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -678,13 +635,10 @@ func (s *server) handleExtend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleApiConfig(w http.ResponseWriter, r *http.Request) {
-	sessionCheck := s.config != nil && len(s.config.Users) > 0
-	resp := map[string]any{"sessionCheck": sessionCheck}
-	if sessionCheck {
-		if c, err := r.Cookie("editorHash"); err == nil {
-			if username, ok := s.validateSession(c.Value); ok {
-				resp["username"] = username
-			}
+	resp := map[string]any{"sessionCheck": true}
+	if c, err := r.Cookie("editorHash"); err == nil {
+		if username, ok := s.validateSession(c.Value); ok {
+			resp["username"] = username
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)

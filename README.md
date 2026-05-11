@@ -22,12 +22,13 @@
 - 儲存按鈕：有未儲存變更時才可點擊；儲存中顯示「儲存中…」並阻擋重複觸發
 - 圖片預覽（`.png` `.jpg` `.jpeg` `.gif` `.webp` `.ico`）
 - 懶載入樹狀目錄，點擊展開子目錄；建立新目錄後自動展開並捲動到位
-- 拖曳上傳（可拖入側邊欄或指定目錄）、上傳進度條顯示
+- 拖曳上傳（可拖入側邊欄或指定目錄）、上傳進度條顯示；上傳前若目的地已有同名檔案，詢問是否覆蓋
 - 右鍵選單：
   - 空白處：新增檔案、新增目錄、上傳、貼上（有剪貼板內容時）、重新整理
   - 目錄：新增檔案、新增目錄、上傳到此處、剪下、複製、貼上（有剪貼板內容時）、重新命名、重新整理、刪除目錄
-  - 檔案：開啟、下載、剪下、複製、重新命名、刪除
-- Ctrl+S 儲存、Ctrl+W 關閉 tab
+  - 檔案：開啟、下載、剪下、複製、貼上（有剪貼板內容時，貼至父目錄）、重新命名、刪除
+- 鍵盤快捷鍵：Ctrl+S 儲存、Ctrl+W 關閉 tab、Delete 刪除選取的檔案或目錄
+- 重新命名對話框自動反白主檔名（不含副檔名），方便直接輸入新名稱
 - IndexedDB session 還原：重新整理後自動恢復上次開啟的 tab 與未儲存草稿；session 還原後自動展開樹狀目錄至 active 檔案所在位置
 - 快取衝突偵測：session 還原時若檔案已被他人修改，提示選擇保留草稿或使用伺服器版本
 - 編輯器設定（儲存於 localStorage）：
@@ -35,11 +36,15 @@
   - **字體**：預設、Consolas、Menlo、Courier New、Roboto Mono
   - **字體大小**：10–32 px
   - **Minimap**：開／關切換
+  - **顯示隱形字元（Whitespace）**：開／關切換
+  - **儲存時移除尾端空白**：開（預設）／關切換
 - 預設啟用自動換行（Word Wrap）
-- TOTP 二步驟登入（可選）：以 `config.json` 設定帳號，每位使用者擁有獨立 workspace
+- TOTP 二步驟登入：以 `config.json` 設定帳號，每位使用者擁有獨立 workspace
 - Session 自動延長：前端每 60 秒檢查剩餘時間，TTL 不足 12 小時時自動呼叫 `/extend` 延長
-- WebSocket 即時協作（需啟用 config）：
-  - 多人同時開啟同一檔案時互相通知
+- WebSocket 即時協作：
+  - 使用者上下線廣播（`user_online` / `user_offline`）
+  - 檔案開啟與關閉廣播（`file_opened` / `file_closed`）
+  - 多人同時開啟同一檔案時互相通知（`same_file_open`）
   - 每位使用者限一條連線；斷線後 30 秒自動重連
 - Plugin 系統：啟動時自動載入 `static/plugins/plugins.json` 列出的插件
 - 響應式版面，行動裝置支援側邊欄遮罩
@@ -61,7 +66,17 @@ npm install
 
 `postinstall` 腳本（`setup-monaco.js`）會自動將 Monaco 靜態檔案複製到 `static/monaco/vs/`，並將語法高亮主題複製到 `static/themes/`。
 
-### 2. 編譯 Go 執行檔
+### 2. 建立 config.json
+
+複製範例並依需求修改：
+
+```bash
+cp config.example.json config.json
+```
+
+詳細欄位說明見下方 [config.json 設定](#configjson-設定)。
+
+### 3. 編譯 Go 執行檔
 
 ```bash
 go build .
@@ -76,37 +91,20 @@ go build -o html-editor.exe .
 ## 執行
 
 ```bash
-# 本機使用（無密碼）
 ./html-editor
+```
 
-# 指定 workspace 目錄
-./html-editor -workspace /path/to/your/files
+Windows：
 
-# 啟用 TOTP 登入（需先建立 config.json，見下方說明）
-./html-editor -config config.json
-
-# 開放外部連線並指定 port
-./html-editor -host 0.0.0.0 -port 8080 -config config.json
+```powershell
+./html-editor.exe
 ```
 
 啟動後開啟瀏覽器前往 [http://127.0.0.1:8080](http://127.0.0.1:8080)。
 
-## 命令列參數
-
-所有參數皆為選填，未指定時使用預設值。
-
-| 參數 | 預設值 | 說明 |
-|------|--------|------|
-| `-host` | `127.0.0.1` | 監聽 host（`0.0.0.0` 表示允許外部連線） |
-| `-port` | `8080` | 監聽 port |
-| `-workspace` | `./workspace` | 無 config 時的檔案存放目錄，不存在時自動建立 |
-| `-config` | _(空)_ | config.json 路徑；若省略且當前目錄存在 `config.json` 則自動載入 |
-
-> **注意**：未設定 `-config` 時，任何人皆可存取編輯器，請勿在公開網路上使用預設設定。
+> **注意**：`config.json` 必須存在於執行目錄，否則程式無法啟動。Host、Port 等均在 `config.json` 中設定。
 
 ## config.json 設定
-
-`config.json` 用於啟用 TOTP 登入與多使用者 workspace 隔離：
 
 ```json
 {
@@ -114,6 +112,7 @@ go build -o html-editor.exe .
   "port": 8080,
   "sessionTTL": 86400,
   "maxUploadSize": 52428800,
+  "title": "HTML Editor",
   "users": {
     "alice": {
       "totpSecret": "JBSWY3DPEHPK3PXP",
@@ -129,10 +128,11 @@ go build -o html-editor.exe .
 
 | 欄位 | 說明 |
 |------|------|
-| `host` | 監聽 host（覆蓋 `-host` flag，CLI flag 若有明確指定則優先） |
-| `port` | 監聽 port（覆蓋 `-port` flag，CLI flag 若有明確指定則優先） |
+| `host` | 監聽 host（`0.0.0.0` 表示允許外部連線，預設 `127.0.0.1`） |
+| `port` | 監聽 port（預設 `8080`） |
 | `sessionTTL` | session 有效期（秒）；預設 86400（24 小時） |
 | `maxUploadSize` | 單檔上傳上限（bytes）；預設 52428800（50 MB） |
+| `title` | 瀏覽器標籤與頁面顯示名稱；預設 `HTML Editor` |
 | `users.<name>.totpSecret` | TOTP 金鑰（Base32），可用 Google Authenticator 等 App 掃碼 |
 | `users.<name>.workspace` | 該使用者的 workspace 目錄 |
 
@@ -145,13 +145,13 @@ html-editor/
 ├── main.go               # Go 後端
 ├── go.mod
 ├── go.sum
-├── config.json           # 可選，TOTP 登入設定（不進 git）
+├── config.json           # 必要，TOTP 登入與伺服器設定（不進 git）
 ├── config.example.json   # 設定範例
 ├── package.json          # 僅用於安裝靜態資源
 ├── setup-monaco.js       # 建置腳本（npm install 時自動執行）
 ├── static/
 │   ├── index.html        # 前端（Vue 3 + Monaco，單一 HTML 檔案）
-│   ├── login.html        # 登入頁面（啟用 config.json 時使用）
+│   ├── login.html        # 登入頁面
 │   ├── vue.global.js     # Vue 3 runtime
 │   ├── monaco/           # Monaco 靜態檔案（由 npm install 產生，不進 git）
 │   ├── themes/           # 語法高亮主題 JSON（由 npm install 產生，不進 git）
@@ -236,7 +236,7 @@ Plugin 為 IIFE，透過 `window.editorPlugin.services` 取得各服務：
 
 ```
 html-editor（或 html-editor.exe）
-config.json   ← 若啟用 TOTP 登入
+config.json
 static/
   index.html
   login.html
@@ -261,14 +261,14 @@ static/
 | `POST` | `/api/upload` | 上傳檔案（multipart/form-data，上限 50 MB） |
 | `GET` | `/api/download?path=` | 下載檔案（含 Content-Disposition） |
 | `POST` | `/api/mkdir?path=` | 建立目錄（含巢狀） |
-| `POST` | `/api/rename?from=&to=` | 重新命名或移動 |
-| `POST` | `/api/copy?from=&to=` | 複製檔案或目錄（遞迴）；目的地已存在回傳 409 |
-| `GET` | `/api/config` | 回傳 `{ sessionCheck: bool }`，前端據此決定是否啟用登入流程 |
+| `POST` | `/api/rename?from=&to=` | 重新命名或移動；目的地已存在回傳 409（`?auto=1` 時自動加序號） |
+| `POST` | `/api/copy?from=&to=` | 複製檔案或目錄（遞迴）；目的地已存在自動加序號 |
+| `GET` | `/api/config` | 回傳 `{ username?: string }`；`username` 在 session 有效時附上目前登入帳號 |
 | `POST` | `/login` | 登入（form: username, code） |
 | `GET` | `/logout` | 登出並清除 session cookie |
-| `GET` | `/check` | 回傳 `{ "data": <剩餘秒數> }`；需啟用 config，無 session 回傳 401 |
-| `POST` | `/extend` | 延長 session 有效期；需啟用 config |
-| `GET` | `/ws` | WebSocket 連線；需啟用 config，用於同檔案開啟互相通知 |
+| `GET` | `/check` | 回傳 `{ "data": <剩餘秒數> }`；無 session 回傳 401 |
+| `POST` | `/extend` | 延長 session 有效期 |
+| `GET` | `/ws` | WebSocket 連線；用於使用者上下線與同檔案開啟互相通知 |
 
 所有路徑均以 workspace 為根目錄，後端會阻擋路徑逃逸（`../` 等）。
 
