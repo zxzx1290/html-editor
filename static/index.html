@@ -809,19 +809,17 @@ window.editorPlugin = (function () {
       socket.send(JSON.stringify(data));
     }
 
-    function splitPath(path) {
-      const i = path.lastIndexOf('/');
-      return i >= 0 ? { folder: path.slice(0, i), file: path.slice(i + 1) }
-                    : { folder: '', file: path };
-    }
-
     function fileOnOpen(path) {
-      const { folder, file } = splitPath(path);
+      const i = path.lastIndexOf('/');
+      const folder = i >= 0 ? path.slice(0, i) : '';
+      const file = i >= 0 ? path.slice(i + 1) : path;
       wsSend({ type: 'file_on_open', payload: { path: folder, file } });
     }
 
     function fileOnClose(path) {
-      const { folder, file } = splitPath(path);
+      const i = path.lastIndexOf('/');
+      const folder = i >= 0 ? path.slice(0, i) : '';
+      const file = i >= 0 ? path.slice(i + 1) : path;
       wsSend({ type: 'file_on_close', payload: { path: folder, file } });
     }
 
@@ -1115,13 +1113,25 @@ window.editorPlugin = (function () {
         }
       },
 
+      parentOf(path) {
+        const i = path.lastIndexOf('/');
+        return i >= 0 ? path.slice(0, i) : '';
+      },
+
+      scrollToTreeNode(path) {
+        this.$nextTick(() => {
+          const el = document.querySelector(`[data-path="${CSS.escape(path)}"]`);
+          if (el) el.scrollIntoView({ block: 'nearest' });
+        });
+      },
+
       async refreshDir(dirPath) {
         if (dirPath === '') {
           await this.loadTree();
         } else {
           const item = this.treeItems.find(t => t.path === dirPath && t.isDir);
-          if (item && item.expanded) {
-            this.collapseDir(item);
+          if (item) {
+            if (item.expanded) this.collapseDir(item);
             await this.expandDir(item);
           }
         }
@@ -1189,9 +1199,8 @@ window.editorPlugin = (function () {
         this.$nextTick(() => {
           const tabEl = document.querySelector('.tab.active');
           if (tabEl) tabEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-          const treeEl = document.querySelector(`[data-path="${CSS.escape(path)}"]`);
-          if (treeEl) treeEl.scrollIntoView({ block: 'nearest' });
         });
+        this.scrollToTreeNode(path);
       },
 
       async closeTab(path) {
@@ -1275,47 +1284,8 @@ window.editorPlugin = (function () {
         a.remove();
       },
 
-      async deleteFile(path, isDir) {
-        if (!await this.dlgConfirm('確定要刪除「' + path + '」嗎？' + (isDir ? '（會刪除目錄及內容）' : '') + '\n此動作無法復原。', { confirmText: '刪除', danger: true })) return;
-        try {
-          await this.api('/api/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
-
-          const toClose = this.tabsList
-            .filter(t => t.path === path || (isDir && t.path.startsWith(path + '/')))
-            .map(t => t.path);
-
-          let needFallback = false;
-          for (const p of toClose) {
-            const d = tabsData.get(p);
-            if (d && d.model) d.model.dispose();
-            tabsData.delete(p);
-            const i = this.tabsList.findIndex(t => t.path === p);
-            if (i >= 0) this.tabsList.splice(i, 1);
-            if (this.activeTabPath === p) needFallback = true;
-            this.clearDirtyEntry(p);
-          }
-
-          if (needFallback) {
-            if (this.tabsList.length > 0) {
-              this.activeTabPath = null;
-              await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
-            } else {
-              this.activeTabPath = null;
-              if (monacoEditor) monacoEditor.setModel(null);
-              this.setStatus('');
-            }
-          }
-
-          const item = this.treeItems.find(t => t.path === path);
-          if (item) {
-            if (item.isDir && item.expanded) this.collapseDir(item);
-            const i = this.treeItems.indexOf(item);
-            if (i >= 0) this.treeItems.splice(i, 1);
-          }
-          this.showToast('已刪除');
-        } catch (e) {
-          this.showError('刪除失敗: ' + e.message);
-        }
+      deleteFile(path, isDir) {
+        this.deleteSelected([{ path, isDir }]);
       },
 
       joinPath(parent, name) {
@@ -1467,10 +1437,7 @@ window.editorPlugin = (function () {
           await this.api('/api/mkdir?path=' + encodeURIComponent(path), { method: 'POST' });
           await this.refreshDir(parentDir || '');
           await this.expandToDir(path);
-          this.$nextTick(() => {
-            const el = document.querySelector(`[data-path="${CSS.escape(path)}"]`);
-            if (el) el.scrollIntoView({ block: 'nearest' });
-          });
+          this.scrollToTreeNode(path);
           this.showToast('已建立目錄：' + path);
         } catch (e) {
           this.showError('建立失敗：' + e.message);
@@ -1515,29 +1482,23 @@ window.editorPlugin = (function () {
         this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'copy' };
         this.showToast(items.length > 1 ? `已複製 ${items.length} 個` : '已複製：' + items[0].path.split('/').pop());
       },
-      async duplicateItem(item) {
-        try {
-          const res = await this.api('/api/copy?from=' + encodeURIComponent(item.path) + '&to=' + encodeURIComponent(item.path), { method: 'POST' });
-          const newName = (res && res.path ? res.path : item.path).split('/').pop();
-          const parentDir = item.path.includes('/') ? item.path.slice(0, item.path.lastIndexOf('/')) : '';
-          await this.refreshDir(parentDir);
-          this.showToast('已建立副本：' + newName);
-        } catch (e) {
-          this.showError('複製失敗：' + e.message);
-        }
+
+      duplicateItem(item) {
+        this.clipboardPaste(this.parentOf(item.path), [{ path: item.path, isDir: item.isDir }]);
       },
-      async clipboardPaste(targetDir) {
-        if (!this.clipboard.items.length || this.isPasting) return;
-        const { items, mode } = this.clipboard;
-        const total = items.length;
+      async clipboardPaste(targetDir, overrideItems) {
+        const items = overrideItems ?? this.clipboard.items;
+        const mode = overrideItems ? 'copy' : this.clipboard.mode;
+        if (!items.length || this.isPasting) return;
         const verb = mode === 'cut' ? '移動' : '複製';
         this.isPasting = true;
         let ok = 0;
         const errors = [];
+        const actualTos = [];
         try {
           for (const { path: from, isDir } of items) {
             const name = from.split('/').pop();
-            this.setStatus(`${verb}中… (${ok + 1}/${total}) ${name}`);
+            this.setStatus(`${verb}中… (${ok + 1}/${items.length}) ${name}`);
             const to = targetDir ? targetDir + '/' + name : name;
             try {
               let actualTo = to;
@@ -1577,62 +1538,81 @@ window.editorPlugin = (function () {
                 const res = await this.api('/api/copy?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to), { method: 'POST' });
                 actualTo = (res && res.path) ? res.path : to;
               }
+              actualTos.push(actualTo);
               ok++;
             } catch (e) {
               errors.push(name + '：' + e.message);
             }
           }
-          if (mode === 'cut') this.clipboard = { items: [], mode: null };
-          const destParent = targetDir || '';
-          const srcParents = new Set(items.map(({ path }) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''));
-          await this.refreshDir(destParent);
-          if (mode === 'cut') for (const p of srcParents) { if (p !== destParent) await this.refreshDir(p); }
+          if (mode === 'cut') {
+            this.clipboard = { items: [], mode: null };
+            const srcParents = new Set(items.map(({ path }) => this.parentOf(path)));
+            const destParents = new Set(actualTos.map(p => this.parentOf(p)));
+            for (const p of destParents) await this.refreshDir(p);
+            for (const p of srcParents) { if (!destParents.has(p)) await this.refreshDir(p); }
+          } else {
+            const destParents = new Set(actualTos.map(p => this.parentOf(p)));
+            for (const p of destParents) await this.refreshDir(p);
+          }
+          if (ok > 0) this.scrollToTreeNode(actualTos[0]);
           this.scheduleMetaSave();
-          if (ok > 0) this.showToast(`${verb}成功：${ok} 個`);
+          if (ok > 0) this.showToast(overrideItems ? `已建立副本：${actualTos[0].split('/').pop()}` : `${verb}成功：${ok} 個`);
           if (errors.length) this.showError(`${verb}失敗：` + errors.join('、'));
         } finally {
           this.isPasting = false;
           this.setStatus('');
         }
       },
+
       async deleteSelected(selItems) {
         const n = selItems.length;
-        if (!await this.dlgConfirm(`確定要刪除 ${n} 個項目嗎？\n此動作無法復原。`, { confirmText: '刪除', danger: true })) return;
+        const confirmMsg = n === 1
+          ? `確定要刪除「${selItems[0].path}」嗎？${selItems[0].isDir ? '（會刪除目錄及內容）' : ''}\n此動作無法復原。`
+          : `確定要刪除 ${n} 個項目嗎？\n此動作無法復原。`;
+        if (!await this.dlgConfirm(confirmMsg, { confirmText: '刪除', danger: true })) return;
+        this.isPasting = true;
         let needFallback = false;
-        for (const { path, isDir } of selItems) {
-          try {
-            await this.api('/api/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
-            const toClose = this.tabsList.filter(t => t.path === path || (isDir && t.path.startsWith(path + '/'))).map(t => t.path);
-            for (const p of toClose) {
-              const d = tabsData.get(p);
-              if (d && d.model) d.model.dispose();
-              tabsData.delete(p);
-              const i = this.tabsList.findIndex(t => t.path === p);
-              if (i >= 0) this.tabsList.splice(i, 1);
-              if (this.activeTabPath === p) needFallback = true;
-              this.clearDirtyEntry(p);
+        let done = 0;
+        try {
+          for (const { path, isDir } of selItems) {
+            this.setStatus(`刪除中… (${done + 1}/${n}) ${path.split('/').pop()}`);
+            try {
+              await this.api('/api/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
+              const toClose = this.tabsList.filter(t => t.path === path || (isDir && t.path.startsWith(path + '/'))).map(t => t.path);
+              for (const p of toClose) {
+                const d = tabsData.get(p);
+                if (d && d.model) d.model.dispose();
+                tabsData.delete(p);
+                const i = this.tabsList.findIndex(t => t.path === p);
+                if (i >= 0) this.tabsList.splice(i, 1);
+                if (this.activeTabPath === p) needFallback = true;
+                this.clearDirtyEntry(p);
+              }
+              const ti = this.treeItems.findIndex(t => t.path === path);
+              if (ti >= 0) {
+                if (isDir && this.treeItems[ti].expanded) this.collapseDir(this.treeItems[ti]);
+                this.treeItems.splice(ti, 1);
+              }
+            } catch (e) {
+              this.showError('刪除失敗 ' + path + '：' + e.message);
             }
-            const ti = this.treeItems.findIndex(t => t.path === path);
-            if (ti >= 0) {
-              if (isDir && this.treeItems[ti].expanded) this.collapseDir(this.treeItems[ti]);
-              this.treeItems.splice(ti, 1);
+            done++;
+          }
+          if (needFallback) {
+            if (this.tabsList.length > 0) {
+              this.activeTabPath = null;
+              await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
+            } else {
+              this.activeTabPath = null;
+              if (monacoEditor) monacoEditor.setModel(null);
             }
-          } catch (e) {
-            this.showError('刪除失敗 ' + path + '：' + e.message);
           }
+          this.selectedPaths = [];
+          this.showToast(n === 1 ? '已刪除' : `已刪除 ${n} 個項目`);
+        } finally {
+          this.isPasting = false;
+          this.setStatus('');
         }
-        if (needFallback) {
-          if (this.tabsList.length > 0) {
-            this.activeTabPath = null;
-            await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
-          } else {
-            this.activeTabPath = null;
-            if (monacoEditor) monacoEditor.setModel(null);
-            this.setStatus('');
-          }
-        }
-        this.selectedPaths = [];
-        this.showToast(`已刪除 ${n} 個項目`);
       },
 
       // ── Context menu ──────────────────────────────────────────────────────
@@ -1688,7 +1668,7 @@ window.editorPlugin = (function () {
           this.selectedPath = item.path;
           this.selectedPaths = [item.path];
           const path = item.path;
-          const parentDir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+          const parentDir = this.parentOf(path);
           const fileMenuItems = [
             { label: '開啟', action: () => this.openFile(path) },
             { label: '下載', action: () => this.downloadFile(path) },
@@ -1976,7 +1956,7 @@ window.editorPlugin = (function () {
             if (selItem) {
               pasteTarget = selItem.isDir
                 ? selItem.path
-                : selItem.path.includes('/') ? selItem.path.slice(0, selItem.path.lastIndexOf('/')) : '';
+                : this.parentOf(selItem.path);
             }
             this.clipboardPaste(pasteTarget);
           }
