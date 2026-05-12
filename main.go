@@ -1147,7 +1147,16 @@ func (s *server) handleCopy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid to path")
 		return
 	}
-	absTo = availableDest(absTo)
+	srcClean := filepath.Clean(absFrom)
+	dstClean := filepath.Clean(absTo)
+	if dstClean == srcClean || strings.HasPrefix(dstClean+string(filepath.Separator), srcClean+string(filepath.Separator)) {
+		// dst is inside src — redirect to a sibling of src with auto-incremented name.
+		// availableDest(srcClean) is safe: srcClean is already within ws, so its
+		// sibling (.1, .2 …) stays within ws and can never escape the workspace.
+		absTo = availableDest(srcClean)
+	} else {
+		absTo = availableDest(absTo)
+	}
 	if err := copyPath(absFrom, absTo); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
