@@ -867,14 +867,14 @@ window.editorPlugin = (function () {
             break;
           case 'file_opened': {
             const fp = msg.payload;
-            const name = fp.file || (fp.path ? fp.path.split('/').pop() : '');
-            app.showToast(fp.user + ' 開啟了 ' + name);
+            const fullPath = [fp.path, fp.file].filter(Boolean).join('/');
+            app.showToast(fp.user + ' 開啟了 ' + fullPath);
             break;
           }
           case 'file_closed': {
             const fp = msg.payload;
-            const name = fp.file || (fp.path ? fp.path.split('/').pop() : '');
-            app.showToast(fp.user + ' 關閉了 ' + name);
+            const fullPath = [fp.path, fp.file].filter(Boolean).join('/');
+            app.showToast(fp.user + ' 關閉了 ' + fullPath);
             break;
           }
         }
@@ -1505,34 +1505,20 @@ window.editorPlugin = (function () {
               if (mode === 'cut') {
                 const res = await this.api('/api/rename?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + '&auto=1', { method: 'POST' });
                 actualTo = (res && res.to) ? res.to : to;
-                if (!isDir) {
-                  const tab = this.tabsList.find(t => t.path === from);
-                  if (tab) {
-                    const d = tabsData.get(from);
-                    tabsData.delete(from);
-                    tabsData.set(actualTo, d);
-                    if (d && d.model) monaco.editor.setModelLanguage(d.model, detectLang(actualTo));
-                    tab.path = actualTo;
-                    if (this.activeTabPath === from) this.activeTabPath = actualTo;
-                  }
-                } else {
-                  const prefix = from + '/';
-                  let needFallback = false;
-                  for (let i = this.tabsList.length - 1; i >= 0; i--) {
-                    const p = this.tabsList[i].path;
-                    if (!p.startsWith(prefix)) continue;
-                    const d = tabsData.get(p);
-                    if (d && d.model) d.model.dispose();
-                    tabsData.delete(p);
-                    this.tabsList.splice(i, 1);
-                    if (this.activeTabPath === p) needFallback = true;
-                  }
-                  if (needFallback) {
-                    this.activeTabPath = null;
-                    if (monacoEditor) monacoEditor.setModel(null);
-                    this.setStatus('');
-                    if (this.tabsList.length > 0) await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
-                  }
+                const movedTabs = isDir
+                  ? this.tabsList.filter(t => t.path.startsWith(from + '/'))
+                      .map(t => [t, actualTo + '/' + t.path.slice(from.length + 1)])
+                  : this.tabsList.filter(t => t.path === from)
+                      .map(t => [t, actualTo]);
+                for (const [tab, newPath] of movedTabs) {
+                  window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: tab.path } });
+                  const d = tabsData.get(tab.path);
+                  tabsData.delete(tab.path);
+                  tabsData.set(newPath, d);
+                  if (d && d.model) monaco.editor.setModelLanguage(d.model, detectLang(newPath));
+                  if (this.activeTabPath === tab.path) this.activeTabPath = newPath;
+                  tab.path = newPath;
+                  window.editorPlugin.tabManagerSvc.emit('open', { tab: { path: newPath, document: { value: '' } } });
                 }
               } else {
                 const res = await this.api('/api/copy?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to), { method: 'POST' });
@@ -1580,6 +1566,7 @@ window.editorPlugin = (function () {
               await this.api('/api/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
               const toClose = this.tabsList.filter(t => t.path === path || (isDir && t.path.startsWith(path + '/'))).map(t => t.path);
               for (const p of toClose) {
+                window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: p } });
                 const d = tabsData.get(p);
                 if (d && d.model) d.model.dispose();
                 tabsData.delete(p);
