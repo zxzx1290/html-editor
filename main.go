@@ -912,7 +912,14 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logf("[file-open] user=%s %s\n", usernameFromCtx(r), rel)
-	http.ServeFile(w, r, abs)
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (s *server) writeFile(w http.ResponseWriter, r *http.Request) {
