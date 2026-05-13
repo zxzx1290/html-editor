@@ -270,6 +270,17 @@
   .tab:hover .tab-close,
   .tab.active .tab-close { color: var(--fg-dim); }
   .tab-close:hover { background: rgba(255,255,255,0.15); color: var(--fg) !important; }
+  .tab-new-btn {
+    flex-shrink: 0;
+    height: 34px;
+    padding: 0 10px;
+    background: transparent;
+    border: none;
+    color: var(--fg-dim);
+    cursor: pointer;
+    font-size: 18px;
+  }
+  .tab-new-btn:hover { background: var(--bg-hover); color: var(--fg); }
   #editor-host { flex: 1; position: relative; min-height: 0; }
   #editor { position: absolute; inset: 0; }
   #image-preview {
@@ -381,6 +392,56 @@
   .upload-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.15s; }
   .upload-fill.error { background: var(--danger); }
   #app-loading { position: fixed; inset: 0; background: var(--bg); z-index: 9999; display: flex; align-items: center; justify-content: center; color: var(--fg) }
+  #saveas-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 10000;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #saveas-box {
+    background: #2d2d2d;
+    border: 1px solid #454545;
+    border-radius: 6px;
+    padding: 16px 20px 14px;
+    width: 400px; max-width: 95vw;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #saveas-title { font-size: 13px; color: var(--fg); font-weight: 500; }
+  #saveas-tree {
+    height: 260px; overflow: auto;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    scrollbar-width: thin; scrollbar-color: #555 transparent;
+  }
+  #saveas-tree::-webkit-scrollbar { width: 4px; }
+  #saveas-tree::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+  .saveas-node {
+    display: flex; align-items: center;
+    padding: 3px 8px;
+    cursor: pointer; user-select: none;
+    white-space: nowrap; font-size: 12px;
+    color: var(--fg-dim);
+    gap: 3px;
+  }
+  .saveas-node.is-dir { color: var(--fg); }
+  .saveas-node.is-file { cursor: default; }
+  .saveas-node.dir-selected { background: var(--bg-active); color: #fff; }
+  .saveas-node:not(.dir-selected):not(.is-file):hover { background: var(--bg-hover); }
+  #saveas-filename-row { display: flex; align-items: center; gap: 8px; }
+  #saveas-filename-label { color: var(--fg-dim); font-size: 12px; white-space: nowrap; }
+  #saveas-filename {
+    flex: 1; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 5px 8px; border-radius: 3px;
+    font-size: 12px; outline: none;
+  }
+  #saveas-filename:focus { border-color: var(--accent); }
+  #saveas-path-hint {
+    font-size: 11px; color: var(--fg-dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
 </style>
 </head>
 <body>
@@ -540,7 +601,7 @@
       <button class="btn primary" style="min-width:4.5rem" :disabled="!activeTabPath || activeTabIsImage || !activeTabDirty || isSaving" @click="saveCurrent">{{ isSaving ? '儲存中…' : '儲存' }}</button>
     </div>
 
-    <div id="tab-bar" v-show="tabsList.length > 0">
+    <div id="tab-bar">
       <div
         v-for="tab in tabsList"
         :key="tab.path"
@@ -548,10 +609,11 @@
         :class="{ active: tab.path === activeTabPath }"
         @click="activateTab(tab.path)"
       >
-        <span class="tab-title" :title="tab.path">{{ tab.path.split('/').pop() }}</span>
+        <span class="tab-title" :title="tab.isAnonymous ? '' : tab.path">{{ tab.isAnonymous ? 'Untitled ' + tab.path.split(':')[1] : tab.path.split('/').pop() }}</span>
         <span v-if="tab.dirty" class="tab-dirty">●</span>
         <button class="tab-close" @click.stop="closeTab(tab.path)" title="關閉">×</button>
       </div>
+      <button class="tab-new-btn" @click="newAnonymousFile" title="新增空白檔案">+</button>
     </div>
 
     <div id="editor-host">
@@ -578,6 +640,44 @@
       <div class="modal-actions">
         <button v-if="dlg.cancelText" class="btn" @click="dlgCancel">{{ dlg.cancelText }}</button>
         <button class="btn" :class="dlg.danger ? 'danger' : 'primary'" @click="dlgOk">{{ dlg.confirmText }}</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="saveas-overlay" v-show="saveAsDlg.visible" @click.self="saveAsDlgCancel">
+    <div id="saveas-box">
+      <div id="saveas-title">另存為</div>
+      <div id="saveas-tree">
+        <div
+          class="saveas-node is-dir"
+          :class="{ 'dir-selected': saveAsDlg.selectedDir === '' }"
+          @click="saveAsDlg.selectedDir = ''"
+        >
+          <span>📁</span><span>（根目錄）</span>
+        </div>
+        <div
+          v-for="item in saveAsDlg.tree"
+          :key="item.path"
+          class="saveas-node"
+          :class="{ 'is-dir': item.isDir, 'is-file': !item.isDir, 'dir-selected': item.isDir && item.path === saveAsDlg.selectedDir }"
+          :style="{ paddingLeft: (8 + (item.depth + 1) * 14) + 'px' }"
+          @click="saveAsDlgClickNode(item)"
+        >
+          <span>{{ item.isDir ? (item.expanded ? '▼' : '▶') : '' }}</span>
+          <span>{{ item.isDir ? (item.expanded ? '📂' : '📁') : '📄' }}</span>
+          <span>{{ item.name }}</span>
+        </div>
+        <div v-if="saveAsDlg.tree.length === 0" style="padding:16px;color:var(--fg-dim);font-size:12px">(空)</div>
+      </div>
+      <div id="saveas-filename-row">
+        <label id="saveas-filename-label">檔案名稱：</label>
+        <input id="saveas-filename" v-model="saveAsDlg.filename" ref="saveAsFilenameInput"
+          @keydown.enter="saveAsDlgOk" @keydown.esc="saveAsDlgCancel" />
+      </div>
+      <div id="saveas-path-hint">完整路徑：{{ saveAsDlg.selectedDir ? saveAsDlg.selectedDir + '/' + saveAsDlg.filename : saveAsDlg.filename }}</div>
+      <div class="modal-actions">
+        <button class="btn" @click="saveAsDlgCancel">取消</button>
+        <button class="btn primary" :disabled="!saveAsDlg.filename.trim()" @click="saveAsDlgOk">儲存</button>
       </div>
     </div>
   </div>
@@ -735,7 +835,11 @@ window.editorPlugin = (function () {
 
   function saveMeta(tabsList, activeTabPath) {
     idbOp(STORE_META, 'readwrite', s => s.put(
-      { tabs: tabsList.map(t => t.path), activeTab: activeTabPath }, 'tabs'
+      {
+        tabs: tabsList.map(t => t.path),
+        activeTab: activeTabPath,
+        anonTabs: tabsList.filter(t => t.isAnonymous).map(t => t.path),
+      }, 'tabs'
     )).catch(() => {});
   }
 
@@ -951,6 +1055,7 @@ window.editorPlugin = (function () {
         isPasting: false,
         selectedPaths: [],
         anchorPath: null,
+        saveAsDlg: { visible: false, tree: [], selectedDir: '', filename: '', _resolve: null },
       };
     },
 
@@ -1207,7 +1312,8 @@ window.editorPlugin = (function () {
         const idx = this.tabsList.findIndex(t => t.path === path);
         if (idx < 0) return;
         const tab = this.tabsList[idx];
-        if (tab.dirty && !await this.dlgConfirm('「' + path.split('/').pop() + '」有未儲存的變更，確定要關閉嗎？')) return;
+        const displayName = tab.isAnonymous ? 'Untitled ' + path.split(':')[1] : path.split('/').pop();
+        if (tab.dirty && !await this.dlgConfirm(`「${displayName}」有未儲存的變更，確定要關閉嗎？`)) return;
 
         window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path } });
         const data = tabsData.get(path);
@@ -1226,6 +1332,8 @@ window.editorPlugin = (function () {
             this.setStatus('');
             this.scheduleMetaSave();
           }
+        } else {
+          this.scheduleMetaSave();
         }
       },
 
@@ -1233,6 +1341,8 @@ window.editorPlugin = (function () {
 
       async saveCurrent() {
         if (!this.activeTabPath || this.activeTabIsImage || this.isSaving || !this.activeTabDirty) return;
+        const activeTab = this.tabsList.find(t => t.path === this.activeTabPath);
+        if (activeTab && activeTab.isAnonymous) { await this.saveAnonymousAs(); return; }
         const data = tabsData.get(this.activeTabPath);
         if (!data || !monacoEditor) return;
         this.isSaving = true;
@@ -1273,6 +1383,129 @@ window.editorPlugin = (function () {
         } finally {
           this.isSaving = false;
         }
+      },
+
+      async dlgSaveAs() {
+        let rootItems = [];
+        try {
+          const files = await this.fetchDir('');
+          rootItems = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false }));
+        } catch {}
+        return new Promise(resolve => {
+          this.saveAsDlg = { visible: true, tree: rootItems, selectedDir: '', filename: '', _resolve: resolve };
+          this.$nextTick(() => {
+            const el = this.$refs.saveAsFilenameInput;
+            if (el) el.focus();
+          });
+        });
+      },
+
+      saveAsDlgCancel() {
+        const r = this.saveAsDlg._resolve;
+        this.saveAsDlg.visible = false;
+        this.saveAsDlg._resolve = null;
+        if (r) r(null);
+      },
+
+      saveAsDlgOk() {
+        const filename = this.saveAsDlg.filename.trim();
+        if (!filename) return;
+        const r = this.saveAsDlg._resolve;
+        this.saveAsDlg.visible = false;
+        this.saveAsDlg._resolve = null;
+        const fullPath = this.saveAsDlg.selectedDir ? this.saveAsDlg.selectedDir + '/' + filename : filename;
+        if (r) r(fullPath);
+      },
+
+      async saveAsDlgClickNode(item) {
+        if (!item.isDir) return;
+        this.saveAsDlg.selectedDir = item.path;
+        if (item.expanded) this.saveAsDlgCollapseDir(item);
+        else await this.saveAsDlgExpandDir(item);
+      },
+
+      async saveAsDlgExpandDir(item) {
+        const tree = this.saveAsDlg.tree;
+        const idx = tree.indexOf(item);
+        if (idx < 0) return;
+        item.expanded = true;
+        try {
+          const files = await this.fetchDir(item.path);
+          const children = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: item.depth + 1, expanded: false }));
+          tree.splice(idx + 1, 0, ...children);
+        } catch { item.expanded = false; }
+      },
+
+      saveAsDlgCollapseDir(item) {
+        const tree = this.saveAsDlg.tree;
+        item.expanded = false;
+        const idx = tree.indexOf(item);
+        if (idx < 0) return;
+        let end = idx + 1;
+        while (end < tree.length && tree[end].depth > item.depth) end++;
+        tree.splice(idx + 1, end - idx - 1);
+      },
+
+      async saveAnonymousAs() {
+        if (this.isSaving) return;
+        const oldPath = this.activeTabPath;
+        const data = tabsData.get(oldPath);
+        if (!data || !monacoEditor) return;
+        const targetPath = await this.dlgSaveAs();
+        if (!targetPath) return;
+        if (this.tabsList.find(t => t.path === targetPath)) {
+          this.showError('已有相同路徑的已開啟檔案');
+          return;
+        }
+        this.isSaving = true;
+        try {
+          const content = monacoEditor.getValue();
+          window.editorPlugin.saveService.emit('beforeSave', { value: content, path: targetPath });
+          await this.api('/api/file?path=' + encodeURIComponent(targetPath), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+            body: content,
+          });
+          monaco.editor.setModelLanguage(data.model, detectLang(targetPath));
+          data.originalContent = content;
+          data.isAnonymous = false;
+          tabsData.delete(oldPath);
+          tabsData.set(targetPath, data);
+          const tab = this.tabsList.find(t => t.path === oldPath);
+          if (tab) { tab.path = targetPath; tab.dirty = false; tab.isAnonymous = false; }
+          this.clearDirtyEntry(oldPath);
+          if (this.activeTabPath === oldPath) this.activeTabPath = targetPath;
+          if (this.selectedPath === oldPath) { this.selectedPath = targetPath; this.selectedPaths = [targetPath]; }
+          window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: oldPath } });
+          window.editorPlugin.tabManagerSvc.emit('open', { tab: { path: targetPath, document: { value: content } } });
+          await this.refreshDir(this.parentOf(targetPath));
+          this.scrollToTreeNode(targetPath);
+          this.setStatus('已儲存：' + targetPath);
+          this.showToast('儲存成功');
+          this.scheduleMetaSave();
+          window.editorPlugin.saveService.emit('afterSave', {
+            path: targetPath,
+            document: { title: targetPath.split('/').pop() },
+            value: content,
+          });
+        } catch (e) {
+          this.showError('儲存失敗: ' + e.message);
+        } finally {
+          this.isSaving = false;
+        }
+      },
+
+      newAnonymousFile() {
+        if (!this.editorReady) return;
+        let n = 1;
+        while (this.tabsList.find(t => t.path === `untitled:${n}`)) n++;
+        const path = `untitled:${n}`;
+        const model = monaco.editor.createModel('', 'plaintext');
+        tabsData.set(path, { model, originalContent: '', viewState: null, isImage: false, isAnonymous: true });
+        this.tabsList.push({ path, dirty: false, isImage: false, isAnonymous: true });
+        window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
+        this.activateTab(path);
+        this.scheduleMetaSave();
       },
 
       downloadFile(path) {
@@ -1605,6 +1838,7 @@ window.editorPlugin = (function () {
             }
           }
           this.selectedPaths = [];
+          this.scheduleMetaSave();
           const skipped = n - toDelete.length;
           const toastMsg = n === 1
             ? '已刪除'
@@ -1673,6 +1907,8 @@ window.editorPlugin = (function () {
           const path = item.path;
           const parentDir = this.parentOf(path);
           const fileMenuItems = [
+            { label: '新增檔案', action: () => this.newFile(parentDir) },
+            '-',
             { label: '開啟', action: () => this.openFile(path) },
             { label: '下載', action: () => this.downloadFile(path) },
             '-',
@@ -1799,9 +2035,19 @@ window.editorPlugin = (function () {
         const session = await loadSession();
         if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) return;
         const dirtyContents = session.dirtyContents || {};
+        const anonTabs = new Set(session.anonTabs || []);
         for (const path of session.tabs) {
           if (this.tabsList.find(t => t.path === path)) continue;
           try {
+            if (anonTabs.has(path)) {
+              const saved = dirtyContents[path];
+              const content = saved !== undefined ? saved : '';
+              const model = monaco.editor.createModel(content, 'plaintext');
+              tabsData.set(path, { model, originalContent: '', viewState: null, isImage: false, isAnonymous: true });
+              this.tabsList.push({ path, dirty: content !== '', isImage: false, isAnonymous: true });
+              window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: content } } });
+              continue;
+            }
             if (isImagePath(path)) {
               tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
               this.tabsList.push({ path, dirty: false, isImage: true });
@@ -1924,6 +2170,10 @@ window.editorPlugin = (function () {
       window.addEventListener('resize', () => this.hideCtxMenu());
 
       document.addEventListener('keydown', (e) => {
+        if (this.saveAsDlg.visible) {
+          if (e.key === 'Escape') { e.preventDefault(); this.saveAsDlgCancel(); }
+          return;
+        }
         if (this.dlg.visible) {
           if (e.key === 'Escape') { e.preventDefault(); this.dlgCancel(); }
           if (e.key === 'Enter' && !this.dlg.inputMode) { e.preventDefault(); this.dlgOk(); }
