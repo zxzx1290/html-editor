@@ -1478,6 +1478,7 @@ window.editorPlugin = (function () {
         this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'cut' };
         this.showToast(items.length > 1 ? `已剪下 ${items.length} 個` : '已剪下：' + items[0].path.split('/').pop());
       },
+
       clipboardCopyItems(items) {
         this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'copy' };
         this.showToast(items.length > 1 ? `已複製 ${items.length} 個` : '已複製：' + items[0].path.split('/').pop());
@@ -1486,10 +1487,15 @@ window.editorPlugin = (function () {
       duplicateItem(item) {
         this.clipboardPaste(this.parentOf(item.path), [{ path: item.path, isDir: item.isDir }]);
       },
+
       async clipboardPaste(targetDir, overrideItems) {
-        const items = overrideItems ?? this.clipboard.items;
+        const rawItems = overrideItems ?? this.clipboard.items;
         const mode = overrideItems ? 'copy' : this.clipboard.mode;
-        if (!items.length || this.isPasting) return;
+        if (!rawItems.length || this.isPasting) return;
+        const _dirPaths = rawItems.filter(i => i.isDir).map(i => i.path);
+        const items = _dirPaths.length > 0
+          ? rawItems.filter(item => !_dirPaths.some(dp => item.path !== dp && item.path.startsWith(dp + '/')))
+          : rawItems;
         const verb = mode === 'cut' ? '移動' : '複製';
         this.isPasting = true;
         let ok = 0;
@@ -1556,12 +1562,16 @@ window.editorPlugin = (function () {
           ? `確定要刪除「${selItems[0].path}」嗎？${selItems[0].isDir ? '（會刪除目錄及內容）' : ''}\n此動作無法復原。`
           : `確定要刪除 ${n} 個項目嗎？\n此動作無法復原。`;
         if (!await this.dlgConfirm(confirmMsg, { confirmText: '刪除', danger: true })) return;
+        const dirPaths = selItems.filter(i => i.isDir).map(i => i.path);
+        const toDelete = dirPaths.length > 0
+          ? selItems.filter(item => !dirPaths.some(dp => item.path !== dp && item.path.startsWith(dp + '/')))
+          : selItems;
         this.isPasting = true;
         let needFallback = false;
         let done = 0;
         try {
-          for (const { path, isDir } of selItems) {
-            this.setStatus(`刪除中… (${done + 1}/${n}) ${path.split('/').pop()}`);
+          for (const { path, isDir } of toDelete) {
+            this.setStatus(`刪除中… (${done + 1}/${toDelete.length}) ${path.split('/').pop()}`);
             try {
               await this.api('/api/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
               const toClose = this.tabsList.filter(t => t.path === path || (isDir && t.path.startsWith(path + '/'))).map(t => t.path);
@@ -1595,7 +1605,13 @@ window.editorPlugin = (function () {
             }
           }
           this.selectedPaths = [];
-          this.showToast(n === 1 ? '已刪除' : `已刪除 ${n} 個項目`);
+          const skipped = n - toDelete.length;
+          const toastMsg = n === 1
+            ? '已刪除'
+            : skipped > 0
+              ? `已刪除 ${n} 個項目（實際刪除 ${toDelete.length} 個）`
+              : `已刪除 ${n} 個項目`;
+          this.showToast(toastMsg);
         } finally {
           this.isPasting = false;
           this.setStatus('');
