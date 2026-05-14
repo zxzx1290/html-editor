@@ -534,7 +534,6 @@ button.btn:disabled {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    z-index: 9999;
     align-items: flex-end;
 }
 
@@ -590,7 +589,6 @@ button.btn.danger:hover {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.55);
-    z-index: 10000;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -687,7 +685,7 @@ button.btn.danger:hover {
     position: fixed;
     inset: 0;
     background: var(--bg);
-    z-index: 9999;
+    z-index: 9997;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -698,7 +696,7 @@ button.btn.danger:hover {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.55);
-    z-index: 10000;
+    z-index: 9995;
     display: flex;
     align-items: center;
     justify-content: center;

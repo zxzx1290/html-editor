@@ -161,11 +161,11 @@
         <div id="status">{{ statusMsg }}</div>
     </div>
 
-    <div id="toast-container">
+    <div id="toast-container" :style="toasts.length ? { zIndex: 9999 } : {}">
         <div v-for="t in toasts" :key="t.id" class="toast-item" :class="{ error: t.error }">{{ t.msg }}</div>
     </div>
 
-    <div id="modal-overlay" v-show="dlg.visible" @click.self="dlgCancel">
+    <div id="modal-overlay" v-show="dlg.visible" :style="dlg.visible ? { zIndex: 9998 } : {}">
         <div id="modal-box">
             <div class="modal-title">{{ dlg.title }}</div>
             <input v-if="dlg.inputMode" class="modal-input" v-model="dlg.inputValue" :placeholder="dlg.placeholder"
@@ -178,7 +178,7 @@
         </div>
     </div>
 
-    <div id="saveas-overlay" v-show="saveAsDlg.visible" @click.self="saveAsDlgCancel">
+    <div id="saveas-overlay" v-show="saveAsDlg.visible">
         <div id="saveas-box">
             <div id="saveas-title">另存為</div>
             <div id="saveas-tree">
@@ -664,7 +664,12 @@
                         if (ct.includes('application/json')) {
                             try { msg = (await res.json()).error || msg; } catch { }
                         }
-                        throw new Error(msg);
+                        const err = new Error(msg);
+
+                        // 加上status code
+                        err.status = res.status;
+
+                        throw err;
                     }
                     if (ct.includes('application/json')) return await res.json();
                     return await res.text();
@@ -1600,7 +1605,26 @@
                                     if (isDirty) model.setValue(saved);
                                 }
                             }
-                        } catch { /* 檔案已不存在，略過 */ }
+                        } catch (err) {
+                            if (err.status === 404 && dirtyContents[path] !== undefined) {
+                                const fname = path.split('/').pop();
+                                const keep = await this.dlgConfirm(
+                                    `「${fname}」在伺服器上已不存在，是否要恢復尚未儲存的資料？`,
+                                    { confirmText: '恢復資料', cancelText: '放棄' }
+                                );
+                                if (keep) {
+                                    const saved = dirtyContents[path];
+                                    const model = monaco.editor.createModel(saved, detectLang(path));
+                                    tabsData.set(path, { model, originalContent: '', viewState: null, isImage: false, isAnonymous: true });
+                                    this.tabsList.push({ path, dirty: true, isImage: false, isAnonymous: true });
+                                    window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: saved } } });
+                                } else {
+                                    this.clearDirtyEntry(path);
+                                }
+                            } else {
+                                console.warn('[session] failed to restore tab:', path, err);
+                            }
+                        }
                     }
                     if (this.tabsList.length > 0) {
                         const target = this.tabsList.find(t => t.path === session.activeTab) || this.tabsList[0];
