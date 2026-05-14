@@ -1,2357 +1,1882 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
+
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>{{APP_TITLE}}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #1e1e1e;
-    --bg-side: #252526;
-    --bg-bar: #333333;
-    --bg-hover: #2a2d2e;
-    --bg-active: #094771;
-    --fg: #cccccc;
-    --fg-dim: #858585;
-    --border: #333333;
-    --accent: #007acc;
-    --danger: #c84040;
-    --danger-fg: #f48771;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", sans-serif;
-    font-size: 13px;
-    color: var(--fg);
-    background: var(--bg);
-    overflow: hidden;
-  }
-  [v-cloak] { display: none; }
-  #app { display: flex; height: 100vh; width: 100vw; }
-  #sidebar {
-    width: 250px;
-    flex: 0 0 250px;
-    background: var(--bg-side);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    transition: margin-left 0.2s ease;
-  }
-  #sidebar.collapsed { margin-left: -250px; }
-  #sidebar-header {
-    padding: 8px 10px;
-    min-height: 38px;
-    background: var(--bg-bar);
-    font-weight: bold;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--fg-dim);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  #file-tree {
-    flex: 1;
-    overflow: auto;
-    padding: 4px 0;
-    scrollbar-width: thin;
-    scrollbar-color: transparent transparent;
-  }
-  #file-tree:hover {
-    scrollbar-color: #555 transparent;
-  }
-  #file-tree::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
-  }
-  #file-tree::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  #file-tree::-webkit-scrollbar-corner {
-    background: transparent;
-  }
-  #file-tree::-webkit-scrollbar-thumb {
-    background: transparent;
-    border-radius: 4px;
-  }
-  #file-tree:hover::-webkit-scrollbar-thumb {
-    background: #555;
-  }
-  #file-tree::-webkit-scrollbar-thumb:hover {
-    background: #888;
-  }
-  .tree-node {
-    display: flex;
-    align-items: center;
-    padding: 3px 8px;
-    cursor: pointer;
-    user-select: none;
-    white-space: nowrap;
-    min-width: max-content;
-  }
-  .tree-node:hover { background: var(--bg-hover); }
-  .tree-node.active { background: var(--bg-active); color: #fff; }
-  .tree-node.active-blur { background: rgba(9, 71, 113, 0.4); color: var(--fg); }
-  .tree-node .name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .tree-icon { display: inline-block; width: 16px; text-align: center; margin-right: 4px; opacity: 0.7; }
-  .tree-arrow { display: inline-block; width: 14px; font-size: 9px; text-align: center; color: var(--fg-dim); flex-shrink: 0; }
-  .tree-node.drop-over {
-    background: rgba(0, 122, 204, 0.35) !important;
-    box-shadow: inset 0 0 0 2px var(--accent);
-  }
-  #file-tree.drag-active {
-    background: rgba(0, 122, 204, 0.05);
-    outline: 1px dashed var(--accent);
-    outline-offset: -4px;
-  }
-  #file-tree.drop-over-root {
-    background: rgba(0, 122, 204, 0.12) !important;
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-  }
-  #context-menu {
-    position: fixed;
-    z-index: 1000;
-    background: #252526;
-    border: 1px solid #454545;
-    border-radius: 4px;
-    padding: 4px 0;
-    min-width: 170px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-    font-size: 12px;
-    user-select: none;
-  }
-  #context-menu .item {
-    padding: 5px 14px;
-    cursor: pointer;
-    white-space: nowrap;
-    color: var(--fg);
-  }
-  #context-menu .item:hover { background: var(--bg-active); color: #fff; }
-  #context-menu .item.danger { color: var(--danger-fg); }
-  #context-menu .item.danger:hover { background: var(--danger); color: #fff; }
-  #context-menu .sep { height: 1px; background: #454545; margin: 4px 0; }
-  button.btn {
-    background: var(--bg-bar);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    padding: 5px 10px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-size: 12px;
-  }
-  button.btn:hover { background: #3c3c3c; }
-  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button.btn.primary:hover { background: #1180d4; }
-  button.btn:disabled { opacity: 0.5; cursor: default; }
-  #settings-wrap { position: relative; }
-  #settings-panel {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    background: #2d2d2d;
-    border: 1px solid #454545;
-    border-radius: 4px;
-    padding: 6px 0;
-    min-width: 240px;
-    z-index: 500;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-  }
-  .settings-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 5px 14px;
-    gap: 12px;
-  }
-  .settings-sep { height: 1px; background: #454545; margin: 4px 0; }
-  .settings-label { font-size: 12px; color: var(--fg-dim); flex-shrink: 0; }
-  .settings-select, .settings-number {
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    padding: 3px 6px;
-    border-radius: 3px;
-    font-size: 12px;
-    cursor: pointer;
-    height: 26px;
-  }
-  .settings-select { flex: 1; min-width: 0; }
-  .settings-number { width: 52px; text-align: center; }
-  .toggle-switch { position: relative; display: inline-block; width: 34px; height: 18px; flex-shrink: 0; }
-  .toggle-switch input { opacity: 0; width: 0; height: 0; }
-  .toggle-slider { position: absolute; inset: 0; background: #555; border-radius: 18px; cursor: pointer; transition: .2s; }
-  .toggle-switch input:checked + .toggle-slider { background: var(--accent); }
-  .toggle-slider::before { content: ''; position: absolute; height: 12px; width: 12px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
-  .toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); }
-  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  #toolbar {
-    padding: 0 12px;
-    background: var(--bg-bar);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: 38px;
-    flex-shrink: 0;
-  }
-  #toggle-sidebar {
-    background: transparent;
-    border: none;
-    color: var(--fg);
-    cursor: pointer;
-    font-size: 16px;
-    padding: 0 4px;
-  }
-  #top-status { flex: 1; font-weight: 500; color: var(--fg); }
-  #tab-bar {
-    display: flex;
-    background: var(--bg-side);
-    border-bottom: 1px solid var(--border);
-    overflow-x: auto;
-    overflow-y: hidden;
-    flex-shrink: 0;
-    scrollbar-width: thin;
-    scrollbar-color: #555 transparent;
-  }
-  #tab-bar::-webkit-scrollbar { height: 3px; }
-  #tab-bar::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
-  .tab {
-    display: flex;
-    align-items: center;
-    padding: 0 6px 0 12px;
-    height: 34px;
-    border-right: 1px solid var(--border);
-    cursor: pointer;
-    white-space: nowrap;
-    font-size: 12px;
-    color: var(--fg-dim);
-    background: var(--bg-side);
-    user-select: none;
-    gap: 5px;
-    max-width: 200px;
-    min-width: 80px;
-    flex-shrink: 0;
-  }
-  .tab:hover { background: var(--bg-hover); color: var(--fg); }
-  .tab.active {
-    background: var(--bg);
-    color: var(--fg);
-    border-top: 2px solid var(--accent);
-    padding-top: 2px;
-  }
-  .tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .tab-dirty { color: #e2c08d; font-size: 10px; flex-shrink: 0; line-height: 1; }
-  .tab-close {
-    flex-shrink: 0;
-    background: transparent;
-    border: none;
-    color: transparent;
-    cursor: pointer;
-    font-size: 15px;
-    padding: 0 2px;
-    line-height: 1;
-    border-radius: 3px;
-    width: 18px;
-    height: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .tab:hover .tab-close,
-  .tab.active .tab-close { color: var(--fg-dim); }
-  .tab-close:hover { background: rgba(255,255,255,0.15); color: var(--fg) !important; }
-  .tab-new-btn {
-    flex-shrink: 0;
-    height: 34px;
-    padding: 0 10px;
-    background: transparent;
-    border: none;
-    color: var(--fg-dim);
-    cursor: pointer;
-    font-size: 18px;
-  }
-  .tab-new-btn:hover { background: var(--bg-hover); color: var(--fg); }
-  #editor-host { flex: 1; position: relative; min-height: 0; }
-  #editor { position: absolute; inset: 0; }
-  #image-preview {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--bg);
-    overflow: auto;
-  }
-  #image-preview img { max-width: 100%; max-height: 100%; }
-  #empty-hint {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--fg-dim);
-    font-size: 14px;
-  }
-  #status {
-    padding: 4px 12px;
-    background: var(--accent);
-    color: #fff;
-    font-size: 11px;
-    min-height: 22px;
-    flex-shrink: 0;
-  }
-  #toast-container {
-    position: fixed;
-    bottom: 30px;
-    right: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    z-index: 9999;
-    align-items: flex-end;
-  }
-  .toast-item {
-    background: #333;
-    color: #fff;
-    padding: 8px 14px;
-    border-radius: 4px;
-    border: 1px solid var(--border);
-    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-    max-width: 360px;
-  }
-  .toast-item.error { background: var(--danger); }
-  #sidebar-backdrop {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 9;
-    background: rgba(0,0,0,0.4);
-  }
-  @media (max-width: 700px) {
-    #sidebar { position: absolute; z-index: 10; height: 100%; }
-    #sidebar.collapsed { margin-left: -250px; }
-    #sidebar-backdrop.visible { display: block; }
-  }
-  button.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
-  button.btn.danger:hover { background: #d44; }
-  #modal-overlay {
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,0.55);
-    z-index: 10000;
-    display: flex; align-items: center; justify-content: center;
-  }
-  #modal-box {
-    background: #2d2d2d;
-    border: 1px solid #454545;
-    border-radius: 6px;
-    padding: 20px 24px 16px;
-    min-width: 300px; max-width: 460px; width: 90%;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-  }
-  .modal-title {
-    font-size: 13px; color: var(--fg);
-    margin-bottom: 14px; line-height: 1.6;
-    white-space: pre-wrap;
-  }
-  .modal-input {
-    width: 100%; box-sizing: border-box;
-    background: var(--bg); color: var(--fg);
-    border: 1px solid var(--border);
-    padding: 6px 8px; border-radius: 3px;
-    font-size: 13px; margin-bottom: 14px;
-    outline: none; display: block;
-  }
-  .modal-input:focus { border-color: var(--accent); }
-  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
-  #upload-panel {
-    border-top: 1px solid var(--border);
-    padding: 6px 8px;
-    max-height: 150px;
-    overflow-y: auto;
-    flex-shrink: 0;
-  }
-  .upload-item { margin-bottom: 6px; }
-  .upload-item:last-child { margin-bottom: 0; }
-  .upload-name {
-    font-size: 11px; color: var(--fg-dim);
-    display: block; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis;
-    margin-bottom: 3px;
-  }
-  .upload-bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
-  .upload-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.15s; }
-  .upload-fill.error { background: var(--danger); }
-  #app-loading { position: fixed; inset: 0; background: var(--bg); z-index: 9999; display: flex; align-items: center; justify-content: center; color: var(--fg) }
-  #saveas-overlay {
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,0.55);
-    z-index: 10000;
-    display: flex; align-items: center; justify-content: center;
-  }
-  #saveas-box {
-    background: #2d2d2d;
-    border: 1px solid #454545;
-    border-radius: 6px;
-    padding: 16px 20px 14px;
-    width: 400px; max-width: 95vw;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-    display: flex; flex-direction: column; gap: 10px;
-  }
-  #saveas-title { font-size: 13px; color: var(--fg); font-weight: 500; }
-  #saveas-tree {
-    height: 260px; overflow: auto;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    scrollbar-width: thin; scrollbar-color: #555 transparent;
-  }
-  #saveas-tree::-webkit-scrollbar { width: 4px; }
-  #saveas-tree::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
-  .saveas-node {
-    display: flex; align-items: center;
-    padding: 3px 8px;
-    cursor: pointer; user-select: none;
-    white-space: nowrap; font-size: 12px;
-    color: var(--fg-dim);
-    gap: 3px;
-  }
-  .saveas-node.is-dir { color: var(--fg); }
-  .saveas-node.is-file { cursor: default; }
-  .saveas-node.dir-selected { background: var(--bg-active); color: #fff; }
-  .saveas-node:not(.dir-selected):not(.is-file):hover { background: var(--bg-hover); }
-  #saveas-filename-row { display: flex; align-items: center; gap: 8px; }
-  #saveas-filename-label { color: var(--fg-dim); font-size: 12px; white-space: nowrap; }
-  #saveas-filename {
-    flex: 1; background: var(--bg); color: var(--fg);
-    border: 1px solid var(--border);
-    padding: 5px 8px; border-radius: 3px;
-    font-size: 12px; outline: none;
-  }
-  #saveas-filename:focus { border-color: var(--accent); }
-  #saveas-path-hint {
-    font-size: 11px; color: var(--fg-dim);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-</style>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{APP_TITLE}}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
 </head>
+
 <body>
-
+<div id="app-loading">
+    <svg width="40" height="40" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"
+            stroke-dasharray="90 150">
+            <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s"
+                repeatCount="indefinite" />
+        </circle>
+    </svg>
+</div>
 <div id="app" v-cloak>
-  <div v-if="!appReady" id="app-loading">
-<svg
-    width="40"
-    height="40"
-    viewBox="0 0 50 50"
-    xmlns="http://www.w3.org/2000/svg"
->
-    <circle
-        cx="25"
-        cy="25"
-        r="20"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="5"
-        stroke-linecap="round"
-        stroke-dasharray="90 150"
-    >
-        <animateTransform
-            attributeName="transform"
-            type="rotate"
-            from="0 25 25"
-            to="360 25 25"
-            dur="1s"
-            repeatCount="indefinite"
-        />
-    </circle>
-</svg>
-  </div>
-  <div id="sidebar-backdrop" :class="{ visible: !sidebarCollapsed }" @click="sidebarCollapsed = true"></div>
-  <aside id="sidebar" :class="{ collapsed: sidebarCollapsed }">
-    <div id="sidebar-header">
-      <span>WORKSPACE<template v-if="currentUser"> · <span style="font-weight:normal;text-transform:none;letter-spacing:0;color:var(--fg);">{{ currentUser }}</span></template></span>
-      <button class="btn" @click="loadTree" title="重新整理" style="padding:2px 6px;">⟳</button>
-    </div>
-    <div
-      id="file-tree"
-      :class="{ 'drag-active': treeDragActive, 'drop-over-root': treeDragActive && dropOverDir === '' }"
-      :style="isPasting ? { pointerEvents: 'none', opacity: '0.5' } : {}"
-      title="拖曳檔案到此上傳，或右鍵開啟選單"
-      @click="treeFocused = true"
-      @contextmenu.prevent="onTreeContextMenu($event, null)"
-      @dragenter="onDragEnter"
-      @dragover="onDragOver"
-      @dragleave="onDragLeave"
-      @drop="onDrop"
-    >
-      <div v-if="treeItems.length === 0 && editorReady" style="padding:10px;color:var(--fg-dim);font-style:italic;">
-        (空，拖曳檔案到此或右鍵建立)
-      </div>
-      <div
-        v-for="item in treeItems"
-        :key="item.path"
-        class="tree-node"
-        :class="{
-          active: selectedPaths.includes(item.path) && treeFocused,
-          'active-blur': selectedPaths.includes(item.path) && !treeFocused,
-          'drop-over': item.isDir && item.path === dropOverDir
-        }"
-        :style="{ paddingLeft: (8 + item.depth * 14) + 'px' }"
-        :data-path="item.path"
-        :data-is-dir="item.isDir ? '1' : '0'"
-        @click="onNodeClick(item, $event)"
-        @contextmenu.prevent.stop="onTreeContextMenu($event, item)"
-      >
-        <span class="tree-arrow">{{ item.isDir ? (item.expanded ? '▼' : '▶') : '' }}</span>
-        <span class="tree-icon">{{ item.isDir ? (item.expanded ? '📂' : '📁') : (isImagePath(item.path) ? '🖼' : '📄') }}</span>
-        <span class="name" :title="item.path">{{ item.name }}</span>
-      </div>
-    </div>
-    <div id="upload-panel" v-if="uploads.length > 0">
-      <div class="upload-item" v-for="u in uploads" :key="u.id">
-        <span class="upload-name" :title="u.name">{{ u.name }}</span>
-        <div class="upload-bar">
-          <div class="upload-fill" :style="{ width: u.progress + '%' }" :class="{ error: u.error }"></div>
+    <div id="sidebar-backdrop" :class="{ visible: !sidebarCollapsed }" @click="sidebarCollapsed = true"></div>
+    <aside id="sidebar" :class="{ collapsed: sidebarCollapsed }">
+        <div id="sidebar-header">
+            <span>WORKSPACE
+                <template v-if="currentUser"> · <span style="font-weight:normal;text-transform:none;letter-spacing:0;color:var(--fg);">{{ currentUser }}</span></template>
+            </span>
+            <button class="btn" @click="loadTree" title="重新整理" style="padding:2px 6px;">⟳</button>
         </div>
-      </div>
-    </div>
-    <input type="file" ref="uploadInput" multiple style="display:none" @change="onUploadChange" />
-  </aside>
-
-  <div id="main">
-    <div id="toolbar">
-      <button id="toggle-sidebar" @click="sidebarCollapsed = !sidebarCollapsed" title="切換側邊欄">☰</button>
-      <span id="top-status"></span>
-      <div id="settings-wrap" @click.stop>
-        <button class="btn" @click="settingsOpen = !settingsOpen">⚙ 設定</button>
-        <div id="settings-panel" v-show="settingsOpen">
-          <div class="settings-row">
-            <span class="settings-label">主題</span>
-            <select v-model="settings.theme" class="settings-select" @change="onThemeChange">
-              <optgroup label="內建">
-                <option value="vs-dark">Dark</option>
-                <option value="vs">Light</option>
-                <option value="hc-black">HC Dark</option>
-                <option value="hc-light">HC Light</option>
-              </optgroup>
-              <optgroup label="擴充">
-                <option value="Monokai">Monokai</option>
-                <option value="Dracula">Dracula</option>
-                <option value="Nord">Nord</option>
-                <option value="Cobalt2">Cobalt2</option>
-                <option value="Solarized-dark">Solarized Dark</option>
-                <option value="Solarized-light">Solarized Light</option>
-                <option value="Tomorrow-Night">Tomorrow Night</option>
-                <option value="Tomorrow-Night-Eighties">Tomorrow Night Eighties</option>
-              </optgroup>
-            </select>
-          </div>
-          <div class="settings-sep"></div>
-          <div class="settings-row">
-            <span class="settings-label">字體</span>
-            <select v-model="settings.fontFamily" class="settings-select" @change="onFontFamilyChange">
-              <option value="">預設</option>
-              <option value="Consolas">Consolas</option>
-              <option value="Menlo">Menlo</option>
-              <option value="'Courier New'">Courier New</option>
-              <option value="'Roboto Mono'">Roboto Mono</option>
-            </select>
-          </div>
-          <div class="settings-row">
-            <span class="settings-label">字體大小</span>
-            <input type="number" v-model.number="settings.fontSize" class="settings-number" min="10" max="32" @change="onFontSizeChange" />
-          </div>
-          <div class="settings-sep"></div>
-          <div class="settings-row">
-            <span class="settings-label">Minimap</span>
-            <label class="toggle-switch">
-              <input type="checkbox" v-model="settings.minimap" @change="onMinimapChange" />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="settings-row">
-            <span class="settings-label">顯示隱形字元</span>
-            <label class="toggle-switch">
-              <input type="checkbox" v-model="settings.showInvisible" @change="onShowInvisibleChange" />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="settings-row">
-            <span class="settings-label">儲存移除空白</span>
-            <label class="toggle-switch">
-              <input type="checkbox" v-model="settings.trimOnSave" @change="onTrimOnSaveChange" />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="settings-sep"></div>
-          <div class="settings-row">
-            <button class="btn" style="width:100%;border-color:var(--danger-fg);color:var(--danger-fg)" @click="doLogout">登出</button>
-          </div>
+        <div id="file-tree"
+            :class="{ 'drag-active': treeDragActive, 'drop-over-root': treeDragActive && dropOverDir === '' }"
+            :style="isPasting ? { pointerEvents: 'none', opacity: '0.5' } : {}" title="拖曳檔案到此上傳，或右鍵開啟選單"
+            @click="treeFocused = true" @contextmenu.prevent="onTreeContextMenu($event, null)"
+            @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
+            <div v-if="treeItems.length === 0 && editorReady" style="padding:10px;color:var(--fg-dim);font-style:italic;">(空，拖曳檔案到此或右鍵建立)</div>
+            <div v-for="item in treeItems" :key="item.path" class="tree-node" :class="{
+                    active: selectedPaths.includes(item.path) && treeFocused,
+                    'active-blur': selectedPaths.includes(item.path) && !treeFocused,
+                    'drop-over': item.isDir && item.path === dropOverDir
+                }"
+                :style="{ paddingLeft: (8 + item.depth * 14) + 'px' }" :data-path="item.path"
+                :data-is-dir="item.isDir ? '1' : '0'" @click="onNodeClick(item, $event)"
+                @contextmenu.prevent.stop="onTreeContextMenu($event, item)">
+                <span class="tree-arrow">{{ item.isDir ? (item.expanded ? '▼' : '▶') : '' }}</span>
+                <span class="tree-icon">{{ item.isDir ? (item.expanded ? '📂' : '📁') : (isImagePath(item.path) ? '🖼' : '📄') }}</span>
+                <span class="name" :title="item.path">{{ item.name }}</span>
+            </div>
         </div>
-      </div>
-      <button class="btn primary" style="min-width:4.5rem" :disabled="!activeTabPath || activeTabIsImage || !activeTabDirty || isSaving" @click="saveCurrent">{{ isSaving ? '儲存中…' : '儲存' }}</button>
-    </div>
-
-    <div id="tab-bar">
-      <div
-        v-for="tab in tabsList"
-        :key="tab.path"
-        class="tab"
-        :class="{ active: tab.path === activeTabPath }"
-        @click="activateTab(tab.path)"
-      >
-        <span class="tab-title" :title="tab.isAnonymous ? '' : tab.path">{{ tab.isAnonymous ? 'Untitled ' + tab.path.split(':')[1] : tab.path.split('/').pop() }}</span>
-        <span v-if="tab.dirty" class="tab-dirty">●</span>
-        <button class="tab-close" @click.stop="closeTab(tab.path)" title="關閉">×</button>
-      </div>
-      <button class="tab-new-btn" @click="newAnonymousFile" title="新增空白檔案">+</button>
-    </div>
-
-    <div id="editor-host">
-      <div id="empty-hint" v-show="tabsList.length === 0">從左側選擇檔案開始編輯</div>
-      <div id="editor" ref="editorEl" v-show="activeTabPath && !activeTabIsImage"></div>
-      <div id="image-preview" v-show="activeTabIsImage">
-        <img :src="imagePreviewSrc" />
-      </div>
-    </div>
-
-    <div id="status">{{ statusMsg }}</div>
-  </div>
-
-  <div id="toast-container">
-    <div v-for="t in toasts" :key="t.id" class="toast-item" :class="{ error: t.error }">{{ t.msg }}</div>
-  </div>
-
-  <div id="modal-overlay" v-show="dlg.visible" @click.self="dlgCancel">
-    <div id="modal-box">
-      <div class="modal-title">{{ dlg.title }}</div>
-      <input v-if="dlg.inputMode" class="modal-input" v-model="dlg.inputValue"
-        :placeholder="dlg.placeholder" ref="dlgInput"
-        @keydown.enter="dlgOk" @keydown.esc="dlgCancel" />
-      <div class="modal-actions">
-        <button v-if="dlg.cancelText" class="btn" @click="dlgCancel">{{ dlg.cancelText }}</button>
-        <button class="btn" :class="dlg.danger ? 'danger' : 'primary'" @click="dlgOk">{{ dlg.confirmText }}</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="saveas-overlay" v-show="saveAsDlg.visible" @click.self="saveAsDlgCancel">
-    <div id="saveas-box">
-      <div id="saveas-title">另存為</div>
-      <div id="saveas-tree">
-        <div
-          class="saveas-node is-dir"
-          :class="{ 'dir-selected': saveAsDlg.selectedDir === '' }"
-          @click="saveAsDlg.selectedDir = ''"
-        >
-          <span>📁</span><span>（根目錄）</span>
+        <div id="upload-panel" v-if="uploads.length > 0">
+            <div class="upload-item" v-for="u in uploads" :key="u.id">
+                <span class="upload-name" :title="u.name">{{ u.name }}</span>
+                <div class="upload-bar">
+                    <div class="upload-fill" :style="{ width: u.progress + '%' }" :class="{ error: u.error }"></div>
+                </div>
+            </div>
         </div>
-        <div
-          v-for="item in saveAsDlg.tree"
-          :key="item.path"
-          class="saveas-node"
-          :class="{ 'is-dir': item.isDir, 'is-file': !item.isDir, 'dir-selected': item.isDir && item.path === saveAsDlg.selectedDir }"
-          :style="{ paddingLeft: (8 + (item.depth + 1) * 14) + 'px' }"
-          @click="saveAsDlgClickNode(item)"
-        >
-          <span>{{ item.isDir ? (item.expanded ? '▼' : '▶') : '' }}</span>
-          <span>{{ item.isDir ? (item.expanded ? '📂' : '📁') : '📄' }}</span>
-          <span>{{ item.name }}</span>
-        </div>
-        <div v-if="saveAsDlg.tree.length === 0" style="padding:16px;color:var(--fg-dim);font-size:12px">(空)</div>
-      </div>
-      <div id="saveas-filename-row">
-        <label id="saveas-filename-label">檔案名稱：</label>
-        <input id="saveas-filename" v-model="saveAsDlg.filename" ref="saveAsFilenameInput"
-          @keydown.enter="saveAsDlgOk" @keydown.esc="saveAsDlgCancel" />
-      </div>
-      <div id="saveas-path-hint">完整路徑：{{ saveAsDlg.selectedDir ? saveAsDlg.selectedDir + '/' + saveAsDlg.filename : saveAsDlg.filename }}</div>
-      <div class="modal-actions">
-        <button class="btn" @click="saveAsDlgCancel">取消</button>
-        <button class="btn primary" :disabled="!saveAsDlg.filename.trim()" @click="saveAsDlgOk">儲存</button>
-      </div>
-    </div>
-  </div>
+        <input type="file" ref="uploadInput" multiple style="display:none" @change="onUploadChange" />
+    </aside>
 
-  <div
-    id="context-menu"
-    ref="contextMenuEl"
-    v-show="ctxMenu.visible"
-    :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
-  >
-    <template v-for="(item, i) in ctxMenu.items" :key="i">
-      <div v-if="item === '-'" class="sep"></div>
-      <div v-else class="item" :class="{ danger: item.danger }" @click="onCtxItemClick(item)">{{ item.label }}</div>
-    </template>
-  </div>
+    <div id="main">
+        <div id="toolbar">
+            <button id="toggle-sidebar" @click="sidebarCollapsed = !sidebarCollapsed" title="切換側邊欄">☰</button>
+            <span id="top-status"></span>
+            <div id="settings-wrap" @click.stop>
+                <button class="btn" @click="settingsOpen = !settingsOpen">⚙ 設定</button>
+                <div id="settings-panel" v-show="settingsOpen">
+                    <div class="settings-row">
+                        <span class="settings-label">主題</span>
+                        <select v-model="settings.theme" class="settings-select" @change="onThemeChange">
+                            <optgroup label="內建">
+                                <option value="vs-dark">Dark</option>
+                                <option value="vs">Light</option>
+                                <option value="hc-black">HC Dark</option>
+                                <option value="hc-light">HC Light</option>
+                            </optgroup>
+                            <optgroup label="擴充">
+                                <option value="Monokai">Monokai</option>
+                                <option value="Dracula">Dracula</option>
+                                <option value="Nord">Nord</option>
+                                <option value="Cobalt2">Cobalt2</option>
+                                <option value="Solarized-dark">Solarized Dark</option>
+                                <option value="Solarized-light">Solarized Light</option>
+                                <option value="Tomorrow-Night">Tomorrow Night</option>
+                                <option value="Tomorrow-Night-Eighties">Tomorrow Night Eighties</option>
+                            </optgroup>
+                        </select>
+                    </div>
+                    <div class="settings-sep"></div>
+                    <div class="settings-row">
+                        <span class="settings-label">字體</span>
+                        <select v-model="settings.fontFamily" class="settings-select" @change="onFontFamilyChange">
+                            <option value="">預設</option>
+                            <option value="Consolas">Consolas</option>
+                            <option value="Menlo">Menlo</option>
+                            <option value="'Courier New'">Courier New</option>
+                            <option value="'Roboto Mono'">Roboto Mono</option>
+                        </select>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">字體大小</span>
+                        <input type="number" v-model.number="settings.fontSize" class="settings-number" min="10"
+                            max="32" @change="onFontSizeChange" />
+                    </div>
+                    <div class="settings-sep"></div>
+                    <div class="settings-row">
+                        <span class="settings-label">Minimap</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" v-model="settings.minimap" @change="onMinimapChange" />
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">顯示隱形字元</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" v-model="settings.showInvisible"
+                                @change="onShowInvisibleChange" />
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">儲存移除空白</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" v-model="settings.trimOnSave" @change="onTrimOnSaveChange" />
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="settings-sep"></div>
+                    <div class="settings-row">
+                        <button class="btn" style="width:100%;border-color:var(--danger-fg);color:var(--danger-fg)"
+                            @click="doLogout">登出</button>
+                    </div>
+                </div>
+            </div>
+            <button class="btn primary" style="min-width:4.5rem"
+                :disabled="!activeTabPath || activeTabIsImage || !activeTabDirty || isSaving"
+                @click="saveCurrent">{{ isSaving ? '儲存中…' : '儲存' }}</button>
+        </div>
+
+        <div id="tab-bar">
+            <div v-for="tab in tabsList" :key="tab.path" class="tab" :class="{ active: tab.path === activeTabPath }"
+                @click="activateTab(tab.path)">
+                <span class="tab-title" :title="tab.isAnonymous ? '' : tab.path">{{ tab.isAnonymous ? 'Untitled ' +
+                    tab.path.split(':')[1] : tab.path.split('/').pop() }}</span>
+                <span v-if="tab.dirty" class="tab-dirty">●</span>
+                <button class="tab-close" @click.stop="closeTab(tab.path)" title="關閉">×</button>
+            </div>
+            <button class="tab-new-btn" @click="newAnonymousFile" title="新增空白檔案">+</button>
+        </div>
+
+        <div id="editor-host">
+            <div id="empty-hint" v-show="tabsList.length === 0">從左側選擇檔案開始編輯</div>
+            <div id="editor" ref="editorEl" v-show="activeTabPath && !activeTabIsImage"></div>
+            <div id="image-preview" v-show="activeTabIsImage">
+                <img :src="imagePreviewSrc" />
+            </div>
+        </div>
+
+        <div id="status">{{ statusMsg }}</div>
+    </div>
+
+    <div id="toast-container">
+        <div v-for="t in toasts" :key="t.id" class="toast-item" :class="{ error: t.error }">{{ t.msg }}</div>
+    </div>
+
+    <div id="modal-overlay" v-show="dlg.visible" @click.self="dlgCancel">
+        <div id="modal-box">
+            <div class="modal-title">{{ dlg.title }}</div>
+            <input v-if="dlg.inputMode" class="modal-input" v-model="dlg.inputValue" :placeholder="dlg.placeholder"
+                ref="dlgInput" @keydown.enter="dlgOk" @keydown.esc="dlgCancel" />
+            <div class="modal-actions">
+                <button v-if="dlg.cancelText" class="btn" @click="dlgCancel">{{ dlg.cancelText }}</button>
+                <button class="btn" :class="dlg.danger ? 'danger' : 'primary'" @click="dlgOk">{{ dlg.confirmText
+                    }}</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="saveas-overlay" v-show="saveAsDlg.visible" @click.self="saveAsDlgCancel">
+        <div id="saveas-box">
+            <div id="saveas-title">另存為</div>
+            <div id="saveas-tree">
+                <div class="saveas-node is-dir" :class="{ 'dir-selected': saveAsDlg.selectedDir === '' }"
+                    @click="saveAsDlg.selectedDir = ''">
+                    <span>📁</span><span>（根目錄）</span>
+                </div>
+                <div v-for="item in saveAsDlg.tree" :key="item.path" class="saveas-node"
+                    :class="{ 'is-dir': item.isDir, 'is-file': !item.isDir, 'dir-selected': item.isDir && item.path === saveAsDlg.selectedDir }"
+                    :style="{ paddingLeft: (8 + (item.depth + 1) * 14) + 'px' }" @click="saveAsDlgClickNode(item)">
+                    <span>{{ item.isDir ? (item.expanded ? '▼' : '▶') : '' }}</span>
+                    <span>{{ item.isDir ? (item.expanded ? '📂' : '📁') : '📄' }}</span>
+                    <span>{{ item.name }}</span>
+                </div>
+                <div v-if="saveAsDlg.tree.length === 0" style="padding:16px;color:var(--fg-dim);font-size:12px">(空)
+                </div>
+            </div>
+            <div id="saveas-filename-row">
+                <label id="saveas-filename-label">檔案名稱：</label>
+                <input id="saveas-filename" v-model="saveAsDlg.filename" ref="saveAsFilenameInput"
+                    @keydown.enter="saveAsDlgOk" @keydown.esc="saveAsDlgCancel" />
+            </div>
+            <div id="saveas-path-hint">完整路徑：{{ saveAsDlg.selectedDir ? saveAsDlg.selectedDir + '/' +
+                saveAsDlg.filename : saveAsDlg.filename }}</div>
+            <div class="modal-actions">
+                <button class="btn" @click="saveAsDlgCancel">取消</button>
+                <button class="btn primary" :disabled="!saveAsDlg.filename.trim()" @click="saveAsDlgOk">儲存</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="context-menu" ref="contextMenuEl" v-show="ctxMenu.visible"
+        :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }">
+        <template v-for="(item, i) in ctxMenu.items" :key="i">
+            <div v-if="item === '-'" class="sep"></div>
+            <div v-else class="item" :class="{ danger: item.danger }" @click="onCtxItemClick(item)">{{ item.label }}
+            </div>
+        </template>
+    </div>
 </div>
 
 <script src="/static/vue.global.js"></script>
 <script src="/static/monaco/vs/loader.js"></script>
 
 <script>
-// ── Plugin System ─────────────────────────────────────────────────────────────
-window.editorPlugin = (function () {
-  class EventEmitter {
-    constructor() { this._l = {}; }
-    on(ev, fn)  { (this._l[ev] = this._l[ev] || []).push(fn); return this; }
-    off(ev, fn) { if (this._l[ev]) this._l[ev] = this._l[ev].filter(f => f !== fn); return this; }
-    emit(ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { console.error('[plugin emit]', ev, e); } }); }
-  }
+    // ── Plugin System ─────────────────────────────────────────────────────────────
+    window.editorPlugin = (function () {
+        class EventEmitter {
+            constructor() { this._l = {}; }
+            on(ev, fn) { (this._l[ev] = this._l[ev] || []).push(fn); return this; }
+            off(ev, fn) { if (this._l[ev]) this._l[ev] = this._l[ev].filter(f => f !== fn); return this; }
+            emit(ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { console.error('[plugin emit]', ev, e); } }); }
+        }
 
-  const saveService = new EventEmitter();
+        const saveService = new EventEmitter();
 
-  const tabManagerSvc = new EventEmitter();
-  tabManagerSvc.getTabs = function () {
-    const app = window._editorApp;
-    return app ? app.tabsList.map(t => ({ path: t.path, document: { title: t.path.split('/').pop(), value: '' } })) : [];
-  };
+        const tabManagerSvc = new EventEmitter();
+        tabManagerSvc.getTabs = function () {
+            const app = window._editorApp;
+            return app ? app.tabsList.map(t => ({ path: t.path, document: { title: t.path.split('/').pop(), value: '' } })) : [];
+        };
 
-  const bubbleSvc = {
-    popup(msg) {
-      const app = window._editorApp;
-      if (app) app.showToast(String(msg));
-      else console.log('[bubble]', msg);
-    },
-  };
+        const bubbleSvc = {
+            popup(msg) {
+                const app = window._editorApp;
+                if (app) app.showToast(String(msg));
+                else console.log('[bubble]', msg);
+            },
+        };
 
-  const dialogAlertSvc = {
-    show(title, body, detail, cb) {
-      const msg = [title, body, detail].filter(Boolean).join('\n');
-      window._editorApp.dlgAlert(msg).then(() => { if (cb) cb(); });
-    },
-  };
+        const dialogAlertSvc = {
+            show(title, body, detail, cb) {
+                const msg = [title, body, detail].filter(Boolean).join('\n');
+                window._editorApp.dlgAlert(msg).then(() => { if (cb) cb(); });
+            },
+        };
 
-  const services = {
-    save: saveService,
-    'dialog.alert': dialogAlertSvc,
-    tabManager: tabManagerSvc,
-    'notification.bubble': bubbleSvc,
-  };
+        const services = {
+            save: saveService,
+            'dialog.alert': dialogAlertSvc,
+            tabManager: tabManagerSvc,
+            'notification.bubble': bubbleSvc,
+        };
 
-  async function loadPlugin(url) {
-    try {
-      const code = await fetch(url).then(r => {
-        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
-        return r.text();
-      });
-      new Function(code)();
-      console.log('[plugin] loaded:', url);
-    } catch (e) {
-      console.error('[plugin] failed to load:', url, e);
-    }
-  }
+        async function loadPlugin(url) {
+            try {
+                const code = await fetch(url).then(r => {
+                    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+                    return r.text();
+                });
+                new Function(code)();
+                console.log('[plugin] loaded:', url);
+            } catch (e) {
+                console.error('[plugin] failed to load:', url, e);
+            }
+        }
 
-  return { services, saveService, tabManagerSvc, bubbleSvc, dialogAlertSvc, loadPlugin };
-})();
+        return { services, saveService, tabManagerSvc, bubbleSvc, dialogAlertSvc, loadPlugin };
+    })();
 </script>
 
 <script>
-(function () {
-  const IMG_EXT = ['png','jpg','jpeg','gif','webp','ico'];
-  const LANG_MAP = {
-    html: 'html', htm: 'html',
-    css: 'css',
-    js: 'javascript',
-    json: 'json',
-    md: 'markdown',
-    txt: 'plaintext',
-    svg: 'xml',
-    php: 'php',
-  };
-  const SETTINGS_KEY = 'html-editor-settings';
-  // Monaco models and view states stored outside Vue reactivity
-  const tabsData = new Map(); // path → { model, originalContent, viewState, isImage }
-  const openingPaths = new Set(); // paths currently being fetched (race-condition guard)
+    (function () {
+        const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico'];
+        const LANG_MAP = {
+            html: 'html', htm: 'html',
+            css: 'css',
+            js: 'javascript',
+            json: 'json',
+            md: 'markdown',
+            txt: 'plaintext',
+            svg: 'xml',
+            php: 'php',
+        };
+        const SETTINGS_KEY = 'html-editor-settings';
+        // Monaco models and view states stored outside Vue reactivity
+        const tabsData = new Map(); // path → { model, originalContent, viewState, isImage }
+        const openingPaths = new Set(); // paths currently being fetched (race-condition guard)
 
-  // ── IndexedDB session persistence ─────────────────────────────────────────
-  // meta  store: key='tabs' → { tabs:[...paths], activeTab:'...' }
-  // dirty store: key=filePath → file content (string)
-  const IDB_NAME    = 'html-editor-db';
-  const IDB_VER     = 2;
-  const STORE_META  = 'meta';
-  const STORE_DIRTY = 'dirty';
-  const STORE_HASH  = 'basehash';
+        // ── IndexedDB session persistence ─────────────────────────────────────────
+        // meta  store: key='tabs' → { tabs:[...paths], activeTab:'...' }
+        // dirty store: key=filePath → file content (string)
+        const IDB_NAME = 'html-editor-db';
+        const IDB_VER = 2;
+        const STORE_META = 'meta';
+        const STORE_DIRTY = 'dirty';
+        const STORE_HASH = 'basehash';
 
-  function openDB() {
-    return new Promise((resolve, reject) => {
-      const req = indexedDB.open(IDB_NAME, IDB_VER);
-      req.onupgradeneeded = e => {
-        const db = e.target.result;
-        if (!db.objectStoreNames.contains(STORE_META))  db.createObjectStore(STORE_META);
-        if (!db.objectStoreNames.contains(STORE_DIRTY)) db.createObjectStore(STORE_DIRTY);
-        if (!db.objectStoreNames.contains(STORE_HASH))  db.createObjectStore(STORE_HASH);
-      };
-      req.onsuccess = e => resolve(e.target.result);
-      req.onerror   = e => reject(e.target.error);
-    });
-  }
-
-  function idbOp(storeName, mode, fn) {
-    return openDB().then(db => new Promise((resolve, reject) => {
-      const req = fn(db.transaction(storeName, mode).objectStore(storeName));
-      req.onsuccess = e => resolve(e.target.result ?? null);
-      req.onerror   = e => reject(e.target.error);
-    }));
-  }
-
-  function idbAllEntries(storeName) {
-    return openDB().then(db => new Promise((resolve, reject) => {
-      const out = {};
-      const req = db.transaction(storeName, 'readonly').objectStore(storeName).openCursor();
-      req.onsuccess = e => {
-        const cur = e.target.result;
-        if (cur) { out[cur.key] = cur.value; cur.continue(); } else resolve(out);
-      };
-      req.onerror = e => reject(e.target.error);
-    }));
-  }
-
-  function simpleHash(str) {
-    let h = 0;
-    for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
-    return h.toString(36);
-  }
-
-  async function loadSession() {
-    try {
-      const [meta, dirtyContents, baseHashes] = await Promise.all([
-        idbOp(STORE_META, 'readonly', s => s.get('tabs')),
-        idbAllEntries(STORE_DIRTY),
-        idbAllEntries(STORE_HASH),
-      ]);
-      return meta ? { ...meta, dirtyContents, baseHashes } : null;
-    } catch { return null; }
-  }
-
-  function saveMeta(tabsList, activeTabPath) {
-    idbOp(STORE_META, 'readwrite', s => s.put(
-      {
-        tabs: tabsList.map(t => t.path),
-        activeTab: activeTabPath,
-        anonTabs: tabsList.filter(t => t.isAnonymous).map(t => t.path),
-      }, 'tabs'
-    )).catch(() => {});
-  }
-
-  function saveDirtyFile(path, content) {
-    idbOp(STORE_DIRTY, 'readwrite', s => s.put(content, path)).catch(() => {});
-  }
-
-  function deleteDirtyFile(path) {
-    idbOp(STORE_DIRTY, 'readwrite', s => s.delete(path)).catch(() => {});
-  }
-
-  function saveBaseHash(path, hash) {
-    idbOp(STORE_HASH, 'readwrite', s => s.put(hash, path)).catch(() => {});
-  }
-
-  function deleteBaseHash(path) {
-    idbOp(STORE_HASH, 'readwrite', s => s.delete(path)).catch(() => {});
-  }
-
-  let monacoEditor = null;
-  const loadedThemes = new Set(['vs', 'vs-dark', 'hc-black', 'hc-light']);
-
-  function extOf(path) {
-    const m = /\.([^./]+)$/.exec(path);
-    return m ? m[1].toLowerCase() : '';
-  }
-
-  function isImagePath(path) {
-    return IMG_EXT.includes(extOf(path));
-  }
-
-  function detectLang(path) {
-    return LANG_MAP[extOf(path)] || 'plaintext';
-  }
-
-  function loadSettings() {
-    try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
-  }
-
-  function persistSettings(patch) {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
-  }
-
-  // ── Built-in: Session check & WS collaboration ────────────────────────────
-
-  function initSessionCheck(app) {
-    const timer = setInterval(async function () {
-      try {
-        const r = await fetch('/check');
-        if (r.status === 401) {
-          clearInterval(timer);
-          window.location.href = '/login';
-          return;
+        function openDB() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(IDB_NAME, IDB_VER);
+                req.onupgradeneeded = e => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains(STORE_META)) db.createObjectStore(STORE_META);
+                    if (!db.objectStoreNames.contains(STORE_DIRTY)) db.createObjectStore(STORE_DIRTY);
+                    if (!db.objectStoreNames.contains(STORE_HASH)) db.createObjectStore(STORE_HASH);
+                };
+                req.onsuccess = e => resolve(e.target.result);
+                req.onerror = e => reject(e.target.error);
+            });
         }
-        if (!r.ok) return;
-        const data = await r.json();
-        if (data.extended) app.showToast('延長登入時間成功');
-      } catch {
-        app.showError('連線失敗，無法確認 session 狀態');
-      }
-    }, 60000);
-  }
 
-  function initWsCollab(app) {
-    const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
-    let socket = null;
-    let dupCount = 0;
-
-    function wsSend(data) {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
-      socket.send(JSON.stringify(data));
-    }
-
-    function fileOnOpen(path) {
-      const i = path.lastIndexOf('/');
-      const folder = i >= 0 ? path.slice(0, i) : '';
-      const file = i >= 0 ? path.slice(i + 1) : path;
-      wsSend({ type: 'file_on_open', payload: { path: folder, file } });
-    }
-
-    function fileOnClose(path) {
-      const i = path.lastIndexOf('/');
-      const folder = i >= 0 ? path.slice(0, i) : '';
-      const file = i >= 0 ? path.slice(i + 1) : path;
-      wsSend({ type: 'file_on_close', payload: { path: folder, file } });
-    }
-
-    function connect() {
-      if (socket && socket.readyState !== WebSocket.CLOSED) return;
-      socket = new WebSocket(wsUrl);
-
-      socket.onopen = function () {
-        app.showToast('已上線');
-        window.editorPlugin.tabManagerSvc.getTabs().forEach(t => fileOnOpen(t.path));
-      };
-
-      socket.onmessage = function (event) {
-        const msg = JSON.parse(event.data);
-        console.log('[ws]', msg.type, msg);
-        switch (msg.type) {
-          case 'error':
-            if (msg.payload === 'duplicate connect') {
-              dupCount++;
-              app.showError('重複連線 #' + dupCount);
-              if (dupCount > 2) window.location.href = '/logout?reason=duplicate_connect';
-            }
-            break;
-          case 'message':
-            app.showToast(msg.payload);
-            break;
-          case 'kick':
-            window.location.href = '/logout?reason=kick';
-            break;
-          case 'same_file_open': {
-            const info = msg.payload;
-            window.editorPlugin.dialogAlertSvc.show(
-              '注意',
-              '重複開啟檔案 ' + info.path + '/' + info.file,
-              '人員：' + info.user,
-              function () {}
-            );
-            break;
-          }
-          case 'user_online':
-            app.showToast(msg.payload.user + ' 已上線');
-            break;
-          case 'user_offline':
-            app.showToast(msg.payload.user + ' 已離線');
-            break;
-          case 'file_opened': {
-            const fp = msg.payload;
-            const fullPath = [fp.path, fp.file].filter(Boolean).join('/');
-            app.showToast(fp.user + ' 開啟了 ' + fullPath);
-            break;
-          }
-          case 'file_closed': {
-            const fp = msg.payload;
-            const fullPath = [fp.path, fp.file].filter(Boolean).join('/');
-            app.showToast(fp.user + ' 關閉了 ' + fullPath);
-            break;
-          }
+        function idbOp(storeName, mode, fn) {
+            return openDB().then(db => new Promise((resolve, reject) => {
+                const req = fn(db.transaction(storeName, mode).objectStore(storeName));
+                req.onsuccess = e => resolve(e.target.result ?? null);
+                req.onerror = e => reject(e.target.error);
+            }));
         }
-      };
 
-      socket.onerror = function (err) {
-        console.error('[ws-collab] error', err);
-      };
-
-      socket.onclose = function () {
-        socket = null;
-        app.showError('已離線，將自動重新連線');
-        console.warn('[ws-collab] connection closed, retrying');
-        setTimeout(connect, 30000);
-      };
-    }
-
-    window.editorPlugin.saveService.on('afterSave', function (e) {
-      wsSend({ type: 'after_save', payload: { path: e.path } });
-    });
-
-    window.editorPlugin.tabManagerSvc.on('open', function (e) { fileOnOpen(e.tab.path); });
-    window.editorPlugin.tabManagerSvc.on('tabDestroy', function (e) { fileOnClose(e.tab.path); });
-
-    connect();
-  }
-
-  async function initBuiltins(app) {
-    let cfg;
-    try { cfg = await fetch('/api/config').then(r => r.json()); } catch { return; }
-    app.currentUser = cfg.username || '';
-    initSessionCheck(app);
-    initWsCollab(app);
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  const { createApp } = Vue;
-
-  createApp({
-    data() {
-      const s = loadSettings();
-      return {
-        sidebarCollapsed: false,
-        treeItems: [],
-        selectedPath: null,
-        treeFocused: false,
-        treeDragActive: false,
-        dropOverDir: null,
-        dragCounter: 0,
-        uploadTargetDir: '',
-        tabsList: [],
-        activeTabPath: null,
-        settings: {
-          theme: s.theme || 'vs-dark',
-          fontSize: s.fontSize || 14,
-          fontFamily: s.fontFamily || '',
-          minimap: s.minimap !== false,
-          showInvisible: s.showInvisible === true,
-          trimOnSave: s.trimOnSave !== false,
-        },
-        currentUser: '',
-        settingsOpen: false,
-        statusMsg: '',
-        isSaving: false,
-        toasts: [],
-        ctxMenu: { visible: false, x: 0, y: 0, items: [] },
-        imagePreviewSrc: '',
-        editorReady: false,
-        appReady: false,
-        uploads: [],
-        dlg: { visible: false, title: '', inputMode: false, inputValue: '', placeholder: '', danger: false, confirmText: '確定', cancelText: '取消', _resolve: null },
-        clipboard: { items: [], mode: null },
-        isPasting: false,
-        selectedPaths: [],
-        anchorPath: null,
-        saveAsDlg: { visible: false, tree: [], selectedDir: '', filename: '', _resolve: null },
-      };
-    },
-
-    computed: {
-      activeTab() {
-        return this.tabsList.find(t => t.path === this.activeTabPath) || null;
-      },
-      activeTabIsImage() {
-        return this.activeTab ? this.activeTab.isImage : false;
-      },
-      activeTabDirty() {
-        return this.activeTab ? this.activeTab.dirty : false;
-      },
-    },
-
-    methods: {
-      isImagePath,
-
-      _dlgShow(opts) {
-        return new Promise(resolve => {
-          Object.assign(this.dlg, {
-            visible: true, title: opts.title || '',
-            inputMode: !!opts.inputMode, inputValue: opts.defaultValue || '',
-            placeholder: opts.placeholder || '', danger: !!opts.danger,
-            confirmText: opts.confirmText || '確定', cancelText: 'cancelText' in opts ? opts.cancelText : '取消',
-            _resolve: resolve,
-          });
-          this.$nextTick(() => {
-            const el = this.$refs.dlgInput;
-            if (el) {
-              el.focus();
-              if (opts.selectEnd !== undefined) el.setSelectionRange(0, opts.selectEnd);
-              else el.select();
-            }
-          });
-        });
-      },
-      dlgOk() {
-        const r = this.dlg._resolve;
-        const val = this.dlg.inputMode ? this.dlg.inputValue : true;
-        this.dlg.visible = false; this.dlg._resolve = null;
-        if (r) r(val);
-      },
-      dlgCancel() {
-        const r = this.dlg._resolve;
-        const val = this.dlg.inputMode ? null : false;
-        this.dlg.visible = false; this.dlg._resolve = null;
-        if (r) r(val);
-      },
-      dlgConfirm(title, opts) {
-        return this._dlgShow({ title, ...(opts || {}) });
-      },
-      dlgAlert(title) {
-        return this._dlgShow({ title, cancelText: null });
-      },
-      dlgPrompt(title, defaultValue, placeholder, opts) {
-        return this._dlgShow({ title, inputMode: true, defaultValue: defaultValue || '', placeholder: placeholder || '', ...(opts || {}) });
-      },
-
-      _pushToast(msg, error) {
-        const id = Date.now() + Math.random();
-        this.toasts.push({ id, msg, error });
-        setTimeout(() => {
-          const i = this.toasts.findIndex(t => t.id === id);
-          if (i >= 0) this.toasts.splice(i, 1);
-        }, 3000);
-      },
-
-      showToast(msg) { this._pushToast(msg, false); },
-      showError(msg) { this._pushToast(msg, true); },
-
-      setStatus(msg) {
-        this.statusMsg = msg || '';
-      },
-
-      async api(path, opts) {
-        opts = opts || {};
-        const res = await fetch(path, opts);
-        const ct = res.headers.get('content-type') || '';
-        if (!res.ok) {
-          let msg = res.statusText;
-          if (ct.includes('application/json')) {
-            try { msg = (await res.json()).error || msg; } catch {}
-          }
-          throw new Error(msg);
+        function idbAllEntries(storeName) {
+            return openDB().then(db => new Promise((resolve, reject) => {
+                const out = {};
+                const req = db.transaction(storeName, 'readonly').objectStore(storeName).openCursor();
+                req.onsuccess = e => {
+                    const cur = e.target.result;
+                    if (cur) { out[cur.key] = cur.value; cur.continue(); } else resolve(out);
+                };
+                req.onerror = e => reject(e.target.error);
+            }));
         }
-        if (ct.includes('application/json')) return await res.json();
-        return await res.text();
-      },
 
-      // ── File tree ─────────────────────────────────────────────────────────
-
-      async fetchDir(path) {
-        const url = path ? '/api/files?path=' + encodeURIComponent(path) : '/api/files';
-        const data = await this.api(url);
-        return data.files || [];
-      },
-
-      async loadTree() {
-        try {
-          const files = await this.fetchDir('');
-          this.treeItems = files.map(f => ({
-            path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false,
-          }));
-        } catch (e) {
-          this.showError('載入檔案列表失敗：' + e.message);
+        function simpleHash(str) {
+            let h = 0;
+            for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+            return h.toString(36);
         }
-      },
 
-      async expandDir(item) {
-        const idx = this.treeItems.indexOf(item);
-        if (idx < 0) return;
-        item.expanded = true;
-        try {
-          const files = await this.fetchDir(item.path);
-          const children = files.map(f => ({
-            path: f.path, name: f.name, isDir: f.isDir, depth: item.depth + 1, expanded: false,
-          }));
-          this.treeItems.splice(idx + 1, 0, ...children);
-        } catch (e) {
-          item.expanded = false;
-          this.showError('載入目錄失敗：' + e.message);
-        }
-      },
-
-      collapseDir(item) {
-        item.expanded = false;
-        const idx = this.treeItems.indexOf(item);
-        if (idx < 0) return;
-        let end = idx + 1;
-        while (end < this.treeItems.length && this.treeItems[end].depth > item.depth) end++;
-        this.treeItems.splice(idx + 1, end - idx - 1);
-      },
-
-      async onNodeClick(item, event) {
-        if (event && (event.ctrlKey || event.metaKey)) {
-          const idx = this.selectedPaths.indexOf(item.path);
-          if (idx >= 0) this.selectedPaths.splice(idx, 1);
-          else this.selectedPaths.push(item.path);
-          this.selectedPath = item.path;
-          this.anchorPath = item.path;
-        } else if (event && event.shiftKey && this.anchorPath) {
-          const ai = this.treeItems.findIndex(t => t.path === this.anchorPath);
-          const bi = this.treeItems.indexOf(item);
-          if (ai >= 0 && bi >= 0) {
-            const s = Math.min(ai, bi), e2 = Math.max(ai, bi);
-            this.selectedPaths = this.treeItems.slice(s, e2 + 1).map(t => t.path);
-          }
-          this.selectedPath = item.path;
-        } else {
-          this.selectedPath = item.path;
-          this.selectedPaths = [item.path];
-          this.anchorPath = item.path;
-          if (item.isDir) {
-            if (item.expanded) this.collapseDir(item);
-            else await this.expandDir(item);
-          } else {
-            await this.openFile(item.path);
-          }
-        }
-      },
-
-      parentOf(path) {
-        const i = path.lastIndexOf('/');
-        return i >= 0 ? path.slice(0, i) : '';
-      },
-
-      scrollToTreeNode(path) {
-        this.$nextTick(() => {
-          const el = document.querySelector(`[data-path="${CSS.escape(path)}"]`);
-          if (el) el.scrollIntoView({ block: 'nearest' });
-        });
-      },
-
-      async refreshDir(dirPath) {
-        if (dirPath === '') {
-          await this.loadTree();
-        } else {
-          const item = this.treeItems.find(t => t.path === dirPath && t.isDir);
-          if (item) {
-            if (item.expanded) this.collapseDir(item);
-            await this.expandDir(item);
-          }
-        }
-      },
-
-      // ── Tabs ──────────────────────────────────────────────────────────────
-
-      async openFile(path) {
-        if (this.tabsList.find(t => t.path === path)) {
-          await this.activateTab(path);
-          return;
-        }
-        if (openingPaths.has(path)) return;
-        openingPaths.add(path);
-
-        try {
-          if (isImagePath(path)) {
-            tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
-            this.tabsList.push({ path, dirty: false, isImage: true });
-            window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
-          } else {
+        async function loadSession() {
             try {
-              const text = await this.api('/api/file?path=' + encodeURIComponent(path));
-              const model = monaco.editor.createModel(text, detectLang(path));
-              tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
-              this.tabsList.push({ path, dirty: false, isImage: false });
-              window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
-            } catch (e) {
-              this.showError('開啟失敗: ' + e.message);
-              return;
-            }
-          }
-
-          await this.activateTab(path);
-          this.scheduleMetaSave();
-        } finally {
-          openingPaths.delete(path);
-        }
-      },
-
-      async activateTab(path) {
-        if (this.activeTabPath === path) return;
-        this.selectedPath = path;
-        this.selectedPaths = [path];
-
-        if (this.activeTabPath) {
-          const cur = tabsData.get(this.activeTabPath);
-          if (cur && monacoEditor && !cur.isImage) cur.viewState = monacoEditor.saveViewState();
+                const [meta, dirtyContents, baseHashes] = await Promise.all([
+                    idbOp(STORE_META, 'readonly', s => s.get('tabs')),
+                    idbAllEntries(STORE_DIRTY),
+                    idbAllEntries(STORE_HASH),
+                ]);
+                return meta ? { ...meta, dirtyContents, baseHashes } : null;
+            } catch { return null; }
         }
 
-        this.activeTabPath = path;
-        const data = tabsData.get(path);
-
-        if (data && data.isImage) {
-          this.imagePreviewSrc = '/api/file?path=' + encodeURIComponent(path) + '&t=' + Date.now();
-          this.setStatus('圖片預覽：' + path);
-        } else if (data && monacoEditor) {
-          monacoEditor.setModel(data.model);
-          if (data.viewState) monacoEditor.restoreViewState(data.viewState);
-          this.setStatus('已開啟：' + path);
+        function saveMeta(tabsList, activeTabPath) {
+            idbOp(STORE_META, 'readwrite', s => s.put(
+                {
+                    tabs: tabsList.map(t => t.path),
+                    activeTab: activeTabPath,
+                    anonTabs: tabsList.filter(t => t.isAnonymous).map(t => t.path),
+                }, 'tabs'
+            )).catch(() => { });
         }
 
-        await this.revealInTree(path);
-        this.scheduleMetaSave();
-        this.$nextTick(() => {
-          const tabEl = document.querySelector('.tab.active');
-          if (tabEl) tabEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-        });
-        this.scrollToTreeNode(path);
-      },
-
-      async closeTab(path) {
-        const idx = this.tabsList.findIndex(t => t.path === path);
-        if (idx < 0) return;
-        const tab = this.tabsList[idx];
-        const displayName = tab.isAnonymous ? 'Untitled ' + path.split(':')[1] : path.split('/').pop();
-        if (tab.dirty && !await this.dlgConfirm(`「${displayName}」有未儲存的變更，確定要關閉嗎？`)) return;
-
-        window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path } });
-        const data = tabsData.get(path);
-        if (data && data.model) data.model.dispose();
-        tabsData.delete(path);
-        this.tabsList.splice(idx, 1);
-        this.clearDirtyEntry(path);
-
-        if (this.activeTabPath === path) {
-          if (this.tabsList.length > 0) {
-            this.activeTabPath = null;
-            await this.activateTab(this.tabsList[Math.min(idx, this.tabsList.length - 1)].path);
-          } else {
-            this.activeTabPath = null;
-            if (monacoEditor) monacoEditor.setModel(null);
-            this.setStatus('');
-            this.scheduleMetaSave();
-          }
-        } else {
-          this.scheduleMetaSave();
+        function saveDirtyFile(path, content) {
+            idbOp(STORE_DIRTY, 'readwrite', s => s.put(content, path)).catch(() => { });
         }
-      },
 
-      // ── File operations ───────────────────────────────────────────────────
-
-      async saveCurrent() {
-        if (!this.activeTabPath || this.activeTabIsImage || this.isSaving || !this.activeTabDirty) return;
-        const activeTab = this.tabsList.find(t => t.path === this.activeTabPath);
-        if (activeTab && activeTab.isAnonymous) { await this.saveAnonymousAs(); return; }
-        const data = tabsData.get(this.activeTabPath);
-        if (!data || !monacoEditor) return;
-        this.isSaving = true;
-        if (this.settings.trimOnSave) {
-          const model = monacoEditor.getModel();
-          const lineCount = model.getLineCount();
-          const edits = [];
-          for (let i = 1; i <= lineCount; i++) {
-            const line = model.getLineContent(i);
-            const trimmed = line.trimEnd();
-            if (trimmed.length < line.length) {
-              edits.push({ range: new monaco.Range(i, trimmed.length + 1, i, line.length + 1), text: '' });
-            }
-          }
-          if (edits.length > 0) model.pushEditOperations([], edits, () => null);
+        function deleteDirtyFile(path) {
+            idbOp(STORE_DIRTY, 'readwrite', s => s.delete(path)).catch(() => { });
         }
-        const content = monacoEditor.getValue();
-        window.editorPlugin.saveService.emit('beforeSave', { value: content, path: this.activeTabPath });
-        try {
-          await this.api('/api/file?path=' + encodeURIComponent(this.activeTabPath), {
-            method: 'PUT',
-            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-            body: content,
-          });
-          data.originalContent = content;
-          const tab = this.tabsList.find(t => t.path === this.activeTabPath);
-          if (tab) tab.dirty = false;
-          this.clearDirtyEntry(this.activeTabPath);
-          this.setStatus('已儲存：' + this.activeTabPath);
-          this.showToast('儲存成功');
-          window.editorPlugin.saveService.emit('afterSave', {
-            path: this.activeTabPath,
-            document: { title: this.activeTabPath.split('/').pop() },
-            value: content,
-          });
-        } catch (e) {
-          this.showError('儲存失敗: ' + e.message);
-        } finally {
-          this.isSaving = false;
+
+        function saveBaseHash(path, hash) {
+            idbOp(STORE_HASH, 'readwrite', s => s.put(hash, path)).catch(() => { });
         }
-      },
 
-      async dlgSaveAs() {
-        let rootItems = [];
-        try {
-          const files = await this.fetchDir('');
-          rootItems = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false }));
-        } catch {}
-        return new Promise(resolve => {
-          this.saveAsDlg = { visible: true, tree: rootItems, selectedDir: '', filename: '', _resolve: resolve };
-          this.$nextTick(() => {
-            const el = this.$refs.saveAsFilenameInput;
-            if (el) el.focus();
-          });
-        });
-      },
-
-      saveAsDlgCancel() {
-        const r = this.saveAsDlg._resolve;
-        this.saveAsDlg.visible = false;
-        this.saveAsDlg._resolve = null;
-        if (r) r(null);
-      },
-
-      saveAsDlgOk() {
-        const filename = this.saveAsDlg.filename.trim();
-        if (!filename) return;
-        const r = this.saveAsDlg._resolve;
-        this.saveAsDlg.visible = false;
-        this.saveAsDlg._resolve = null;
-        const fullPath = this.saveAsDlg.selectedDir ? this.saveAsDlg.selectedDir + '/' + filename : filename;
-        if (r) r(fullPath);
-      },
-
-      async saveAsDlgClickNode(item) {
-        if (!item.isDir) return;
-        this.saveAsDlg.selectedDir = item.path;
-        if (item.expanded) this.saveAsDlgCollapseDir(item);
-        else await this.saveAsDlgExpandDir(item);
-      },
-
-      async saveAsDlgExpandDir(item) {
-        const tree = this.saveAsDlg.tree;
-        const idx = tree.indexOf(item);
-        if (idx < 0) return;
-        item.expanded = true;
-        try {
-          const files = await this.fetchDir(item.path);
-          const children = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: item.depth + 1, expanded: false }));
-          tree.splice(idx + 1, 0, ...children);
-        } catch { item.expanded = false; }
-      },
-
-      saveAsDlgCollapseDir(item) {
-        const tree = this.saveAsDlg.tree;
-        item.expanded = false;
-        const idx = tree.indexOf(item);
-        if (idx < 0) return;
-        let end = idx + 1;
-        while (end < tree.length && tree[end].depth > item.depth) end++;
-        tree.splice(idx + 1, end - idx - 1);
-      },
-
-      async saveAnonymousAs() {
-        if (this.isSaving) return;
-        const oldPath = this.activeTabPath;
-        const data = tabsData.get(oldPath);
-        if (!data || !monacoEditor) return;
-        const targetPath = await this.dlgSaveAs();
-        if (!targetPath) return;
-        if (this.tabsList.find(t => t.path === targetPath)) {
-          this.showError('已有相同路徑的已開啟檔案');
-          return;
+        function deleteBaseHash(path) {
+            idbOp(STORE_HASH, 'readwrite', s => s.delete(path)).catch(() => { });
         }
-        this.isSaving = true;
-        try {
-          const content = monacoEditor.getValue();
-          window.editorPlugin.saveService.emit('beforeSave', { value: content, path: targetPath });
-          await this.api('/api/file?path=' + encodeURIComponent(targetPath), {
-            method: 'PUT',
-            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-            body: content,
-          });
-          monaco.editor.setModelLanguage(data.model, detectLang(targetPath));
-          data.originalContent = content;
-          data.isAnonymous = false;
-          tabsData.delete(oldPath);
-          tabsData.set(targetPath, data);
-          const tab = this.tabsList.find(t => t.path === oldPath);
-          if (tab) { tab.path = targetPath; tab.dirty = false; tab.isAnonymous = false; }
-          this.clearDirtyEntry(oldPath);
-          if (this.activeTabPath === oldPath) this.activeTabPath = targetPath;
-          if (this.selectedPath === oldPath) { this.selectedPath = targetPath; this.selectedPaths = [targetPath]; }
-          window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: oldPath } });
-          window.editorPlugin.tabManagerSvc.emit('open', { tab: { path: targetPath, document: { value: content } } });
-          await this.refreshDir(this.parentOf(targetPath));
-          this.scrollToTreeNode(targetPath);
-          this.setStatus('已儲存：' + targetPath);
-          this.showToast('儲存成功');
-          this.scheduleMetaSave();
-          window.editorPlugin.saveService.emit('afterSave', {
-            path: targetPath,
-            document: { title: targetPath.split('/').pop() },
-            value: content,
-          });
-        } catch (e) {
-          this.showError('儲存失敗: ' + e.message);
-        } finally {
-          this.isSaving = false;
+
+        let monacoEditor = null;
+        const loadedThemes = new Set(['vs', 'vs-dark', 'hc-black', 'hc-light']);
+
+        function extOf(path) {
+            const m = /\.([^./]+)$/.exec(path);
+            return m ? m[1].toLowerCase() : '';
         }
-      },
 
-      newAnonymousFile() {
-        if (!this.editorReady) return;
-        let n = 1;
-        while (this.tabsList.find(t => t.path === `untitled:${n}`)) n++;
-        const path = `untitled:${n}`;
-        const model = monaco.editor.createModel('', 'plaintext');
-        tabsData.set(path, { model, originalContent: '', viewState: null, isImage: false, isAnonymous: true });
-        this.tabsList.push({ path, dirty: false, isImage: false, isAnonymous: true });
-        window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
-        this.activateTab(path);
-        this.scheduleMetaSave();
-      },
-
-      downloadFile(path) {
-        const a = document.createElement('a');
-        a.href = '/api/download?path=' + encodeURIComponent(path);
-        a.download = '';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      },
-
-      deleteFile(path, isDir) {
-        this.deleteSelected([{ path, isDir }]);
-      },
-
-      joinPath(parent, name) {
-        if (!parent) return name;
-        return parent.replace(/\/+$/, '') + '/' + name;
-      },
-
-      uploadFile(file, targetDir) {
-        return new Promise((resolve, reject) => {
-          this.uploads.push({ id: Date.now() + Math.random(), name: file.name, progress: 0, error: false });
-          const entry = this.uploads[this.uploads.length - 1];
-
-          const remove = (delay) => setTimeout(() => {
-            const i = this.uploads.indexOf(entry);
-            if (i >= 0) this.uploads.splice(i, 1);
-          }, delay);
-
-          const fd = new FormData();
-          fd.append('file', file);
-          fd.append('path', targetDir || '');
-
-          const xhr = new XMLHttpRequest();
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) entry.progress = Math.round(e.loaded / e.total * 100);
-          };
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              entry.progress = 100;
-              remove(1500);
-              resolve();
-            } else {
-              let msg = xhr.statusText;
-              try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
-              entry.error = true;
-              this.showError('上傳失敗 ' + file.name + '：' + msg);
-              remove(3000);
-              reject(new Error(msg));
-            }
-          };
-          xhr.onerror = () => {
-            entry.error = true;
-            this.showError('上傳失敗 ' + file.name + '：網路錯誤');
-            remove(3000);
-            reject(new Error('網路錯誤'));
-          };
-          xhr.open('POST', '/api/upload');
-          xhr.send(fd);
-        });
-      },
-
-      async uploadFiles(files, targetDir) {
-        let existing = new Set();
-        try {
-          const res = await this.api('/api/files?path=' + encodeURIComponent(targetDir || ''));
-          for (const f of (res.files || [])) {
-            if (!f.isDir) existing.add(f.name);
-          }
-        } catch {}
-
-        const toUpload = [];
-        for (const f of files) {
-          if (existing.has(f.name)) {
-            const ok = await this.dlgConfirm(
-              '「' + f.name + '」已存在於目標位置，是否覆蓋？',
-              { confirmText: '覆蓋', danger: true }
-            );
-            if (!ok) continue;
-          }
-          toUpload.push(f);
+        function isImagePath(path) {
+            return IMG_EXT.includes(extOf(path));
         }
-        await Promise.allSettled(toUpload.map(f => this.uploadFile(f, targetDir)));
-        await this.refreshDir(targetDir || '');
-      },
 
-      triggerUpload(targetDir) {
-        this.uploadTargetDir = targetDir || '';
-        this.$refs.uploadInput.value = '';
-        this.$refs.uploadInput.click();
-      },
-
-      async onUploadChange(e) {
-        const files = Array.from(e.target.files || []);
-        e.target.value = '';
-        if (files.length) await this.uploadFiles(files, this.uploadTargetDir);
-      },
-
-      async renameItem(item) {
-        const dotIdx = item.isDir ? -1 : item.name.lastIndexOf('.');
-        const selectEnd = dotIdx > 0 ? dotIdx : item.name.length;
-        const newName = await this.dlgPrompt('重新命名：', item.name, '', { selectEnd });
-        if (!newName || newName === item.name) return;
-        const lastSlash = item.path.lastIndexOf('/');
-        const parentDir = lastSlash >= 0 ? item.path.slice(0, lastSlash) : '';
-        const newPath = parentDir ? parentDir + '/' + newName : newName;
-        try {
-          await this.api('/api/rename?from=' + encodeURIComponent(item.path) + '&to=' + encodeURIComponent(newPath), { method: 'POST' });
-          if (!item.isDir) {
-            const tab = this.tabsList.find(t => t.path === item.path);
-            if (tab) {
-              const data = tabsData.get(item.path);
-              tabsData.delete(item.path);
-              tabsData.set(newPath, data);
-              if (data && data.model) monaco.editor.setModelLanguage(data.model, detectLang(newPath));
-              tab.path = newPath;
-              if (this.activeTabPath === item.path) this.activeTabPath = newPath;
-            }
-          } else {
-            const prefix = item.path + '/';
-            let needFallback = false;
-            for (let i = this.tabsList.length - 1; i >= 0; i--) {
-              const p = this.tabsList[i].path;
-              if (!p.startsWith(prefix)) continue;
-              const d = tabsData.get(p);
-              if (d && d.model) d.model.dispose();
-              tabsData.delete(p);
-              this.tabsList.splice(i, 1);
-              if (this.activeTabPath === p) needFallback = true;
-            }
-            if (needFallback) {
-              this.activeTabPath = null;
-              if (monacoEditor) monacoEditor.setModel(null);
-              this.setStatus('');
-              if (this.tabsList.length > 0) await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
-            }
-          }
-          await this.refreshDir(parentDir);
-          this.showToast('已重新命名為：' + newName);
-        } catch (e) {
-          this.showError('重新命名失敗：' + e.message);
+        function detectLang(path) {
+            return LANG_MAP[extOf(path)] || 'plaintext';
         }
-      },
 
-      async forceRefreshDir(dirPath) {
-        if (!dirPath) {
-          await this.loadTree();
-          return;
+        function loadSettings() {
+            try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
         }
-        const item = this.treeItems.find(t => t.path === dirPath && t.isDir);
-        if (!item) return;
-        if (item.expanded) this.collapseDir(item);
-        await this.expandDir(item);
-      },
 
-      async mkdir(parentDir) {
-        const name = await this.dlgPrompt('輸入目錄名稱（可包含 / 建立巢狀）：');
-        if (!name) return;
-        const path = this.joinPath(parentDir || '', name);
-        try {
-          await this.api('/api/mkdir?path=' + encodeURIComponent(path), { method: 'POST' });
-          await this.refreshDir(parentDir || '');
-          await this.expandToDir(path);
-          this.scrollToTreeNode(path);
-          this.showToast('已建立目錄：' + path);
-        } catch (e) {
-          this.showError('建立失敗：' + e.message);
+        function persistSettings(patch) {
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
         }
-      },
 
-      async expandToDir(dirPath) {
-        const parts = dirPath.split('/');
-        let currentPath = '';
-        for (const part of parts) {
-          currentPath = currentPath ? currentPath + '/' + part : part;
-          const item = this.treeItems.find(t => t.path === currentPath && t.isDir);
-          if (!item) break;
-          if (!item.expanded) await this.expandDir(item);
-        }
-      },
+        // ── Built-in: Session check & WS collaboration ────────────────────────────
 
-      async newFile(parentDir) {
-        const name = await this.dlgPrompt('輸入新檔名（包含副檔名，例如 page.html）：');
-        if (!name) return;
-        const path = this.joinPath(parentDir || '', name);
-        try {
-          await this.api('/api/file?path=' + encodeURIComponent(path), {
-            method: 'PUT',
-            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-            body: '',
-          });
-          await this.refreshDir(parentDir || '');
-          await this.openFile(path);
-        } catch (e) {
-          this.showError('建立失敗：' + e.message);
-        }
-      },
-
-      // ── Clipboard (cut / copy / paste) ───────────────────────────────────
-
-      clipboardCutItems(items) {
-        this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'cut' };
-        this.showToast(items.length > 1 ? `已剪下 ${items.length} 個` : '已剪下：' + items[0].path.split('/').pop());
-      },
-
-      clipboardCopyItems(items) {
-        this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'copy' };
-        this.showToast(items.length > 1 ? `已複製 ${items.length} 個` : '已複製：' + items[0].path.split('/').pop());
-      },
-
-      duplicateItem(item) {
-        this.clipboardPaste(this.parentOf(item.path), [{ path: item.path, isDir: item.isDir }]);
-      },
-
-      async clipboardPaste(targetDir, overrideItems) {
-        const rawItems = overrideItems ?? this.clipboard.items;
-        const mode = overrideItems ? 'copy' : this.clipboard.mode;
-        if (!rawItems.length || this.isPasting) return;
-        const _dirPaths = rawItems.filter(i => i.isDir).map(i => i.path);
-        const items = _dirPaths.length > 0
-          ? rawItems.filter(item => !_dirPaths.some(dp => item.path !== dp && item.path.startsWith(dp + '/')))
-          : rawItems;
-        const verb = mode === 'cut' ? '移動' : '複製';
-        this.isPasting = true;
-        let ok = 0;
-        const errors = [];
-        const actualTos = [];
-        try {
-          for (const { path: from, isDir } of items) {
-            const name = from.split('/').pop();
-            this.setStatus(`${verb}中… (${ok + 1}/${items.length}) ${name}`);
-            const to = targetDir ? targetDir + '/' + name : name;
-            try {
-              let actualTo = to;
-              if (mode === 'cut') {
-                const res = await this.api('/api/rename?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + '&auto=1', { method: 'POST' });
-                actualTo = (res && res.to) ? res.to : to;
-                const movedTabs = isDir
-                  ? this.tabsList.filter(t => t.path.startsWith(from + '/'))
-                      .map(t => [t, actualTo + '/' + t.path.slice(from.length + 1)])
-                  : this.tabsList.filter(t => t.path === from)
-                      .map(t => [t, actualTo]);
-                for (const [tab, newPath] of movedTabs) {
-                  window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: tab.path } });
-                  const d = tabsData.get(tab.path);
-                  tabsData.delete(tab.path);
-                  tabsData.set(newPath, d);
-                  if (d && d.model) monaco.editor.setModelLanguage(d.model, detectLang(newPath));
-                  if (this.activeTabPath === tab.path) this.activeTabPath = newPath;
-                  tab.path = newPath;
-                  window.editorPlugin.tabManagerSvc.emit('open', { tab: { path: newPath, document: { value: '' } } });
+        function initSessionCheck(app) {
+            const timer = setInterval(async function () {
+                try {
+                    const r = await fetch('/check');
+                    if (r.status === 401) {
+                        clearInterval(timer);
+                        window.location.href = '/login';
+                        return;
+                    }
+                    if (!r.ok) return;
+                    const data = await r.json();
+                    if (data.extended) app.showToast('延長登入時間成功');
+                } catch {
+                    app.showError('連線失敗，無法確認 session 狀態');
                 }
-              } else {
-                const res = await this.api('/api/copy?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to), { method: 'POST' });
-                actualTo = (res && res.path) ? res.path : to;
-              }
-              actualTos.push(actualTo);
-              ok++;
-            } catch (e) {
-              errors.push(name + '：' + e.message);
+            }, 60000);
+        }
+
+        function initWsCollab(app) {
+            const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+            let socket = null;
+            let dupCount = 0;
+
+            function wsSend(data) {
+                if (!socket || socket.readyState !== WebSocket.OPEN) return;
+                socket.send(JSON.stringify(data));
             }
-          }
-          if (mode === 'cut') {
-            this.clipboard = { items: [], mode: null };
-            const srcParents = new Set(items.map(({ path }) => this.parentOf(path)));
-            const destParents = new Set(actualTos.map(p => this.parentOf(p)));
-            for (const p of destParents) await this.refreshDir(p);
-            for (const p of srcParents) { if (!destParents.has(p)) await this.refreshDir(p); }
-          } else {
-            const destParents = new Set(actualTos.map(p => this.parentOf(p)));
-            for (const p of destParents) await this.refreshDir(p);
-          }
-          if (ok > 0) this.scrollToTreeNode(actualTos[0]);
-          this.scheduleMetaSave();
-          if (ok > 0) this.showToast(overrideItems ? `已建立副本：${actualTos[0].split('/').pop()}` : `${verb}成功：${ok} 個`);
-          if (errors.length) this.showError(`${verb}失敗：` + errors.join('、'));
-        } finally {
-          this.isPasting = false;
-          this.setStatus('');
-        }
-      },
 
-      async deleteSelected(selItems) {
-        const n = selItems.length;
-        const confirmMsg = n === 1
-          ? `確定要刪除「${selItems[0].path}」嗎？${selItems[0].isDir ? '（會刪除目錄及內容）' : ''}\n此動作無法復原。`
-          : `確定要刪除 ${n} 個項目嗎？\n此動作無法復原。`;
-        if (!await this.dlgConfirm(confirmMsg, { confirmText: '刪除', danger: true })) return;
-        const dirPaths = selItems.filter(i => i.isDir).map(i => i.path);
-        const toDelete = dirPaths.length > 0
-          ? selItems.filter(item => !dirPaths.some(dp => item.path !== dp && item.path.startsWith(dp + '/')))
-          : selItems;
-        this.isPasting = true;
-        let needFallback = false;
-        let done = 0;
-        try {
-          for (const { path, isDir } of toDelete) {
-            this.setStatus(`刪除中… (${done + 1}/${toDelete.length}) ${path.split('/').pop()}`);
-            try {
-              await this.api('/api/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
-              const toClose = this.tabsList.filter(t => t.path === path || (isDir && t.path.startsWith(path + '/'))).map(t => t.path);
-              for (const p of toClose) {
-                window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: p } });
-                const d = tabsData.get(p);
-                if (d && d.model) d.model.dispose();
-                tabsData.delete(p);
-                const i = this.tabsList.findIndex(t => t.path === p);
-                if (i >= 0) this.tabsList.splice(i, 1);
-                if (this.activeTabPath === p) needFallback = true;
-                this.clearDirtyEntry(p);
-              }
-              const ti = this.treeItems.findIndex(t => t.path === path);
-              if (ti >= 0) {
-                if (isDir && this.treeItems[ti].expanded) this.collapseDir(this.treeItems[ti]);
-                this.treeItems.splice(ti, 1);
-              }
-            } catch (e) {
-              this.showError('刪除失敗 ' + path + '：' + e.message);
+            function fileOnOpen(path) {
+                const i = path.lastIndexOf('/');
+                const folder = i >= 0 ? path.slice(0, i) : '';
+                const file = i >= 0 ? path.slice(i + 1) : path;
+                wsSend({ type: 'file_on_open', payload: { path: folder, file } });
             }
-            done++;
-          }
-          if (needFallback) {
-            if (this.tabsList.length > 0) {
-              this.activeTabPath = null;
-              await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
-            } else {
-              this.activeTabPath = null;
-              if (monacoEditor) monacoEditor.setModel(null);
+
+            function fileOnClose(path) {
+                const i = path.lastIndexOf('/');
+                const folder = i >= 0 ? path.slice(0, i) : '';
+                const file = i >= 0 ? path.slice(i + 1) : path;
+                wsSend({ type: 'file_on_close', payload: { path: folder, file } });
             }
-          }
-          this.selectedPaths = [];
-          this.scheduleMetaSave();
-          const skipped = n - toDelete.length;
-          const toastMsg = n === 1
-            ? '已刪除'
-            : skipped > 0
-              ? `已刪除 ${n} 個項目（實際刪除 ${toDelete.length} 個）`
-              : `已刪除 ${n} 個項目`;
-          this.showToast(toastMsg);
-        } finally {
-          this.isPasting = false;
-          this.setStatus('');
-        }
-      },
 
-      // ── Context menu ──────────────────────────────────────────────────────
+            function connect() {
+                if (socket && socket.readyState !== WebSocket.CLOSED) return;
+                socket = new WebSocket(wsUrl);
 
-      onTreeContextMenu(e, item) {
-        this.treeFocused = true;
-        const hasCb = this.clipboard.items.length > 0;
-        if (item && this.selectedPaths.length > 1 && this.selectedPaths.includes(item.path)) {
-          const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
-          const n = selItems.length;
-          this.showCtxMenu(e.clientX, e.clientY, [
-            { label: `剪下 ${n} 個`, action: () => this.clipboardCutItems(selItems) },
-            { label: `複製 ${n} 個`, action: () => this.clipboardCopyItems(selItems) },
-            '-',
-            { label: `刪除 ${n} 個`, danger: true, action: () => this.deleteSelected(selItems) },
-          ]);
-          return;
-        }
-        if (!item) {
-          this.selectedPath = null;
-          this.selectedPaths = [];
-          const menuItems = [
-            { label: '新增檔案', action: () => this.newFile('') },
-            { label: '新增目錄', action: () => this.mkdir('') },
-            { label: '上傳檔案…', action: () => this.triggerUpload('') },
-          ];
-          if (hasCb) menuItems.push('-', { label: '貼上', action: () => this.clipboardPaste('') });
-          menuItems.push('-', { label: '重新整理', action: () => this.loadTree() });
-          this.showCtxMenu(e.clientX, e.clientY, menuItems);
-        } else if (item.isDir) {
-          this.selectedPath = item.path;
-          this.selectedPaths = [item.path];
-          const path = item.path;
-          const menuItems = [
-            { label: '新增檔案', action: () => this.newFile(path) },
-            { label: '新增目錄', action: () => this.mkdir(path) },
-            { label: '上傳到此處…', action: () => this.triggerUpload(path) },
-            '-',
-            { label: '剪下', action: () => this.clipboardCutItems([item]) },
-            { label: '複製', action: () => this.clipboardCopyItems([item]) },
-            { label: '建立副本', action: () => this.duplicateItem(item) },
-          ];
-          if (hasCb) menuItems.push({ label: '貼上', action: () => this.clipboardPaste(path) });
-          menuItems.push(
-            '-',
-            { label: '重新命名', action: () => this.renameItem(item) },
-            { label: '重新整理', action: () => this.forceRefreshDir(path) },
-            '-',
-            { label: '刪除目錄', danger: true, action: () => this.deleteFile(path, true) },
-          );
-          this.showCtxMenu(e.clientX, e.clientY, menuItems);
-        } else {
-          this.selectedPath = item.path;
-          this.selectedPaths = [item.path];
-          const path = item.path;
-          const parentDir = this.parentOf(path);
-          const fileMenuItems = [
-            { label: '新增檔案', action: () => this.newFile(parentDir) },
-            '-',
-            { label: '開啟', action: () => this.openFile(path) },
-            { label: '下載', action: () => this.downloadFile(path) },
-            '-',
-            { label: '剪下', action: () => this.clipboardCutItems([item]) },
-            { label: '複製', action: () => this.clipboardCopyItems([item]) },
-            { label: '建立副本', action: () => this.duplicateItem(item) },
-          ];
-          if (hasCb) fileMenuItems.push({ label: '貼上', action: () => this.clipboardPaste(parentDir) });
-          fileMenuItems.push(
-            '-',
-            { label: '重新命名', action: () => this.renameItem(item) },
-            '-',
-            { label: '刪除', danger: true, action: () => this.deleteFile(path, false) },
-          );
-          this.showCtxMenu(e.clientX, e.clientY, fileMenuItems);
-        }
-      },
+                socket.onopen = function () {
+                    app.showToast('已上線');
+                    window.editorPlugin.tabManagerSvc.getTabs().forEach(t => fileOnOpen(t.path));
+                };
 
-      showCtxMenu(x, y, items) {
-        this.ctxMenu = { visible: true, x, y, items };
-        this.$nextTick(() => {
-          const el = this.$refs.contextMenuEl;
-          if (!el) return;
-          const r = el.getBoundingClientRect();
-          if (r.right > window.innerWidth) this.ctxMenu.x = Math.max(0, window.innerWidth - r.width - 4);
-          if (r.bottom > window.innerHeight) this.ctxMenu.y = Math.max(0, window.innerHeight - r.height - 4);
-        });
-      },
+                socket.onmessage = function (event) {
+                    const msg = JSON.parse(event.data);
+                    console.log('[ws]', msg.type, msg);
+                    switch (msg.type) {
+                        case 'error':
+                            if (msg.payload === 'duplicate connect') {
+                                dupCount++;
+                                app.showError('重複連線 #' + dupCount);
+                                if (dupCount > 2) window.location.href = '/logout?reason=duplicate_connect';
+                            }
+                            break;
+                        case 'message':
+                            app.showToast(msg.payload);
+                            break;
+                        case 'kick':
+                            window.location.href = '/logout?reason=kick';
+                            break;
+                        case 'same_file_open': {
+                            const info = msg.payload;
+                            window.editorPlugin.dialogAlertSvc.show(
+                                '注意',
+                                '重複開啟檔案 ' + info.path + '/' + info.file,
+                                '人員：' + info.user,
+                                function () { }
+                            );
+                            break;
+                        }
+                        case 'user_online':
+                            app.showToast(msg.payload.user + ' 已上線');
+                            break;
+                        case 'user_offline':
+                            app.showToast(msg.payload.user + ' 已離線');
+                            break;
+                        case 'file_opened': {
+                            const fp = msg.payload;
+                            const fullPath = [fp.path, fp.file].filter(Boolean).join('/');
+                            app.showToast(fp.user + ' 開啟了 ' + fullPath);
+                            break;
+                        }
+                        case 'file_closed': {
+                            const fp = msg.payload;
+                            const fullPath = [fp.path, fp.file].filter(Boolean).join('/');
+                            app.showToast(fp.user + ' 關閉了 ' + fullPath);
+                            break;
+                        }
+                    }
+                };
 
-      hideCtxMenu() {
-        this.ctxMenu.visible = false;
-      },
+                socket.onerror = function (err) {
+                    console.error('[ws-collab] error', err);
+                };
 
-      onCtxItemClick(item) {
-        this.hideCtxMenu();
-        item.action();
-      },
-
-      // ── Drag and drop ─────────────────────────────────────────────────────
-
-      hasFiles(dt) {
-        return dt && Array.from(dt.types || []).includes('Files');
-      },
-
-      onDragEnter(e) {
-        if (!this.hasFiles(e.dataTransfer)) return;
-        e.preventDefault();
-        this.dragCounter++;
-        this.treeDragActive = true;
-      },
-
-      onDragOver(e) {
-        if (!this.hasFiles(e.dataTransfer)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
-        const node = e.target.closest('.tree-node');
-        if (!node) { this.dropOverDir = ''; return; }
-        if (node.dataset.isDir === '1') {
-          this.dropOverDir = node.dataset.path;
-        } else {
-          const slash = node.dataset.path.lastIndexOf('/');
-          this.dropOverDir = slash >= 0 ? node.dataset.path.slice(0, slash) : '';
-        }
-      },
-
-      onDragLeave() {
-        this.dragCounter--;
-        if (this.dragCounter <= 0) {
-          this.dragCounter = 0;
-          this.treeDragActive = false;
-          this.dropOverDir = null;
-        }
-      },
-
-      async onDrop(e) {
-        if (!this.hasFiles(e.dataTransfer)) return;
-        e.preventDefault();
-        this.dragCounter = 0;
-        this.treeDragActive = false;
-        const node = e.target.closest('.tree-node');
-        let targetDir = '';
-        if (node) {
-          if (node.dataset.isDir === '1') {
-            targetDir = node.dataset.path;
-          } else {
-            const slash = node.dataset.path.lastIndexOf('/');
-            targetDir = slash >= 0 ? node.dataset.path.slice(0, slash) : '';
-          }
-        }
-        this.dropOverDir = null;
-        const files = Array.from(e.dataTransfer.files || []);
-        if (files.length) await this.uploadFiles(files, targetDir);
-      },
-
-      // ── Session ───────────────────────────────────────────────────────────
-
-      scheduleMetaSave() {
-        clearTimeout(this._metaTimer);
-        this._metaTimer = setTimeout(() => saveMeta(this.tabsList, this.activeTabPath), 300);
-      },
-
-      clearDirtyEntry(path) {
-        if (this._dirtyTimers && this._dirtyTimers[path]) {
-          clearTimeout(this._dirtyTimers[path]);
-          delete this._dirtyTimers[path];
-        }
-        deleteDirtyFile(path);
-        deleteBaseHash(path);
-      },
-
-      scheduleDirtySave(path) {
-        if (!this._dirtyTimers) this._dirtyTimers = {};
-        clearTimeout(this._dirtyTimers[path]);
-        this._dirtyTimers[path] = setTimeout(() => {
-          const d = tabsData.get(path);
-          if (d && d.model) {
-            saveDirtyFile(path, d.model.getValue());
-            if (d.baseHash !== undefined) saveBaseHash(path, d.baseHash);
-          }
-        }, 1500);
-      },
-
-      async restoreSession() {
-        const session = await loadSession();
-        if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) return;
-        const dirtyContents = session.dirtyContents || {};
-        const anonTabs = new Set(session.anonTabs || []);
-        for (const path of session.tabs) {
-          if (this.tabsList.find(t => t.path === path)) continue;
-          try {
-            if (anonTabs.has(path)) {
-              const saved = dirtyContents[path];
-              const content = saved !== undefined ? saved : '';
-              const model = monaco.editor.createModel(content, 'plaintext');
-              tabsData.set(path, { model, originalContent: '', viewState: null, isImage: false, isAnonymous: true });
-              this.tabsList.push({ path, dirty: content !== '', isImage: false, isAnonymous: true });
-              window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: content } } });
-              continue;
+                socket.onclose = function () {
+                    socket = null;
+                    app.showError('已離線，將自動重新連線');
+                    console.warn('[ws-collab] connection closed, retrying');
+                    setTimeout(connect, 30000);
+                };
             }
-            if (isImagePath(path)) {
-              tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
-              this.tabsList.push({ path, dirty: false, isImage: true });
-              window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
-            } else {
-              const text = await this.api('/api/file?path=' + encodeURIComponent(path));
-              const model = monaco.editor.createModel(text, detectLang(path));
-              const saved = dirtyContents[path];
-              let isDirty = saved !== undefined && saved !== text;
-              tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
-              this.tabsList.push({ path, dirty: false, isImage: false });
-              window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
-              if (isDirty) {
-                const storedHash = (session.baseHashes || {})[path];
-                if (storedHash !== undefined && storedHash !== simpleHash(text)) {
-                  console.warn('[session] hash mismatch:', path, '| stored:', storedHash, '| current:', simpleHash(text));
-                  const fname = path.split('/').pop();
-                  const keep = await this.dlgConfirm(
-                    `「${fname}」在您離開後已被他人修改。\n是否仍要載入您的未儲存草稿？（儲存時將覆蓋他人的修改）`,
-                    { confirmText: '載入草稿', cancelText: '使用伺服器版本', danger: true }
-                  );
-                  if (!keep) { isDirty = false; this.clearDirtyEntry(path); }
+
+            window.editorPlugin.saveService.on('afterSave', function (e) {
+                wsSend({ type: 'after_save', payload: { path: e.path } });
+            });
+
+            window.editorPlugin.tabManagerSvc.on('open', function (e) { fileOnOpen(e.tab.path); });
+            window.editorPlugin.tabManagerSvc.on('tabDestroy', function (e) { fileOnClose(e.tab.path); });
+
+            connect();
+        }
+
+        async function initBuiltins(app) {
+            let cfg;
+            try { cfg = await fetch('/api/config').then(r => r.json()); } catch { return; }
+            app.currentUser = cfg.username || '';
+            initSessionCheck(app);
+            initWsCollab(app);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────────
+
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                const s = loadSettings();
+                return {
+                    sidebarCollapsed: false,
+                    treeItems: [],
+                    selectedPath: null,
+                    treeFocused: false,
+                    treeDragActive: false,
+                    dropOverDir: null,
+                    dragCounter: 0,
+                    uploadTargetDir: '',
+                    tabsList: [],
+                    activeTabPath: null,
+                    settings: {
+                        theme: s.theme || 'vs-dark',
+                        fontSize: s.fontSize || 14,
+                        fontFamily: s.fontFamily || '',
+                        minimap: s.minimap !== false,
+                        showInvisible: s.showInvisible === true,
+                        trimOnSave: s.trimOnSave !== false,
+                    },
+                    currentUser: '',
+                    settingsOpen: false,
+                    statusMsg: '',
+                    isSaving: false,
+                    toasts: [],
+                    ctxMenu: { visible: false, x: 0, y: 0, items: [] },
+                    imagePreviewSrc: '',
+                    editorReady: false,
+                    uploads: [],
+                    dlg: { visible: false, title: '', inputMode: false, inputValue: '', placeholder: '', danger: false, confirmText: '確定', cancelText: '取消', _resolve: null },
+                    clipboard: { items: [], mode: null },
+                    isPasting: false,
+                    selectedPaths: [],
+                    anchorPath: null,
+                    saveAsDlg: { visible: false, tree: [], selectedDir: '', filename: '', _resolve: null },
+                };
+            },
+
+            computed: {
+                activeTab() {
+                    return this.tabsList.find(t => t.path === this.activeTabPath) || null;
+                },
+                activeTabIsImage() {
+                    return this.activeTab ? this.activeTab.isImage : false;
+                },
+                activeTabDirty() {
+                    return this.activeTab ? this.activeTab.dirty : false;
+                },
+            },
+
+            methods: {
+                isImagePath,
+
+                _dlgShow(opts) {
+                    return new Promise(resolve => {
+                        Object.assign(this.dlg, {
+                            visible: true, title: opts.title || '',
+                            inputMode: !!opts.inputMode, inputValue: opts.defaultValue || '',
+                            placeholder: opts.placeholder || '', danger: !!opts.danger,
+                            confirmText: opts.confirmText || '確定', cancelText: 'cancelText' in opts ? opts.cancelText : '取消',
+                            _resolve: resolve,
+                        });
+                        this.$nextTick(() => {
+                            const el = this.$refs.dlgInput;
+                            if (el) {
+                                el.focus();
+                                if (opts.selectEnd !== undefined) el.setSelectionRange(0, opts.selectEnd);
+                                else el.select();
+                            }
+                        });
+                    });
+                },
+                dlgOk() {
+                    const r = this.dlg._resolve;
+                    const val = this.dlg.inputMode ? this.dlg.inputValue : true;
+                    this.dlg.visible = false; this.dlg._resolve = null;
+                    if (r) r(val);
+                },
+                dlgCancel() {
+                    const r = this.dlg._resolve;
+                    const val = this.dlg.inputMode ? null : false;
+                    this.dlg.visible = false; this.dlg._resolve = null;
+                    if (r) r(val);
+                },
+                dlgConfirm(title, opts) {
+                    return this._dlgShow({ title, ...(opts || {}) });
+                },
+                dlgAlert(title) {
+                    return this._dlgShow({ title, cancelText: null });
+                },
+                dlgPrompt(title, defaultValue, placeholder, opts) {
+                    return this._dlgShow({ title, inputMode: true, defaultValue: defaultValue || '', placeholder: placeholder || '', ...(opts || {}) });
+                },
+
+                _pushToast(msg, error) {
+                    const id = Date.now() + Math.random();
+                    this.toasts.push({ id, msg, error });
+                    setTimeout(() => {
+                        const i = this.toasts.findIndex(t => t.id === id);
+                        if (i >= 0) this.toasts.splice(i, 1);
+                    }, 3000);
+                },
+
+                showToast(msg) { this._pushToast(msg, false); },
+                showError(msg) { this._pushToast(msg, true); },
+
+                setStatus(msg) {
+                    this.statusMsg = msg || '';
+                },
+
+                async api(path, opts) {
+                    opts = opts || {};
+                    const res = await fetch(path, opts);
+                    const ct = res.headers.get('content-type') || '';
+                    if (!res.ok) {
+                        let msg = res.statusText;
+                        if (ct.includes('application/json')) {
+                            try { msg = (await res.json()).error || msg; } catch { }
+                        }
+                        throw new Error(msg);
+                    }
+                    if (ct.includes('application/json')) return await res.json();
+                    return await res.text();
+                },
+
+                // ── File tree ─────────────────────────────────────────────────────────
+
+                async fetchDir(path) {
+                    const url = path ? '/api/files?path=' + encodeURIComponent(path) : '/api/files';
+                    const data = await this.api(url);
+                    return data.files || [];
+                },
+
+                async loadTree() {
+                    try {
+                        const files = await this.fetchDir('');
+                        this.treeItems = files.map(f => ({
+                            path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false,
+                        }));
+                    } catch (e) {
+                        this.showError('載入檔案列表失敗：' + e.message);
+                    }
+                },
+
+                async expandDir(item) {
+                    const idx = this.treeItems.indexOf(item);
+                    if (idx < 0) return;
+                    item.expanded = true;
+                    try {
+                        const files = await this.fetchDir(item.path);
+                        const children = files.map(f => ({
+                            path: f.path, name: f.name, isDir: f.isDir, depth: item.depth + 1, expanded: false,
+                        }));
+                        this.treeItems.splice(idx + 1, 0, ...children);
+                    } catch (e) {
+                        item.expanded = false;
+                        this.showError('載入目錄失敗：' + e.message);
+                    }
+                },
+
+                collapseDir(item) {
+                    item.expanded = false;
+                    const idx = this.treeItems.indexOf(item);
+                    if (idx < 0) return;
+                    let end = idx + 1;
+                    while (end < this.treeItems.length && this.treeItems[end].depth > item.depth) end++;
+                    this.treeItems.splice(idx + 1, end - idx - 1);
+                },
+
+                async onNodeClick(item, event) {
+                    if (event && (event.ctrlKey || event.metaKey)) {
+                        const idx = this.selectedPaths.indexOf(item.path);
+                        if (idx >= 0) this.selectedPaths.splice(idx, 1);
+                        else this.selectedPaths.push(item.path);
+                        this.selectedPath = item.path;
+                        this.anchorPath = item.path;
+                    } else if (event && event.shiftKey && this.anchorPath) {
+                        const ai = this.treeItems.findIndex(t => t.path === this.anchorPath);
+                        const bi = this.treeItems.indexOf(item);
+                        if (ai >= 0 && bi >= 0) {
+                            const s = Math.min(ai, bi), e2 = Math.max(ai, bi);
+                            this.selectedPaths = this.treeItems.slice(s, e2 + 1).map(t => t.path);
+                        }
+                        this.selectedPath = item.path;
+                    } else {
+                        this.selectedPath = item.path;
+                        this.selectedPaths = [item.path];
+                        this.anchorPath = item.path;
+                        if (item.isDir) {
+                            if (item.expanded) this.collapseDir(item);
+                            else await this.expandDir(item);
+                        } else {
+                            await this.openFile(item.path);
+                        }
+                    }
+                },
+
+                parentOf(path) {
+                    const i = path.lastIndexOf('/');
+                    return i >= 0 ? path.slice(0, i) : '';
+                },
+
+                scrollToTreeNode(path) {
+                    this.$nextTick(() => {
+                        const el = document.querySelector(`[data-path="${CSS.escape(path)}"]`);
+                        if (el) el.scrollIntoView({ block: 'nearest' });
+                    });
+                },
+
+                async refreshDir(dirPath) {
+                    if (dirPath === '') {
+                        await this.loadTree();
+                    } else {
+                        const item = this.treeItems.find(t => t.path === dirPath && t.isDir);
+                        if (item) {
+                            if (item.expanded) this.collapseDir(item);
+                            await this.expandDir(item);
+                        }
+                    }
+                },
+
+                // ── Tabs ──────────────────────────────────────────────────────────────
+
+                async openFile(path) {
+                    if (this.tabsList.find(t => t.path === path)) {
+                        await this.activateTab(path);
+                        return;
+                    }
+                    if (openingPaths.has(path)) return;
+                    openingPaths.add(path);
+
+                    try {
+                        if (isImagePath(path)) {
+                            tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
+                            this.tabsList.push({ path, dirty: false, isImage: true });
+                            window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
+                        } else {
+                            try {
+                                const text = await this.api('/api/file?path=' + encodeURIComponent(path));
+                                const model = monaco.editor.createModel(text, detectLang(path));
+                                tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
+                                this.tabsList.push({ path, dirty: false, isImage: false });
+                                window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
+                            } catch (e) {
+                                this.showError('開啟失敗: ' + e.message);
+                                return;
+                            }
+                        }
+
+                        await this.activateTab(path);
+                        this.scheduleMetaSave();
+                    } finally {
+                        openingPaths.delete(path);
+                    }
+                },
+
+                async activateTab(path) {
+                    if (this.activeTabPath === path) return;
+                    this.selectedPath = path;
+                    this.selectedPaths = [path];
+
+                    if (this.activeTabPath) {
+                        const cur = tabsData.get(this.activeTabPath);
+                        if (cur && monacoEditor && !cur.isImage) cur.viewState = monacoEditor.saveViewState();
+                    }
+
+                    this.activeTabPath = path;
+                    const data = tabsData.get(path);
+
+                    if (data && data.isImage) {
+                        this.imagePreviewSrc = '/api/file?path=' + encodeURIComponent(path) + '&t=' + Date.now();
+                        this.setStatus('圖片預覽：' + path);
+                    } else if (data && monacoEditor) {
+                        monacoEditor.setModel(data.model);
+                        if (data.viewState) monacoEditor.restoreViewState(data.viewState);
+                        this.setStatus('已開啟：' + path);
+                    }
+
+                    await this.revealInTree(path);
+                    this.scheduleMetaSave();
+                    this.$nextTick(() => {
+                        const tabEl = document.querySelector('.tab.active');
+                        if (tabEl) tabEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+                    });
+                    this.scrollToTreeNode(path);
+                },
+
+                async closeTab(path) {
+                    const idx = this.tabsList.findIndex(t => t.path === path);
+                    if (idx < 0) return;
+                    const tab = this.tabsList[idx];
+                    const displayName = tab.isAnonymous ? 'Untitled ' + path.split(':')[1] : path.split('/').pop();
+                    if (tab.dirty && !await this.dlgConfirm(`「${displayName}」有未儲存的變更，確定要關閉嗎？`)) return;
+
+                    window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path } });
+                    const data = tabsData.get(path);
+                    if (data && data.model) data.model.dispose();
+                    tabsData.delete(path);
+                    this.tabsList.splice(idx, 1);
+                    this.clearDirtyEntry(path);
+
+                    if (this.activeTabPath === path) {
+                        if (this.tabsList.length > 0) {
+                            this.activeTabPath = null;
+                            await this.activateTab(this.tabsList[Math.min(idx, this.tabsList.length - 1)].path);
+                        } else {
+                            this.activeTabPath = null;
+                            if (monacoEditor) monacoEditor.setModel(null);
+                            this.setStatus('');
+                            this.scheduleMetaSave();
+                        }
+                    } else {
+                        this.scheduleMetaSave();
+                    }
+                },
+
+                // ── File operations ───────────────────────────────────────────────────
+
+                async saveCurrent() {
+                    if (!this.activeTabPath || this.activeTabIsImage || this.isSaving || !this.activeTabDirty) return;
+                    const activeTab = this.tabsList.find(t => t.path === this.activeTabPath);
+                    if (activeTab && activeTab.isAnonymous) { await this.saveAnonymousAs(); return; }
+                    const data = tabsData.get(this.activeTabPath);
+                    if (!data || !monacoEditor) return;
+                    this.isSaving = true;
+                    if (this.settings.trimOnSave) {
+                        const model = monacoEditor.getModel();
+                        const lineCount = model.getLineCount();
+                        const edits = [];
+                        for (let i = 1; i <= lineCount; i++) {
+                            const line = model.getLineContent(i);
+                            const trimmed = line.trimEnd();
+                            if (trimmed.length < line.length) {
+                                edits.push({ range: new monaco.Range(i, trimmed.length + 1, i, line.length + 1), text: '' });
+                            }
+                        }
+                        if (edits.length > 0) model.pushEditOperations([], edits, () => null);
+                    }
+                    const content = monacoEditor.getValue();
+                    window.editorPlugin.saveService.emit('beforeSave', { value: content, path: this.activeTabPath });
+                    try {
+                        await this.api('/api/file?path=' + encodeURIComponent(this.activeTabPath), {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+                            body: content,
+                        });
+                        data.originalContent = content;
+                        const tab = this.tabsList.find(t => t.path === this.activeTabPath);
+                        if (tab) tab.dirty = false;
+                        this.clearDirtyEntry(this.activeTabPath);
+                        this.setStatus('已儲存：' + this.activeTabPath);
+                        this.showToast('儲存成功');
+                        window.editorPlugin.saveService.emit('afterSave', {
+                            path: this.activeTabPath,
+                            document: { title: this.activeTabPath.split('/').pop() },
+                            value: content,
+                        });
+                    } catch (e) {
+                        this.showError('儲存失敗: ' + e.message);
+                    } finally {
+                        this.isSaving = false;
+                    }
+                },
+
+                async dlgSaveAs() {
+                    let rootItems = [];
+                    try {
+                        const files = await this.fetchDir('');
+                        rootItems = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false }));
+                    } catch { }
+                    return new Promise(resolve => {
+                        this.saveAsDlg = { visible: true, tree: rootItems, selectedDir: '', filename: '', _resolve: resolve };
+                        this.$nextTick(() => {
+                            const el = this.$refs.saveAsFilenameInput;
+                            if (el) el.focus();
+                        });
+                    });
+                },
+
+                saveAsDlgCancel() {
+                    const r = this.saveAsDlg._resolve;
+                    this.saveAsDlg.visible = false;
+                    this.saveAsDlg._resolve = null;
+                    if (r) r(null);
+                },
+
+                saveAsDlgOk() {
+                    const filename = this.saveAsDlg.filename.trim();
+                    if (!filename) return;
+                    const r = this.saveAsDlg._resolve;
+                    this.saveAsDlg.visible = false;
+                    this.saveAsDlg._resolve = null;
+                    const fullPath = this.saveAsDlg.selectedDir ? this.saveAsDlg.selectedDir + '/' + filename : filename;
+                    if (r) r(fullPath);
+                },
+
+                async saveAsDlgClickNode(item) {
+                    if (!item.isDir) return;
+                    this.saveAsDlg.selectedDir = item.path;
+                    if (item.expanded) this.saveAsDlgCollapseDir(item);
+                    else await this.saveAsDlgExpandDir(item);
+                },
+
+                async saveAsDlgExpandDir(item) {
+                    const tree = this.saveAsDlg.tree;
+                    const idx = tree.indexOf(item);
+                    if (idx < 0) return;
+                    item.expanded = true;
+                    try {
+                        const files = await this.fetchDir(item.path);
+                        const children = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: item.depth + 1, expanded: false }));
+                        tree.splice(idx + 1, 0, ...children);
+                    } catch { item.expanded = false; }
+                },
+
+                saveAsDlgCollapseDir(item) {
+                    const tree = this.saveAsDlg.tree;
+                    item.expanded = false;
+                    const idx = tree.indexOf(item);
+                    if (idx < 0) return;
+                    let end = idx + 1;
+                    while (end < tree.length && tree[end].depth > item.depth) end++;
+                    tree.splice(idx + 1, end - idx - 1);
+                },
+
+                async saveAnonymousAs() {
+                    if (this.isSaving) return;
+                    const oldPath = this.activeTabPath;
+                    const data = tabsData.get(oldPath);
+                    if (!data || !monacoEditor) return;
+                    const targetPath = await this.dlgSaveAs();
+                    if (!targetPath) return;
+                    if (this.tabsList.find(t => t.path === targetPath)) {
+                        this.showError('已有相同路徑的已開啟檔案');
+                        return;
+                    }
+                    this.isSaving = true;
+                    try {
+                        const content = monacoEditor.getValue();
+                        window.editorPlugin.saveService.emit('beforeSave', { value: content, path: targetPath });
+                        await this.api('/api/file?path=' + encodeURIComponent(targetPath), {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+                            body: content,
+                        });
+                        monaco.editor.setModelLanguage(data.model, detectLang(targetPath));
+                        data.originalContent = content;
+                        data.isAnonymous = false;
+                        tabsData.delete(oldPath);
+                        tabsData.set(targetPath, data);
+                        const tab = this.tabsList.find(t => t.path === oldPath);
+                        if (tab) { tab.path = targetPath; tab.dirty = false; tab.isAnonymous = false; }
+                        this.clearDirtyEntry(oldPath);
+                        if (this.activeTabPath === oldPath) this.activeTabPath = targetPath;
+                        if (this.selectedPath === oldPath) { this.selectedPath = targetPath; this.selectedPaths = [targetPath]; }
+                        window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: oldPath } });
+                        window.editorPlugin.tabManagerSvc.emit('open', { tab: { path: targetPath, document: { value: content } } });
+                        await this.refreshDir(this.parentOf(targetPath));
+                        this.scrollToTreeNode(targetPath);
+                        this.setStatus('已儲存：' + targetPath);
+                        this.showToast('儲存成功');
+                        this.scheduleMetaSave();
+                        window.editorPlugin.saveService.emit('afterSave', {
+                            path: targetPath,
+                            document: { title: targetPath.split('/').pop() },
+                            value: content,
+                        });
+                    } catch (e) {
+                        this.showError('儲存失敗: ' + e.message);
+                    } finally {
+                        this.isSaving = false;
+                    }
+                },
+
+                newAnonymousFile() {
+                    if (!this.editorReady) return;
+                    let n = 1;
+                    while (this.tabsList.find(t => t.path === `untitled:${n}`)) n++;
+                    const path = `untitled:${n}`;
+                    const model = monaco.editor.createModel('', 'plaintext');
+                    tabsData.set(path, { model, originalContent: '', viewState: null, isImage: false, isAnonymous: true });
+                    this.tabsList.push({ path, dirty: false, isImage: false, isAnonymous: true });
+                    window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
+                    this.activateTab(path);
+                    this.scheduleMetaSave();
+                },
+
+                downloadFile(path) {
+                    const a = document.createElement('a');
+                    a.href = '/api/download?path=' + encodeURIComponent(path);
+                    a.download = '';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                },
+
+                deleteFile(path, isDir) {
+                    this.deleteSelected([{ path, isDir }]);
+                },
+
+                joinPath(parent, name) {
+                    if (!parent) return name;
+                    return parent.replace(/\/+$/, '') + '/' + name;
+                },
+
+                uploadFile(file, targetDir) {
+                    return new Promise((resolve, reject) => {
+                        this.uploads.push({ id: Date.now() + Math.random(), name: file.name, progress: 0, error: false });
+                        const entry = this.uploads[this.uploads.length - 1];
+
+                        const remove = (delay) => setTimeout(() => {
+                            const i = this.uploads.indexOf(entry);
+                            if (i >= 0) this.uploads.splice(i, 1);
+                        }, delay);
+
+                        const fd = new FormData();
+                        fd.append('file', file);
+                        fd.append('path', targetDir || '');
+
+                        const xhr = new XMLHttpRequest();
+                        xhr.upload.onprogress = (e) => {
+                            if (e.lengthComputable) entry.progress = Math.round(e.loaded / e.total * 100);
+                        };
+                        xhr.onload = () => {
+                            if (xhr.status >= 200 && xhr.status < 300) {
+                                entry.progress = 100;
+                                remove(1500);
+                                resolve();
+                            } else {
+                                let msg = xhr.statusText;
+                                try { msg = JSON.parse(xhr.responseText).error || msg; } catch { }
+                                entry.error = true;
+                                this.showError('上傳失敗 ' + file.name + '：' + msg);
+                                remove(3000);
+                                reject(new Error(msg));
+                            }
+                        };
+                        xhr.onerror = () => {
+                            entry.error = true;
+                            this.showError('上傳失敗 ' + file.name + '：網路錯誤');
+                            remove(3000);
+                            reject(new Error('網路錯誤'));
+                        };
+                        xhr.open('POST', '/api/upload');
+                        xhr.send(fd);
+                    });
+                },
+
+                async uploadFiles(files, targetDir) {
+                    let existing = new Set();
+                    try {
+                        const res = await this.api('/api/files?path=' + encodeURIComponent(targetDir || ''));
+                        for (const f of (res.files || [])) {
+                            if (!f.isDir) existing.add(f.name);
+                        }
+                    } catch { }
+
+                    const toUpload = [];
+                    for (const f of files) {
+                        if (existing.has(f.name)) {
+                            const ok = await this.dlgConfirm(
+                                '「' + f.name + '」已存在於目標位置，是否覆蓋？',
+                                { confirmText: '覆蓋', danger: true }
+                            );
+                            if (!ok) continue;
+                        }
+                        toUpload.push(f);
+                    }
+                    await Promise.allSettled(toUpload.map(f => this.uploadFile(f, targetDir)));
+                    await this.refreshDir(targetDir || '');
+                },
+
+                triggerUpload(targetDir) {
+                    this.uploadTargetDir = targetDir || '';
+                    this.$refs.uploadInput.value = '';
+                    this.$refs.uploadInput.click();
+                },
+
+                async onUploadChange(e) {
+                    const files = Array.from(e.target.files || []);
+                    e.target.value = '';
+                    if (files.length) await this.uploadFiles(files, this.uploadTargetDir);
+                },
+
+                async renameItem(item) {
+                    const dotIdx = item.isDir ? -1 : item.name.lastIndexOf('.');
+                    const selectEnd = dotIdx > 0 ? dotIdx : item.name.length;
+                    const newName = await this.dlgPrompt('重新命名：', item.name, '', { selectEnd });
+                    if (!newName || newName === item.name) return;
+                    const lastSlash = item.path.lastIndexOf('/');
+                    const parentDir = lastSlash >= 0 ? item.path.slice(0, lastSlash) : '';
+                    const newPath = parentDir ? parentDir + '/' + newName : newName;
+                    try {
+                        await this.api('/api/rename?from=' + encodeURIComponent(item.path) + '&to=' + encodeURIComponent(newPath), { method: 'POST' });
+                        if (!item.isDir) {
+                            const tab = this.tabsList.find(t => t.path === item.path);
+                            if (tab) {
+                                const data = tabsData.get(item.path);
+                                tabsData.delete(item.path);
+                                tabsData.set(newPath, data);
+                                if (data && data.model) monaco.editor.setModelLanguage(data.model, detectLang(newPath));
+                                tab.path = newPath;
+                                if (this.activeTabPath === item.path) this.activeTabPath = newPath;
+                            }
+                        } else {
+                            const prefix = item.path + '/';
+                            let needFallback = false;
+                            for (let i = this.tabsList.length - 1; i >= 0; i--) {
+                                const p = this.tabsList[i].path;
+                                if (!p.startsWith(prefix)) continue;
+                                const d = tabsData.get(p);
+                                if (d && d.model) d.model.dispose();
+                                tabsData.delete(p);
+                                this.tabsList.splice(i, 1);
+                                if (this.activeTabPath === p) needFallback = true;
+                            }
+                            if (needFallback) {
+                                this.activeTabPath = null;
+                                if (monacoEditor) monacoEditor.setModel(null);
+                                this.setStatus('');
+                                if (this.tabsList.length > 0) await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
+                            }
+                        }
+                        await this.refreshDir(parentDir);
+                        this.showToast('已重新命名為：' + newName);
+                    } catch (e) {
+                        this.showError('重新命名失敗：' + e.message);
+                    }
+                },
+
+                async forceRefreshDir(dirPath) {
+                    if (!dirPath) {
+                        await this.loadTree();
+                        return;
+                    }
+                    const item = this.treeItems.find(t => t.path === dirPath && t.isDir);
+                    if (!item) return;
+                    if (item.expanded) this.collapseDir(item);
+                    await this.expandDir(item);
+                },
+
+                async mkdir(parentDir) {
+                    const name = await this.dlgPrompt('輸入目錄名稱（可包含 / 建立巢狀）：');
+                    if (!name) return;
+                    const path = this.joinPath(parentDir || '', name);
+                    try {
+                        await this.api('/api/mkdir?path=' + encodeURIComponent(path), { method: 'POST' });
+                        await this.refreshDir(parentDir || '');
+                        await this.expandToDir(path);
+                        this.scrollToTreeNode(path);
+                        this.showToast('已建立目錄：' + path);
+                    } catch (e) {
+                        this.showError('建立失敗：' + e.message);
+                    }
+                },
+
+                async expandToDir(dirPath) {
+                    const parts = dirPath.split('/');
+                    let currentPath = '';
+                    for (const part of parts) {
+                        currentPath = currentPath ? currentPath + '/' + part : part;
+                        const item = this.treeItems.find(t => t.path === currentPath && t.isDir);
+                        if (!item) break;
+                        if (!item.expanded) await this.expandDir(item);
+                    }
+                },
+
+                async newFile(parentDir) {
+                    const name = await this.dlgPrompt('輸入新檔名（包含副檔名，例如 page.html）：');
+                    if (!name) return;
+                    const path = this.joinPath(parentDir || '', name);
+                    try {
+                        await this.api('/api/file?path=' + encodeURIComponent(path), {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+                            body: '',
+                        });
+                        await this.refreshDir(parentDir || '');
+                        await this.openFile(path);
+                    } catch (e) {
+                        this.showError('建立失敗：' + e.message);
+                    }
+                },
+
+                // ── Clipboard (cut / copy / paste) ───────────────────────────────────
+
+                clipboardCutItems(items) {
+                    this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'cut' };
+                    this.showToast(items.length > 1 ? `已剪下 ${items.length} 個` : '已剪下：' + items[0].path.split('/').pop());
+                },
+
+                clipboardCopyItems(items) {
+                    this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'copy' };
+                    this.showToast(items.length > 1 ? `已複製 ${items.length} 個` : '已複製：' + items[0].path.split('/').pop());
+                },
+
+                duplicateItem(item) {
+                    this.clipboardPaste(this.parentOf(item.path), [{ path: item.path, isDir: item.isDir }]);
+                },
+
+                async clipboardPaste(targetDir, overrideItems) {
+                    const rawItems = overrideItems ?? this.clipboard.items;
+                    const mode = overrideItems ? 'copy' : this.clipboard.mode;
+                    if (!rawItems.length || this.isPasting) return;
+                    const _dirPaths = rawItems.filter(i => i.isDir).map(i => i.path);
+                    const items = _dirPaths.length > 0
+                        ? rawItems.filter(item => !_dirPaths.some(dp => item.path !== dp && item.path.startsWith(dp + '/')))
+                        : rawItems;
+                    const verb = mode === 'cut' ? '移動' : '複製';
+                    this.isPasting = true;
+                    let ok = 0;
+                    const errors = [];
+                    const actualTos = [];
+                    try {
+                        for (const { path: from, isDir } of items) {
+                            const name = from.split('/').pop();
+                            this.setStatus(`${verb}中… (${ok + 1}/${items.length}) ${name}`);
+                            const to = targetDir ? targetDir + '/' + name : name;
+                            try {
+                                let actualTo = to;
+                                if (mode === 'cut') {
+                                    const res = await this.api('/api/rename?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + '&auto=1', { method: 'POST' });
+                                    actualTo = (res && res.to) ? res.to : to;
+                                    const movedTabs = isDir
+                                        ? this.tabsList.filter(t => t.path.startsWith(from + '/'))
+                                            .map(t => [t, actualTo + '/' + t.path.slice(from.length + 1)])
+                                        : this.tabsList.filter(t => t.path === from)
+                                            .map(t => [t, actualTo]);
+                                    for (const [tab, newPath] of movedTabs) {
+                                        window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: tab.path } });
+                                        const d = tabsData.get(tab.path);
+                                        tabsData.delete(tab.path);
+                                        tabsData.set(newPath, d);
+                                        if (d && d.model) monaco.editor.setModelLanguage(d.model, detectLang(newPath));
+                                        if (this.activeTabPath === tab.path) this.activeTabPath = newPath;
+                                        tab.path = newPath;
+                                        window.editorPlugin.tabManagerSvc.emit('open', { tab: { path: newPath, document: { value: '' } } });
+                                    }
+                                } else {
+                                    const res = await this.api('/api/copy?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to), { method: 'POST' });
+                                    actualTo = (res && res.path) ? res.path : to;
+                                }
+                                actualTos.push(actualTo);
+                                ok++;
+                            } catch (e) {
+                                errors.push(name + '：' + e.message);
+                            }
+                        }
+                        if (mode === 'cut') {
+                            this.clipboard = { items: [], mode: null };
+                            const srcParents = new Set(items.map(({ path }) => this.parentOf(path)));
+                            const destParents = new Set(actualTos.map(p => this.parentOf(p)));
+                            for (const p of destParents) await this.refreshDir(p);
+                            for (const p of srcParents) { if (!destParents.has(p)) await this.refreshDir(p); }
+                        } else {
+                            const destParents = new Set(actualTos.map(p => this.parentOf(p)));
+                            for (const p of destParents) await this.refreshDir(p);
+                        }
+                        if (ok > 0) this.scrollToTreeNode(actualTos[0]);
+                        this.scheduleMetaSave();
+                        if (ok > 0) this.showToast(overrideItems ? `已建立副本：${actualTos[0].split('/').pop()}` : `${verb}成功：${ok} 個`);
+                        if (errors.length) this.showError(`${verb}失敗：` + errors.join('、'));
+                    } finally {
+                        this.isPasting = false;
+                        this.setStatus('');
+                    }
+                },
+
+                async deleteSelected(selItems) {
+                    const n = selItems.length;
+                    const confirmMsg = n === 1
+                        ? `確定要刪除「${selItems[0].path}」嗎？${selItems[0].isDir ? '（會刪除目錄及內容）' : ''}\n此動作無法復原。`
+                        : `確定要刪除 ${n} 個項目嗎？\n此動作無法復原。`;
+                    if (!await this.dlgConfirm(confirmMsg, { confirmText: '刪除', danger: true })) return;
+                    const dirPaths = selItems.filter(i => i.isDir).map(i => i.path);
+                    const toDelete = dirPaths.length > 0
+                        ? selItems.filter(item => !dirPaths.some(dp => item.path !== dp && item.path.startsWith(dp + '/')))
+                        : selItems;
+                    this.isPasting = true;
+                    let needFallback = false;
+                    let done = 0;
+                    try {
+                        for (const { path, isDir } of toDelete) {
+                            this.setStatus(`刪除中… (${done + 1}/${toDelete.length}) ${path.split('/').pop()}`);
+                            try {
+                                await this.api('/api/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
+                                const toClose = this.tabsList.filter(t => t.path === path || (isDir && t.path.startsWith(path + '/'))).map(t => t.path);
+                                for (const p of toClose) {
+                                    window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: p } });
+                                    const d = tabsData.get(p);
+                                    if (d && d.model) d.model.dispose();
+                                    tabsData.delete(p);
+                                    const i = this.tabsList.findIndex(t => t.path === p);
+                                    if (i >= 0) this.tabsList.splice(i, 1);
+                                    if (this.activeTabPath === p) needFallback = true;
+                                    this.clearDirtyEntry(p);
+                                }
+                                const ti = this.treeItems.findIndex(t => t.path === path);
+                                if (ti >= 0) {
+                                    if (isDir && this.treeItems[ti].expanded) this.collapseDir(this.treeItems[ti]);
+                                    this.treeItems.splice(ti, 1);
+                                }
+                            } catch (e) {
+                                this.showError('刪除失敗 ' + path + '：' + e.message);
+                            }
+                            done++;
+                        }
+                        if (needFallback) {
+                            if (this.tabsList.length > 0) {
+                                this.activeTabPath = null;
+                                await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
+                            } else {
+                                this.activeTabPath = null;
+                                if (monacoEditor) monacoEditor.setModel(null);
+                            }
+                        }
+                        this.selectedPaths = [];
+                        this.scheduleMetaSave();
+                        const skipped = n - toDelete.length;
+                        const toastMsg = n === 1
+                            ? '已刪除'
+                            : skipped > 0
+                                ? `已刪除 ${n} 個項目（實際刪除 ${toDelete.length} 個）`
+                                : `已刪除 ${n} 個項目`;
+                        this.showToast(toastMsg);
+                    } finally {
+                        this.isPasting = false;
+                        this.setStatus('');
+                    }
+                },
+
+                // ── Context menu ──────────────────────────────────────────────────────
+
+                onTreeContextMenu(e, item) {
+                    this.treeFocused = true;
+                    const hasCb = this.clipboard.items.length > 0;
+                    if (item && this.selectedPaths.length > 1 && this.selectedPaths.includes(item.path)) {
+                        const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
+                        const n = selItems.length;
+                        this.showCtxMenu(e.clientX, e.clientY, [
+                            { label: `剪下 ${n} 個`, action: () => this.clipboardCutItems(selItems) },
+                            { label: `複製 ${n} 個`, action: () => this.clipboardCopyItems(selItems) },
+                            '-',
+                            { label: `刪除 ${n} 個`, danger: true, action: () => this.deleteSelected(selItems) },
+                        ]);
+                        return;
+                    }
+                    if (!item) {
+                        this.selectedPath = null;
+                        this.selectedPaths = [];
+                        const menuItems = [
+                            { label: '新增檔案', action: () => this.newFile('') },
+                            { label: '新增目錄', action: () => this.mkdir('') },
+                            { label: '上傳檔案…', action: () => this.triggerUpload('') },
+                        ];
+                        if (hasCb) menuItems.push('-', { label: '貼上', action: () => this.clipboardPaste('') });
+                        menuItems.push('-', { label: '重新整理', action: () => this.loadTree() });
+                        this.showCtxMenu(e.clientX, e.clientY, menuItems);
+                    } else if (item.isDir) {
+                        this.selectedPath = item.path;
+                        this.selectedPaths = [item.path];
+                        const path = item.path;
+                        const menuItems = [
+                            { label: '新增檔案', action: () => this.newFile(path) },
+                            { label: '新增目錄', action: () => this.mkdir(path) },
+                            { label: '上傳到此處…', action: () => this.triggerUpload(path) },
+                            '-',
+                            { label: '剪下', action: () => this.clipboardCutItems([item]) },
+                            { label: '複製', action: () => this.clipboardCopyItems([item]) },
+                            { label: '建立副本', action: () => this.duplicateItem(item) },
+                        ];
+                        if (hasCb) menuItems.push({ label: '貼上', action: () => this.clipboardPaste(path) });
+                        menuItems.push(
+                            '-',
+                            { label: '重新命名', action: () => this.renameItem(item) },
+                            { label: '重新整理', action: () => this.forceRefreshDir(path) },
+                            '-',
+                            { label: '刪除目錄', danger: true, action: () => this.deleteFile(path, true) },
+                        );
+                        this.showCtxMenu(e.clientX, e.clientY, menuItems);
+                    } else {
+                        this.selectedPath = item.path;
+                        this.selectedPaths = [item.path];
+                        const path = item.path;
+                        const parentDir = this.parentOf(path);
+                        const fileMenuItems = [
+                            { label: '新增檔案', action: () => this.newFile(parentDir) },
+                            '-',
+                            { label: '開啟', action: () => this.openFile(path) },
+                            { label: '下載', action: () => this.downloadFile(path) },
+                            '-',
+                            { label: '剪下', action: () => this.clipboardCutItems([item]) },
+                            { label: '複製', action: () => this.clipboardCopyItems([item]) },
+                            { label: '建立副本', action: () => this.duplicateItem(item) },
+                        ];
+                        if (hasCb) fileMenuItems.push({ label: '貼上', action: () => this.clipboardPaste(parentDir) });
+                        fileMenuItems.push(
+                            '-',
+                            { label: '重新命名', action: () => this.renameItem(item) },
+                            '-',
+                            { label: '刪除', danger: true, action: () => this.deleteFile(path, false) },
+                        );
+                        this.showCtxMenu(e.clientX, e.clientY, fileMenuItems);
+                    }
+                },
+
+                showCtxMenu(x, y, items) {
+                    this.ctxMenu = { visible: true, x, y, items };
+                    this.$nextTick(() => {
+                        const el = this.$refs.contextMenuEl;
+                        if (!el) return;
+                        const r = el.getBoundingClientRect();
+                        if (r.right > window.innerWidth) this.ctxMenu.x = Math.max(0, window.innerWidth - r.width - 4);
+                        if (r.bottom > window.innerHeight) this.ctxMenu.y = Math.max(0, window.innerHeight - r.height - 4);
+                    });
+                },
+
+                hideCtxMenu() {
+                    this.ctxMenu.visible = false;
+                },
+
+                onCtxItemClick(item) {
+                    this.hideCtxMenu();
+                    item.action();
+                },
+
+                // ── Drag and drop ─────────────────────────────────────────────────────
+
+                hasFiles(dt) {
+                    return dt && Array.from(dt.types || []).includes('Files');
+                },
+
+                onDragEnter(e) {
+                    if (!this.hasFiles(e.dataTransfer)) return;
+                    e.preventDefault();
+                    this.dragCounter++;
+                    this.treeDragActive = true;
+                },
+
+                onDragOver(e) {
+                    if (!this.hasFiles(e.dataTransfer)) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'copy';
+                    const node = e.target.closest('.tree-node');
+                    if (!node) { this.dropOverDir = ''; return; }
+                    if (node.dataset.isDir === '1') {
+                        this.dropOverDir = node.dataset.path;
+                    } else {
+                        const slash = node.dataset.path.lastIndexOf('/');
+                        this.dropOverDir = slash >= 0 ? node.dataset.path.slice(0, slash) : '';
+                    }
+                },
+
+                onDragLeave() {
+                    this.dragCounter--;
+                    if (this.dragCounter <= 0) {
+                        this.dragCounter = 0;
+                        this.treeDragActive = false;
+                        this.dropOverDir = null;
+                    }
+                },
+
+                async onDrop(e) {
+                    if (!this.hasFiles(e.dataTransfer)) return;
+                    e.preventDefault();
+                    this.dragCounter = 0;
+                    this.treeDragActive = false;
+                    const node = e.target.closest('.tree-node');
+                    let targetDir = '';
+                    if (node) {
+                        if (node.dataset.isDir === '1') {
+                            targetDir = node.dataset.path;
+                        } else {
+                            const slash = node.dataset.path.lastIndexOf('/');
+                            targetDir = slash >= 0 ? node.dataset.path.slice(0, slash) : '';
+                        }
+                    }
+                    this.dropOverDir = null;
+                    const files = Array.from(e.dataTransfer.files || []);
+                    if (files.length) await this.uploadFiles(files, targetDir);
+                },
+
+                // ── Session ───────────────────────────────────────────────────────────
+
+                scheduleMetaSave() {
+                    clearTimeout(this._metaTimer);
+                    this._metaTimer = setTimeout(() => saveMeta(this.tabsList, this.activeTabPath), 300);
+                },
+
+                clearDirtyEntry(path) {
+                    if (this._dirtyTimers && this._dirtyTimers[path]) {
+                        clearTimeout(this._dirtyTimers[path]);
+                        delete this._dirtyTimers[path];
+                    }
+                    deleteDirtyFile(path);
+                    deleteBaseHash(path);
+                },
+
+                scheduleDirtySave(path) {
+                    if (!this._dirtyTimers) this._dirtyTimers = {};
+                    clearTimeout(this._dirtyTimers[path]);
+                    this._dirtyTimers[path] = setTimeout(() => {
+                        const d = tabsData.get(path);
+                        if (d && d.model) {
+                            saveDirtyFile(path, d.model.getValue());
+                            if (d.baseHash !== undefined) saveBaseHash(path, d.baseHash);
+                        }
+                    }, 1500);
+                },
+
+                async restoreSession() {
+                    const session = await loadSession();
+                    if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) return;
+                    const dirtyContents = session.dirtyContents || {};
+                    const anonTabs = new Set(session.anonTabs || []);
+                    for (const path of session.tabs) {
+                        if (this.tabsList.find(t => t.path === path)) continue;
+                        try {
+                            if (anonTabs.has(path)) {
+                                const saved = dirtyContents[path];
+                                const content = saved !== undefined ? saved : '';
+                                const model = monaco.editor.createModel(content, 'plaintext');
+                                tabsData.set(path, { model, originalContent: '', viewState: null, isImage: false, isAnonymous: true });
+                                this.tabsList.push({ path, dirty: content !== '', isImage: false, isAnonymous: true });
+                                window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: content } } });
+                                continue;
+                            }
+                            if (isImagePath(path)) {
+                                tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
+                                this.tabsList.push({ path, dirty: false, isImage: true });
+                                window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
+                            } else {
+                                const text = await this.api('/api/file?path=' + encodeURIComponent(path));
+                                const model = monaco.editor.createModel(text, detectLang(path));
+                                const saved = dirtyContents[path];
+                                let isDirty = saved !== undefined && saved !== text;
+                                tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
+                                this.tabsList.push({ path, dirty: false, isImage: false });
+                                window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
+                                if (isDirty) {
+                                    const storedHash = (session.baseHashes || {})[path];
+                                    if (storedHash !== undefined && storedHash !== simpleHash(text)) {
+                                        console.warn('[session] hash mismatch:', path, '| stored:', storedHash, '| current:', simpleHash(text));
+                                        const fname = path.split('/').pop();
+                                        const keep = await this.dlgConfirm(
+                                            `「${fname}」在您離開後已被他人修改。\n是否仍要載入您的未儲存草稿？（儲存時將覆蓋他人的修改）`,
+                                            { confirmText: '載入草稿', cancelText: '使用伺服器版本', danger: true }
+                                        );
+                                        if (!keep) { isDirty = false; this.clearDirtyEntry(path); }
+                                    }
+                                    const tab = this.tabsList[this.tabsList.length - 1];
+                                    tab.dirty = isDirty;
+                                    if (isDirty) model.setValue(saved);
+                                }
+                            }
+                        } catch { /* 檔案已不存在，略過 */ }
+                    }
+                    if (this.tabsList.length > 0) {
+                        const target = this.tabsList.find(t => t.path === session.activeTab) || this.tabsList[0];
+                        await this.activateTab(target.path);
+                        await this.revealInTree(target.path);
+                    }
+                },
+
+                async revealInTree(filePath) {
+                    if (!filePath || !filePath.includes('/')) return;
+                    const parts = filePath.split('/');
+                    parts.pop();
+                    let currentPath = '';
+                    for (const part of parts) {
+                        currentPath = currentPath ? currentPath + '/' + part : part;
+                        const item = this.treeItems.find(t => t.path === currentPath && t.isDir);
+                        if (!item) break;
+                        if (!item.expanded) await this.expandDir(item);
+                    }
+                },
+
+                // ── Settings ──────────────────────────────────────────────────────────
+
+                async ensureTheme(id) {
+                    if (loadedThemes.has(id)) return;
+                    const data = await this.api('/static/themes/' + encodeURIComponent(id) + '.json');
+                    monaco.editor.defineTheme(id, data);
+                    loadedThemes.add(id);
+                },
+
+                async onThemeChange() {
+                    const theme = this.settings.theme;
+                    const prev = loadSettings().theme || 'vs-dark';
+                    try {
+                        await this.ensureTheme(theme);
+                        monaco.editor.setTheme(theme);
+                        persistSettings({ theme });
+                    } catch {
+                        this.showError('載入主題失敗');
+                        this.settings.theme = prev;
+                    }
+                },
+
+                onFontFamilyChange() {
+                    const base = this.settings.fontFamily;
+                    const family = base ? `${base}, 'Microsoft JhengHei', sans-serif` : undefined;
+                    if (monacoEditor) monacoEditor.updateOptions({ fontFamily: family });
+                    persistSettings({ fontFamily: base });
+                },
+
+                onFontSizeChange() {
+                    const size = Math.min(32, Math.max(10, parseInt(this.settings.fontSize, 10) || 13));
+                    this.settings.fontSize = size;
+                    if (monacoEditor) monacoEditor.updateOptions({ fontSize: size });
+                    persistSettings({ fontSize: size });
+                },
+
+                onMinimapChange() {
+                    if (monacoEditor) monacoEditor.updateOptions({ minimap: { enabled: this.settings.minimap } });
+                    persistSettings({ minimap: this.settings.minimap });
+                },
+
+                onShowInvisibleChange() {
+                    if (monacoEditor) monacoEditor.updateOptions({ renderWhitespace: this.settings.showInvisible ? 'all' : 'none' });
+                    persistSettings({ showInvisible: this.settings.showInvisible });
+                },
+
+                onTrimOnSaveChange() {
+                    persistSettings({ trimOnSave: this.settings.trimOnSave });
+                },
+
+                doLogout() { window.location.href = '/logout'; },
+            },
+
+            mounted() {
+                window._editorApp = this;
+
+                if (window.matchMedia('(max-width: 700px)').matches) {
+                    this.sidebarCollapsed = true;
                 }
-                const tab = this.tabsList[this.tabsList.length - 1];
-                tab.dirty = isDirty;
-                if (isDirty) model.setValue(saved);
-              }
-            }
-          } catch { /* 檔案已不存在，略過 */ }
-        }
-        if (this.tabsList.length > 0) {
-          const target = this.tabsList.find(t => t.path === session.activeTab) || this.tabsList[0];
-          await this.activateTab(target.path);
-          await this.revealInTree(target.path);
-        }
-      },
 
-      async revealInTree(filePath) {
-        if (!filePath || !filePath.includes('/')) return;
-        const parts = filePath.split('/');
-        parts.pop();
-        let currentPath = '';
-        for (const part of parts) {
-          currentPath = currentPath ? currentPath + '/' + part : part;
-          const item = this.treeItems.find(t => t.path === currentPath && t.isDir);
-          if (!item) break;
-          if (!item.expanded) await this.expandDir(item);
-        }
-      },
+                document.addEventListener('click', (e) => {
+                    this.hideCtxMenu();
+                    this.settingsOpen = false;
+                    if (!e.target.closest('#file-tree')) this.treeFocused = false;
+                });
+                document.addEventListener('contextmenu', (e) => {
+                    if (!e.target.closest('#file-tree')) this.hideCtxMenu();
+                });
+                window.addEventListener('blur', () => { this.hideCtxMenu(); this.settingsOpen = false; });
+                window.addEventListener('resize', () => this.hideCtxMenu());
 
-      // ── Settings ──────────────────────────────────────────────────────────
+                document.addEventListener('keydown', (e) => {
+                    if (this.saveAsDlg.visible) {
+                        if (e.key === 'Escape') { e.preventDefault(); this.saveAsDlgCancel(); }
+                        return;
+                    }
+                    if (this.dlg.visible) {
+                        if (e.key === 'Escape') { e.preventDefault(); this.dlgCancel(); }
+                        if (e.key === 'Enter' && !this.dlg.inputMode) { e.preventDefault(); this.dlgOk(); }
+                        return;
+                    }
+                    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+                        e.preventDefault();
+                        this.saveCurrent();
+                    }
+                    if (this.treeFocused && e.key === 'Delete' && !e.ctrlKey && !e.metaKey) {
+                        const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
+                        const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
+                        if (selItems.length > 1) {
+                            e.preventDefault();
+                            this.deleteSelected(selItems);
+                        } else if (selItem) {
+                            e.preventDefault();
+                            this.deleteFile(selItem.path, selItem.isDir);
+                        }
+                    }
+                    if (this.treeFocused && (e.ctrlKey || e.metaKey)) {
+                        const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
+                        const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
+                        if (e.key === 'x' && selItems.length) {
+                            e.preventDefault();
+                            this.clipboardCutItems(selItems);
+                        } else if (e.key === 'c' && selItems.length) {
+                            e.preventDefault();
+                            this.clipboardCopyItems(selItems);
+                        } else if (e.key === 'v' && this.clipboard.items.length) {
+                            e.preventDefault();
+                            let pasteTarget = '';
+                            if (selItem) {
+                                pasteTarget = selItem.isDir
+                                    ? selItem.path
+                                    : this.parentOf(selItem.path);
+                            }
+                            this.clipboardPaste(pasteTarget);
+                        }
+                    }
+                });
 
-      async ensureTheme(id) {
-        if (loadedThemes.has(id)) return;
-        const data = await this.api('/static/themes/' + encodeURIComponent(id) + '.json');
-        monaco.editor.defineTheme(id, data);
-        loadedThemes.add(id);
-      },
+                const flushSession = () => {
+                    clearTimeout(this._metaTimer);
+                    saveMeta(this.tabsList, this.activeTabPath);
+                    if (this._dirtyTimers) {
+                        for (const [path, timer] of Object.entries(this._dirtyTimers)) {
+                            clearTimeout(timer);
+                            const d = tabsData.get(path);
+                            if (d && d.model) saveDirtyFile(path, d.model.getValue());
+                        }
+                        this._dirtyTimers = {};
+                    }
+                };
 
-      async onThemeChange() {
-        const theme = this.settings.theme;
-        const prev = loadSettings().theme || 'vs-dark';
-        try {
-          await this.ensureTheme(theme);
-          monaco.editor.setTheme(theme);
-          persistSettings({ theme });
-        } catch {
-          this.showError('載入主題失敗');
-          this.settings.theme = prev;
-        }
-      },
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'hidden') flushSession();
+                });
 
-      onFontFamilyChange() {
-        const base = this.settings.fontFamily;
-        const family = base ? `${base}, 'Microsoft JhengHei', sans-serif` : undefined;
-        if (monacoEditor) monacoEditor.updateOptions({ fontFamily: family });
-        persistSettings({ fontFamily: base });
-      },
+                window.addEventListener('beforeunload', () => {
+                    flushSession();
+                });
 
-      onFontSizeChange() {
-        const size = Math.min(32, Math.max(10, parseInt(this.settings.fontSize, 10) || 13));
-        this.settings.fontSize = size;
-        if (monacoEditor) monacoEditor.updateOptions({ fontSize: size });
-        persistSettings({ fontSize: size });
-      },
+                window.addEventListener('dragover', (e) => { if (this.hasFiles(e.dataTransfer)) e.preventDefault(); });
+                window.addEventListener('drop', (e) => { if (this.hasFiles(e.dataTransfer)) e.preventDefault(); });
 
-      onMinimapChange() {
-        if (monacoEditor) monacoEditor.updateOptions({ minimap: { enabled: this.settings.minimap } });
-        persistSettings({ minimap: this.settings.minimap });
-      },
+                window.MonacoEnvironment = {
+                    getWorker(moduleId, label) {
+                        return new Worker(
+                            window.location.origin + '/static/monaco/vs/base/worker/workerMain.js',
+                            { credentials: 'include' }
+                        );
+                    }
+                };
 
-      onShowInvisibleChange() {
-        if (monacoEditor) monacoEditor.updateOptions({ renderWhitespace: this.settings.showInvisible ? 'all' : 'none' });
-        persistSettings({ showInvisible: this.settings.showInvisible });
-      },
+                require.config({ paths: { vs: '/static/monaco/vs' } });
+                require(['vs/editor/editor.main'], async () => {
+                    const s = this.settings;
+                    await this.ensureTheme(s.theme).catch(() => { });
+                    const activeTheme = loadedThemes.has(s.theme) ? s.theme : 'vs-dark';
 
-      onTrimOnSaveChange() {
-        persistSettings({ trimOnSave: this.settings.trimOnSave });
-      },
+                    monacoEditor = monaco.editor.create(this.$refs.editorEl, {
+                        value: '',
+                        language: 'plaintext',
+                        theme: activeTheme,
+                        wordWrap: 'on',
+                        automaticLayout: true,
+                        fontSize: s.fontSize,
+                        fontFamily: s.fontFamily ? `${s.fontFamily}, 'Microsoft JhengHei', sans-serif` : undefined,
+                        minimap: { enabled: s.minimap },
+                        renderWhitespace: s.showInvisible ? 'all' : 'none',
+                    });
 
-      doLogout() { window.location.href = '/logout'; },
-    },
+                    monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Slash, () => {
+                        const model = monacoEditor.getModel();
+                        if (!model || model.getLanguageId() !== 'php') {
+                            monacoEditor.trigger('', 'editor.action.commentLine', null);
+                            return;
+                        }
+                        const pos = monacoEditor.getPosition();
+                        const textBefore = model.getValueInRange({
+                            startLineNumber: 1, startColumn: 1,
+                            endLineNumber: pos.lineNumber, endColumn: pos.column,
+                        });
+                        const opens = (textBefore.match(/<\?(?:php\b)?/gi) || []).length;
+                        const closes = (textBefore.match(/\?>/g) || []).length;
+                        if (opens > closes) {
+                            monacoEditor.trigger('', 'editor.action.commentLine', null);
+                            return;
+                        }
+                        // HTML context: toggle <!-- -->
+                        const sel = monacoEditor.getSelection();
+                        const startLine = sel.startLineNumber;
+                        const endLine = sel.isEmpty() ? startLine : sel.endLineNumber;
+                        const lines = [];
+                        for (let i = startLine; i <= endLine; i++) lines.push(model.getLineContent(i));
+                        const allCommented = lines.every(l => /^\s*<!--.*-->\s*$/.test(l) || l.trim() === '');
+                        const edits = [];
+                        for (let i = 0; i < lines.length; i++) {
+                            const line = lines[i];
+                            const lineNum = startLine + i;
+                            if (allCommented) {
+                                const uncommented = line.replace(/^(\s*)<!--\s?/, '$1').replace(/\s?-->\s*$/, '');
+                                edits.push({ range: new monaco.Range(lineNum, 1, lineNum, line.length + 1), text: uncommented });
+                            } else {
+                                const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                                const content = line.trimStart();
+                                edits.push({ range: new monaco.Range(lineNum, 1, lineNum, line.length + 1), text: indent + '<!-- ' + content + ' -->' });
+                            }
+                        }
+                        if (edits.length) model.pushEditOperations([], edits, () => null);
+                    });
 
-    mounted() {
-      window._editorApp = this;
+                    monacoEditor.onDidChangeModelContent(() => {
+                        if (!this.activeTabPath) return;
+                        const data = tabsData.get(this.activeTabPath);
+                        if (!data || data.isImage) return;
+                        const isDirty = monacoEditor.getValue() !== data.originalContent;
+                        const tab = this.tabsList.find(t => t.path === this.activeTabPath);
+                        if (tab && isDirty !== tab.dirty) tab.dirty = isDirty;
+                        if (isDirty) this.scheduleDirtySave(this.activeTabPath);
+                        else this.clearDirtyEntry(this.activeTabPath);
+                    });
 
-      if (window.matchMedia('(max-width: 700px)').matches) {
-        this.sidebarCollapsed = true;
-      }
+                    this.editorReady = true;
 
-      document.addEventListener('click', (e) => {
-        this.hideCtxMenu();
-        this.settingsOpen = false;
-        if (!e.target.closest('#file-tree')) this.treeFocused = false;
-      });
-      document.addEventListener('contextmenu', (e) => {
-        if (!e.target.closest('#file-tree')) this.hideCtxMenu();
-      });
-      window.addEventListener('blur', () => { this.hideCtxMenu(); this.settingsOpen = false; });
-      window.addEventListener('resize', () => this.hideCtxMenu());
+                    // Load file tree
+                    await this.loadTree();
 
-      document.addEventListener('keydown', (e) => {
-        if (this.saveAsDlg.visible) {
-          if (e.key === 'Escape') { e.preventDefault(); this.saveAsDlgCancel(); }
-          return;
-        }
-        if (this.dlg.visible) {
-          if (e.key === 'Escape') { e.preventDefault(); this.dlgCancel(); }
-          if (e.key === 'Enter' && !this.dlg.inputMode) { e.preventDefault(); this.dlgOk(); }
-          return;
-        }
-        if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
-          e.preventDefault();
-          this.saveCurrent();
-        }
-        if (this.treeFocused && e.key === 'Delete' && !e.ctrlKey && !e.metaKey) {
-          const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
-          const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
-          if (selItems.length > 1) {
-            e.preventDefault();
-            this.deleteSelected(selItems);
-          } else if (selItem) {
-            e.preventDefault();
-            this.deleteFile(selItem.path, selItem.isDir);
-          }
-        }
-        if (this.treeFocused && (e.ctrlKey || e.metaKey)) {
-          const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
-          const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
-          if (e.key === 'x' && selItems.length) {
-            e.preventDefault();
-            this.clipboardCutItems(selItems);
-          } else if (e.key === 'c' && selItems.length) {
-            e.preventDefault();
-            this.clipboardCopyItems(selItems);
-          } else if (e.key === 'v' && this.clipboard.items.length) {
-            e.preventDefault();
-            let pasteTarget = '';
-            if (selItem) {
-              pasteTarget = selItem.isDir
-                ? selItem.path
-                : this.parentOf(selItem.path);
-            }
-            this.clipboardPaste(pasteTarget);
-          }
-        }
-      });
+                    // Auto-load plugins listed in plugins.json (absent file = no plugins)
+                    // Must run before restoreSession so plugin handlers are registered
+                    // before open events are emitted for restored tabs.
+                    try {
+                        const res = await fetch('/static/plugins/plugins.json');
+                        if (res.ok) {
+                            const list = await res.json();
+                            if (Array.isArray(list)) {
+                                console.log('[plugin] plugins.json:', list);
+                                for (const url of list) {
+                                    await window.editorPlugin.loadPlugin(url);
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[plugin] plugins.json load error:', e);
+                    }
 
-      const flushSession = () => {
-        clearTimeout(this._metaTimer);
-        saveMeta(this.tabsList, this.activeTabPath);
-        if (this._dirtyTimers) {
-          for (const [path, timer] of Object.entries(this._dirtyTimers)) {
-            clearTimeout(timer);
-            const d = tabsData.get(path);
-            if (d && d.model) saveDirtyFile(path, d.model.getValue());
-          }
-          this._dirtyTimers = {};
-        }
-      };
+                    // Init built-in session check + WS collaboration
+                    await initBuiltins(this);
 
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') flushSession();
-      });
+                    // Restore session (tabs, active tab, unsaved contents)
+                    await this.restoreSession();
 
-      window.addEventListener('beforeunload', () => {
-        flushSession();
-      });
-
-      window.addEventListener('dragover', (e) => { if (this.hasFiles(e.dataTransfer)) e.preventDefault(); });
-      window.addEventListener('drop', (e) => { if (this.hasFiles(e.dataTransfer)) e.preventDefault(); });
-
-      window.MonacoEnvironment = {
-        getWorker(moduleId, label) {
-          return new Worker(
-            window.location.origin + '/static/monaco/vs/base/worker/workerMain.js',
-            { credentials: 'include' }
-          );
-        }
-      };
-
-      require.config({ paths: { vs: '/static/monaco/vs' } });
-      require(['vs/editor/editor.main'], async () => {
-        const s = this.settings;
-        await this.ensureTheme(s.theme).catch(() => {});
-        const activeTheme = loadedThemes.has(s.theme) ? s.theme : 'vs-dark';
-
-        monacoEditor = monaco.editor.create(this.$refs.editorEl, {
-          value: '',
-          language: 'plaintext',
-          theme: activeTheme,
-          wordWrap: 'on',
-          automaticLayout: true,
-          fontSize: s.fontSize,
-          fontFamily: s.fontFamily ? `${s.fontFamily}, 'Microsoft JhengHei', sans-serif` : undefined,
-          minimap: { enabled: s.minimap },
-          renderWhitespace: s.showInvisible ? 'all' : 'none',
-        });
-
-        monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Slash, () => {
-          const model = monacoEditor.getModel();
-          if (!model || model.getLanguageId() !== 'php') {
-            monacoEditor.trigger('', 'editor.action.commentLine', null);
-            return;
-          }
-          const pos = monacoEditor.getPosition();
-          const textBefore = model.getValueInRange({
-            startLineNumber: 1, startColumn: 1,
-            endLineNumber: pos.lineNumber, endColumn: pos.column,
-          });
-          const opens  = (textBefore.match(/<\?(?:php\b)?/gi) || []).length;
-          const closes = (textBefore.match(/\?>/g) || []).length;
-          if (opens > closes) {
-            monacoEditor.trigger('', 'editor.action.commentLine', null);
-            return;
-          }
-          // HTML context: toggle <!-- -->
-          const sel = monacoEditor.getSelection();
-          const startLine = sel.startLineNumber;
-          const endLine   = sel.isEmpty() ? startLine : sel.endLineNumber;
-          const lines = [];
-          for (let i = startLine; i <= endLine; i++) lines.push(model.getLineContent(i));
-          const allCommented = lines.every(l => /^\s*<!--.*-->\s*$/.test(l) || l.trim() === '');
-          const edits = [];
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const lineNum = startLine + i;
-            if (allCommented) {
-              const uncommented = line.replace(/^(\s*)<!--\s?/, '$1').replace(/\s?-->\s*$/, '');
-              edits.push({ range: new monaco.Range(lineNum, 1, lineNum, line.length + 1), text: uncommented });
-            } else {
-              const indent   = (line.match(/^(\s*)/) || ['', ''])[1];
-              const content  = line.trimStart();
-              edits.push({ range: new monaco.Range(lineNum, 1, lineNum, line.length + 1), text: indent + '<!-- ' + content + ' -->' });
-            }
-          }
-          if (edits.length) model.pushEditOperations([], edits, () => null);
-        });
-
-        monacoEditor.onDidChangeModelContent(() => {
-          if (!this.activeTabPath) return;
-          const data = tabsData.get(this.activeTabPath);
-          if (!data || data.isImage) return;
-          const isDirty = monacoEditor.getValue() !== data.originalContent;
-          const tab = this.tabsList.find(t => t.path === this.activeTabPath);
-          if (tab && isDirty !== tab.dirty) tab.dirty = isDirty;
-          if (isDirty) this.scheduleDirtySave(this.activeTabPath);
-          else this.clearDirtyEntry(this.activeTabPath);
-        });
-
-        this.editorReady = true;
-
-        // Load file tree
-        await this.loadTree();
-
-        // Auto-load plugins listed in plugins.json (absent file = no plugins)
-        // Must run before restoreSession so plugin handlers are registered
-        // before open events are emitted for restored tabs.
-        try {
-          const res = await fetch('/static/plugins/plugins.json');
-          if (res.ok) {
-            const list = await res.json();
-            if (Array.isArray(list)) {
-              console.log('[plugin] plugins.json:', list);
-              for (const url of list) {
-                await window.editorPlugin.loadPlugin(url);
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('[plugin] plugins.json load error:', e);
-        }
-
-        // Init built-in session check + WS collaboration
-        await initBuiltins(this);
-
-        // Restore session (tabs, active tab, unsaved contents)
-        await this.restoreSession();
-
-        this.appReady = true;
-      });
-    },
-  }).mount('#app');
-})();
+                    // hide loading screen
+                    document.getElementById('app-loading').style.display = 'none';
+                });
+            },
+        }).mount('#app');
+    })();
 </script>
 </body>
 </html>
