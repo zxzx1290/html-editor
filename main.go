@@ -565,6 +565,7 @@ func (s *server) extendSession(tokenStr string) (string, bool) {
 	if !ok {
 		return "", false
 	}
+	fmt.Printf("[session] extending session for user=%s\n", username)
 	return s.newSession(username), true
 }
 

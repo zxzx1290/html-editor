@@ -55,6 +55,21 @@ body {
     margin-left: -250px;
 }
 
+#resize-handle {
+    width: 2px;
+    flex-shrink: 0;
+    cursor: col-resize;
+    background: var(--bg-bar);
+    position: relative;
+    z-index: 1;
+    transition: background 0.15s;
+}
+
+#resize-handle:hover,
+#resize-handle.dragging {
+    background: var(--accent);
+}
+
 #sidebar-header {
     padding: 8px 10px;
     min-height: 38px;
@@ -572,6 +587,10 @@ button.btn:disabled {
 
     #sidebar-backdrop.visible {
         display: block;
+    }
+
+    #resize-handle {
+        display: none;
     }
 }
 
