@@ -23,14 +23,20 @@
     </div>
     <script>
         (function () {
-            var p = new URLSearchParams(location.search);
-            if (p.has('error')) {
-                var el = document.getElementById('error-msg');
-                el.style.display = 'block';
-                el.textContent = p.get('error') === 'blocked'
-                    ? '嘗試次數過多，請稍後再試'
-                    : '驗證失敗，請確認帳號與驗證碼是否正確';
+            var reason = new URLSearchParams(location.search).get('reason');
+            if (!reason) return;
+            var msg;
+            switch (reason) {
+                case 'blocked':           msg = '嘗試次數過多，請稍後再試'; break;
+                case 'invalid':           msg = '驗證失敗，請確認帳號與驗證碼是否正確'; break;
+                case 'expired':           msg = '登入已逾時，請重新登入'; break;
+                case 'kick':              msg = '您已被管理員強制登出'; break;
+                case 'duplicate_connect': msg = '偵測到重複登入，已自動登出'; break;
+                default:                  msg = '已登出';
             }
+            var el = document.getElementById('error-msg');
+            el.style.display = 'block';
+            el.textContent = msg;
         })();
     </script>
 </body>

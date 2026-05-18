@@ -425,7 +425,7 @@
                     const r = await fetch('/check');
                     if (r.status === 401) {
                         clearInterval(timer);
-                        window.location.href = '/login';
+                        window.location.href = '/login?reason=expired';
                         return;
                     }
                     if (!r.ok) return;

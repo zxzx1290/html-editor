@@ -444,20 +444,20 @@ func (s *server) checkSession(next http.HandlerFunc) http.HandlerFunc {
 			if strings.HasPrefix(p, "/api/") || p == "/check" {
 				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			} else {
-				http.Redirect(w, r, "/login?error=blocked", http.StatusFound)
+				http.Redirect(w, r, "/login?reason=blocked", http.StatusFound)
 			}
 			return
 		}
 		cookie, err := r.Cookie("editorToken")
 		if err != nil {
-			s.redirectOrUnauth(w, r)
+			s.redirectOrUnauth(w, r, "")
 			return
 		}
 		username, ok := s.validateSession(cookie.Value)
 		if !ok {
 			s.limiter.record(ip)
 			logf("[session] invalid token ip=%s\n", ip)
-			s.redirectOrUnauth(w, r)
+			s.redirectOrUnauth(w, r, "expired")
 			return
 		}
 		ctx := context.WithValue(r.Context(), ctxUsername, username)
@@ -467,12 +467,17 @@ func (s *server) checkSession(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // redirectOrUnauth sends 401 for API / session endpoints; redirects browser routes.
-func (s *server) redirectOrUnauth(w http.ResponseWriter, r *http.Request) {
+// reason is appended as ?reason=<reason> when non-empty.
+func (s *server) redirectOrUnauth(w http.ResponseWriter, r *http.Request, reason string) {
 	p := r.URL.Path
 	if strings.HasPrefix(p, "/api/") || p == "/check" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	} else {
-		http.Redirect(w, r, "/login", http.StatusFound)
+		target := "/login"
+		if reason != "" {
+			target += "?reason=" + reason
+		}
+		http.Redirect(w, r, target, http.StatusFound)
 	}
 }
 
@@ -603,11 +608,11 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if s.limiter.isBlocked(ip) {
 		logf("[rate-limit] ip=%s blocked\n", ip)
-		http.Redirect(w, r, "/login?error=blocked", http.StatusFound)
+		http.Redirect(w, r, "/login?reason=blocked", http.StatusFound)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, "/login?error=1", http.StatusFound)
+		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
 		return
 	}
 	username := r.FormValue("username")
@@ -616,7 +621,7 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	if !ok || !totp.Validate(code, userCfg.TotpSecret) {
 		s.limiter.record(ip)
 		logf("[session] invalid credentials ip=%s\n", ip)
-		http.Redirect(w, r, "/login?error=1", http.StatusFound)
+		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
 		return
 	}
 	token := s.newSession(username)
@@ -644,7 +649,11 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	logf("[logout] user=%s ip=%s reason=%s\n", username, clientIP(r), reason)
 	http.SetCookie(w, &http.Cookie{Name: "editorToken", Value: "", MaxAge: -1, Path: "/"})
-	http.Redirect(w, r, "/login", http.StatusFound)
+	loginURL := "/login"
+	if reason != "manual" {
+		loginURL = "/login?reason=" + reason
+	}
+	http.Redirect(w, r, loginURL, http.StatusFound)
 }
 
 func (s *server) handleCheck(w http.ResponseWriter, r *http.Request) {
