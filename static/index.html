@@ -108,6 +108,13 @@
                     </div>
                     <div class="settings-sep"></div>
                     <div class="settings-row">
+                        <span class="settings-label">自動換行</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" v-model="settings.wordWrap" @change="onWordWrapChange" />
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="settings-row">
                         <span class="settings-label">Minimap</span>
                         <label class="toggle-switch">
                             <input type="checkbox" v-model="settings.minimap" @change="onMinimapChange" />
@@ -564,6 +571,7 @@
                         theme: s.theme || 'vs-dark',
                         fontSize: s.fontSize || 14,
                         fontFamily: s.fontFamily || '',
+                        wordWrap: s.wordWrap !== false,
                         minimap: s.minimap !== false,
                         showInvisible: s.showInvisible === true,
                         trimOnSave: s.trimOnSave !== false,
@@ -1685,6 +1693,11 @@
                     persistSettings({ fontSize: size });
                 },
 
+                onWordWrapChange() {
+                    if (monacoEditor) monacoEditor.updateOptions({ wordWrap: this.settings.wordWrap ? 'on' : 'off' });
+                    persistSettings({ wordWrap: this.settings.wordWrap });
+                },
+
                 onMinimapChange() {
                     if (monacoEditor) monacoEditor.updateOptions({ minimap: { enabled: this.settings.minimap } });
                     persistSettings({ minimap: this.settings.minimap });
@@ -1864,7 +1877,7 @@
                         value: '',
                         language: 'plaintext',
                         theme: activeTheme,
-                        wordWrap: 'on',
+                        wordWrap: s.wordWrap ? 'on' : 'off',
                         automaticLayout: true,
                         fontSize: s.fontSize,
                         fontFamily: s.fontFamily ? `${s.fontFamily}, 'Microsoft JhengHei', sans-serif` : undefined,
