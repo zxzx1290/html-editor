@@ -1885,6 +1885,48 @@
                         renderWhitespace: s.showInvisible ? 'all' : 'none',
                     });
 
+                    // 自動補齊 HTML 閉合標籤（html / php 模式，輸入 > 時觸發）
+                    const VOID_HTML_TAGS = new Set([
+                        'area','base','br','col','embed','hr','img','input',
+                        'link','meta','param','source','track','wbr'
+                    ]);
+                    let _closingHtmlTag = false;
+                    monacoEditor.onDidChangeModelContent((e) => {
+                        if (_closingHtmlTag) return;
+                        const model = monacoEditor.getModel();
+                        if (!model) return;
+                        const lang = model.getLanguageId();
+                        if (lang !== 'html' && lang !== 'php') return;
+                        const insertions = [];
+                        for (const ch of e.changes) {
+                            if (ch.text !== '>') continue;
+                            const line = ch.range.startLineNumber;
+                            const col = ch.range.startColumn + 1;
+                            const lineText = model.getLineContent(line);
+                            const before = lineText.substring(0, col - 1);
+                            const lastLt = before.lastIndexOf('<');
+                            if (lastLt === -1) continue;
+                            const frag = before.substring(lastLt);
+                            const m = frag.match(/^<([a-zA-Z][a-zA-Z0-9-]*)(\s[^]*?)?>$/);
+                            if (!m || VOID_HTML_TAGS.has(m[1].toLowerCase())) continue;
+                            if (/\/\s*>$/.test(before)) continue;
+                            const closeTag = `</${m[1]}>`;
+                            if (lineText.substring(col - 1).toLowerCase().startsWith(closeTag.toLowerCase())) continue;
+                            insertions.push({ line, col, closeTag });
+                        }
+                        if (!insertions.length) return;
+                        _closingHtmlTag = true;
+                        monacoEditor.executeEdits(
+                            'auto-close-html-tag',
+                            insertions.map(({ line, col, closeTag }) => ({
+                                range: new monaco.Range(line, col, line, col),
+                                text: closeTag,
+                            })),
+                            () => insertions.map(({ line, col }) => new monaco.Selection(line, col, line, col))
+                        );
+                        _closingHtmlTag = false;
+                    });
+
                     // open/close 不含空白；dedup=true 時跳過已註解行（僅 HTML 使用）
                     const toggleLineComment = (model, editor, open, close = '', dedup = false) => {
                         const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
