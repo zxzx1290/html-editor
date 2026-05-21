@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,6 +30,11 @@ const (
 	ctxToken     ctxKey = "token"
 )
 
+// dummyTotpSecret is used to keep response timing constant when the supplied
+// username does not exist, preventing user enumeration via timing analysis.
+// It is a valid base32 string so totp.Validate runs the full HMAC path.
+const dummyTotpSecret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 type UserConfig struct {
@@ -46,6 +52,7 @@ type Config struct {
 	RateLimitMaxAttempts int                   `json:"rateLimitMaxAttempts"` // 0 → 5
 	RateLimitBanDuration int64                 `json:"rateLimitBanDuration"` // seconds; 0 → same as window
 	JwtSecret            string                `json:"jwtSecret"`            // JWT signing secret; random if empty
+	TrustProxy           bool                  `json:"trustProxy"`           // trust X-Forwarded-* headers; only enable when behind a trusted reverse proxy
 	Users                map[string]UserConfig `json:"users"`
 }
 
@@ -114,6 +121,66 @@ func (rl *rateLimiter) record(ip string) {
 	}
 }
 
+// gc removes expired bans and stale attempts so the maps do not grow unbounded
+// for IPs that never return.
+func (rl *rateLimiter) gc() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	for ip, expiry := range rl.bans {
+		if now.After(expiry) {
+			delete(rl.bans, ip)
+		}
+	}
+	for ip, ts := range rl.attempts {
+		var recent []time.Time
+		for _, t := range ts {
+			if now.Sub(t) < rl.window {
+				recent = append(recent, t)
+			}
+		}
+		if len(recent) == 0 {
+			delete(rl.attempts, ip)
+		} else {
+			rl.attempts[ip] = recent
+		}
+	}
+}
+
+// ─── TOTP replay guard ───────────────────────────────────────────────────────
+
+type totpReplay struct {
+	mu     sync.Mutex
+	used   map[string]time.Time
+	window time.Duration
+}
+
+func newTotpReplay(window time.Duration) *totpReplay {
+	return &totpReplay{
+		used:   make(map[string]time.Time),
+		window: window,
+	}
+}
+
+// checkAndRecord returns true if (username, code) has not been used within the window.
+// On success it records the pair so subsequent calls within the window will return false.
+func (t *totpReplay) checkAndRecord(username, code string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := time.Now()
+	for k, exp := range t.used {
+		if now.After(exp) {
+			delete(t.used, k)
+		}
+	}
+	key := username + ":" + code
+	if _, exists := t.used[key]; exists {
+		return false
+	}
+	t.used[key] = now.Add(t.window)
+	return true
+}
+
 // ─── WebSocket types ──────────────────────────────────────────────────────────
 
 type wsInMsg struct {
@@ -177,19 +244,26 @@ func (h *Hub) unregister(c *WsClient) {
 		wasRegistered = true
 		delete(h.clients, c.username)
 		for key, users := range h.openFiles {
+			inList := false
 			filtered := users[:0]
 			for _, u := range users {
-				if u != c.username {
+				if u == c.username {
+					// 標記用戶在此文件的打開列表中，稍後廣播 file_closed 消息
+					inList = true
+				} else {
+					// 保留其他用戶
 					filtered = append(filtered, u)
 				}
 			}
 			if len(filtered) == 0 {
 				delete(h.openFiles, key)
-				logf("[ws] unregister_clear_file user=%s key=%s\n", c.username, key)
 			} else {
 				h.openFiles[key] = filtered
 			}
-			closedKeys = append(closedKeys, key)
+			if inList {
+				closedKeys = append(closedKeys, key)
+				logf("[ws] unregister_clear_file user=%s file=%s\n", c.username, key)
+			}
 		}
 	}
 	h.mu.Unlock()
@@ -326,10 +400,11 @@ type fileEntry struct {
 }
 
 type server struct {
-	config    *Config
-	jwtSecret []byte
-	hub       *Hub
-	limiter   *rateLimiter
+	config     *Config
+	jwtSecret  []byte
+	hub        *Hub
+	limiter    *rateLimiter
+	totpReplay *totpReplay
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -388,13 +463,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, "config.json must set jwtSecret")
 		os.Exit(1)
 	}
+	if len(cfg.JwtSecret) < 32 {
+		fmt.Fprintln(os.Stderr, "config.json: jwtSecret must be at least 32 bytes")
+		os.Exit(1)
+	}
 	secret := []byte(cfg.JwtSecret)
 
 	s := &server{
-		config:    &cfg,
-		jwtSecret: secret,
-		hub:       newHub(),
-		limiter:   newRateLimiter(rlWindow, rlMax, rlBan),
+		config:     &cfg,
+		jwtSecret:  secret,
+		hub:        newHub(),
+		limiter:    newRateLimiter(rlWindow, rlMax, rlBan),
+		totpReplay: newTotpReplay(90 * time.Second),
 	}
 	logf("[config] %d user(s) loaded\n", len(cfg.Users))
 
@@ -403,6 +483,14 @@ func main() {
 		defer t.Stop()
 		for range t.C {
 			logf("[status] ws_clients=%d\n", s.hub.clientCount())
+		}
+	}()
+
+	go func() {
+		t := time.NewTicker(10 * time.Minute)
+		defer t.Stop()
+		for range t.C {
+			s.limiter.gc()
 		}
 	}()
 
@@ -437,7 +525,7 @@ func main() {
 // Browser routes redirect to /login on failure; API / session routes return 401.
 func (s *server) checkSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ip := clientIP(r)
+		ip := s.clientIP(r)
 		if s.limiter.isBlocked(ip) {
 			logf("[rate-limit] ip=%s blocked\n", ip)
 			p := r.URL.Path
@@ -593,9 +681,11 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func clientIP(r *http.Request) string {
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		return strings.TrimSpace(strings.Split(forwarded, ",")[0])
+func (s *server) clientIP(r *http.Request) string {
+	if s.config.TrustProxy {
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			return strings.TrimSpace(strings.Split(forwarded, ",")[0])
+		}
 	}
 	ip := r.RemoteAddr
 	if i := strings.LastIndex(ip, ":"); i >= 0 {
@@ -604,13 +694,24 @@ func clientIP(r *http.Request) string {
 	return ip
 }
 
+func (s *server) isSecureRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if s.config.TrustProxy && r.Header.Get("X-Forwarded-Proto") == "https" {
+		return true
+	}
+	return false
+}
+
 func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if s.limiter.isBlocked(ip) {
 		logf("[rate-limit] ip=%s blocked\n", ip)
 		http.Redirect(w, r, "/login?reason=blocked", http.StatusFound)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
 		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
 		return
@@ -618,17 +719,28 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	code := r.FormValue("code")
 	userCfg, ok := s.config.Users[username]
-	if !ok || !totp.Validate(code, userCfg.TotpSecret) {
+	// 不論 username 是否存在都跑一次 totp.Validate，避免從回應時間枚舉合法帳號
+	secret := dummyTotpSecret
+	if ok {
+		secret = userCfg.TotpSecret
+	}
+	valid := totp.Validate(code, secret)
+	if !ok || !valid {
 		s.limiter.record(ip)
 		logf("[session] invalid credentials ip=%s\n", ip)
 		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
 		return
 	}
+	if !s.totpReplay.checkAndRecord(username, code) {
+		s.limiter.record(ip)
+		logf("[session] totp replay user=%s ip=%s\n", username, ip)
+		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
+		return
+	}
 	token := s.newSession(username)
-	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
 		Name: "editorToken", Value: token, MaxAge: int(s.sessionTTL().Seconds()),
-		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure,
+		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.isSecureRequest(r),
 	})
 	logf("[login] user=%s ip=%s\n", username, ip)
 	http.Redirect(w, r, "/", http.StatusFound)
@@ -647,8 +759,11 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	default:
 		reason = "manual"
 	}
-	logf("[logout] user=%s ip=%s reason=%s\n", username, clientIP(r), reason)
-	http.SetCookie(w, &http.Cookie{Name: "editorToken", Value: "", MaxAge: -1, Path: "/"})
+	logf("[logout] user=%s ip=%s reason=%s\n", username, s.clientIP(r), reason)
+	http.SetCookie(w, &http.Cookie{
+		Name: "editorToken", Value: "", MaxAge: -1, Path: "/",
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.isSecureRequest(r),
+	})
 	loginURL := "/login"
 	if reason != "manual" {
 		loginURL = "/login?reason=" + reason
@@ -659,6 +774,9 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleCheck(w http.ResponseWriter, r *http.Request) {
 	var claims jwtClaims
 	token, err := jwt.ParseWithClaims(tokenFromCtx(r), &claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
 		return s.jwtSecret, nil
 	})
 	if err != nil || !token.Valid || claims.ExpiresAt == nil {
@@ -669,10 +787,9 @@ func (s *server) handleCheck(w http.ResponseWriter, r *http.Request) {
 	extended := false
 	if ttl < int64(s.sessionTTL()/2/time.Second) {
 		if newToken, ok := s.extendSession(tokenFromCtx(r)); ok {
-			secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 			http.SetCookie(w, &http.Cookie{
 				Name: "editorToken", Value: newToken, MaxAge: int(s.sessionTTL().Seconds()),
-				Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure,
+				Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.isSecureRequest(r),
 			})
 			ttl = int64(s.sessionTTL() / time.Second)
 			extended = true
@@ -695,7 +812,17 @@ func (s *server) handleApiConfig(w http.ResponseWriter, r *http.Request) {
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 
 var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return false
+		}
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		return strings.EqualFold(u.Host, r.Host)
+	},
 }
 
 func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
