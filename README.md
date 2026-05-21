@@ -44,6 +44,7 @@
   - **Minimap**：開／關切換
   - **顯示隱形字元（Whitespace）**：開／關切換
   - **儲存時移除尾端空白**：開（預設）／關切換
+- HTML / PHP 模式自動補全閉合標籤（輸入 `>` 後自動插入對應的 `</tag>`，void element 除外）
 - 預設啟用自動換行（Word Wrap）
 - TOTP 二步驟登入：以 `config.json` 設定帳號，每位使用者擁有獨立 workspace
 - Session 以 JWT（HS256）儲存於 `editorToken` cookie，無伺服器端 session 記錄；`jwtSecret` 必須於 `config.json` 設定，否則程式拒絕啟動
@@ -149,6 +150,7 @@ Windows：
 | `rateLimitMaxAttempts` | 視窗內最大失敗次數；達到後觸發封鎖；預設 5 |
 | `rateLimitBanDuration` | 觸發封鎖後的封鎖時長（秒）；預設同 `rateLimitWindow` |
 | `jwtSecret` | JWT 簽署金鑰（**必填**）；建議使用長度 32 字元以上的隨機字串 |
+| `trustProxy` | 是否信任 `X-Forwarded-For` / `X-Forwarded-Proto`（預設 `false`）；僅在已知信任的 reverse proxy 後方開啟 |
 | `users.<name>.totpSecret` | TOTP 金鑰（Base32），可用 Google Authenticator 等 App 掃碼 |
 | `users.<name>.workspace` | 該使用者的 workspace 目錄 |
 
