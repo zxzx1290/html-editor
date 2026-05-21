@@ -243,6 +243,7 @@ func (m *tmuxManager) pump(a *tmuxAttach) {
 			Type:    "term_closed",
 			Payload: map[string]string{"name": a.name},
 		})
+		logf("[tmux] pump_exit session=%s reason=session_gone\n", a.name)
 	}
 }
 
