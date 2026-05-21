@@ -29,4 +29,5 @@ fs.mkdirSync(xtermDst, { recursive: true });
 fs.copyFileSync('node_modules/@xterm/xterm/lib/xterm.js', `${xtermDst}/xterm.js`);
 fs.copyFileSync('node_modules/@xterm/xterm/css/xterm.css', `${xtermDst}/xterm.css`);
 fs.copyFileSync('node_modules/@xterm/addon-fit/lib/addon-fit.js', `${xtermDst}/addon-fit.js`);
+fs.copyFileSync('node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js', `${xtermDst}/addon-unicode11.js`);
 console.log(`Copied xterm assets → ${xtermDst}`);

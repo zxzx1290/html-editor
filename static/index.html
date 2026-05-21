@@ -277,6 +277,7 @@
 <script src="/static/vue.global.js"></script>
 <script src="/static/xterm/xterm.js"></script>
 <script src="/static/xterm/addon-fit.js"></script>
+<script src="/static/xterm/addon-unicode11.js"></script>
 <script src="/static/monaco/vs/loader.js"></script>
 
 <script>
@@ -1007,7 +1008,7 @@
                             await this.activateTab(this.tabsList[Math.min(idx, this.tabsList.length - 1)].path);
                         } else {
                             this.activeTabPath = null;
-                            if (monacoEditor) monacoEditor.setModel(null);
+                            monacoEditor.setModel(null);
                             this.setStatus('');
                             this.scheduleMetaSave();
                         }
@@ -1358,9 +1359,12 @@
                         fontFamily: this._termFontFamily(),
                         fontSize: this._termFontSize(),
                         allowTransparency: true,
-                        theme: { background: 'rgba(0,0,0,0)' },
+                        theme: { background: 'rgba(0,0,0,0)', foreground: '#cccccc' },
                         scrollback: 5000,
                     });
+                    const unicode11Addon = new Unicode11Addon.Unicode11Addon();
+                    term.loadAddon(unicode11Addon);
+                    term.unicode.activeVersion = '11';
                     const fitAddon = new FitAddon.FitAddon();
                     term.loadAddon(fitAddon);
                     term.open(paneEl);
@@ -1566,7 +1570,7 @@
                             }
                             if (needFallback) {
                                 this.activeTabPath = null;
-                                if (monacoEditor) monacoEditor.setModel(null);
+                                monacoEditor.setModel(null);
                                 this.setStatus('');
                                 if (this.tabsList.length > 0) await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
                             }
@@ -1761,7 +1765,7 @@
                                 await this.activateTab(this.tabsList[this.tabsList.length - 1].path);
                             } else {
                                 this.activeTabPath = null;
-                                if (monacoEditor) monacoEditor.setModel(null);
+                                monacoEditor.setModel(null);
                             }
                         }
                         this.selectedPaths = [];
@@ -2055,6 +2059,8 @@
                 async ensureTheme(id) {
                     if (loadedThemes.has(id)) return;
                     const data = await this.api('/static/themes/' + encodeURIComponent(id) + '.json');
+                    const isDark = data.base === 'vs-dark' || data.base === 'hc-black';
+                    data.colors = { ...data.colors, 'editorWhitespace.foreground': isDark ? '#606060' : '#a0a0a0' };
                     monaco.editor.defineTheme(id, data);
                     loadedThemes.add(id);
                 },
@@ -2075,29 +2081,29 @@
                 onFontFamilyChange() {
                     const base = this.settings.fontFamily;
                     const family = base ? `${base}, 'Microsoft JhengHei', sans-serif` : undefined;
-                    if (monacoEditor) monacoEditor.updateOptions({ fontFamily: family });
+                    monacoEditor.updateOptions({ fontFamily: family });
                     persistSettings({ fontFamily: base });
                 },
 
                 onFontSizeChange() {
                     const size = Math.min(32, Math.max(10, parseInt(this.settings.fontSize, 10) || 13));
                     this.settings.fontSize = size;
-                    if (monacoEditor) monacoEditor.updateOptions({ fontSize: size });
+                    monacoEditor.updateOptions({ fontSize: size });
                     persistSettings({ fontSize: size });
                 },
 
                 onWordWrapChange() {
-                    if (monacoEditor) monacoEditor.updateOptions({ wordWrap: this.settings.wordWrap ? 'on' : 'off' });
+                    monacoEditor.updateOptions({ wordWrap: this.settings.wordWrap ? 'on' : 'off' });
                     persistSettings({ wordWrap: this.settings.wordWrap });
                 },
 
                 onMinimapChange() {
-                    if (monacoEditor) monacoEditor.updateOptions({ minimap: { enabled: this.settings.minimap } });
+                    monacoEditor.updateOptions({ minimap: { enabled: this.settings.minimap } });
                     persistSettings({ minimap: this.settings.minimap });
                 },
 
                 onShowInvisibleChange() {
-                    if (monacoEditor) monacoEditor.updateOptions({ renderWhitespace: this.settings.showInvisible ? 'all' : 'none' });
+                    monacoEditor.updateOptions({ renderWhitespace: this.settings.showInvisible ? 'all' : 'none' });
                     persistSettings({ showInvisible: this.settings.showInvisible });
                 },
 
@@ -2268,6 +2274,11 @@
 
                 require.config({ paths: { vs: '/static/monaco/vs' } });
                 require(['vs/editor/editor.main'], async () => {
+                    for (const base of ['vs-dark', 'hc-black'])
+                        monaco.editor.defineTheme(base, { base, inherit: true, rules: [], colors: { 'editorWhitespace.foreground': '#606060' } });
+                    for (const base of ['vs', 'hc-light'])
+                        monaco.editor.defineTheme(base, { base, inherit: true, rules: [], colors: { 'editorWhitespace.foreground': '#a0a0a0' } });
+
                     const s = this.settings;
                     await this.ensureTheme(s.theme).catch(() => { });
                     const activeTheme = loadedThemes.has(s.theme) ? s.theme : 'vs-dark';

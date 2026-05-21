@@ -558,6 +558,8 @@ button.btn:disabled {
     position: absolute;
     inset: 4px 0 0 4px;
     display: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 #terminal-host .term-pane.active {
