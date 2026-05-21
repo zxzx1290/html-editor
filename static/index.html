@@ -80,14 +80,14 @@
                                 <option value="hc-light">HC Light</option>
                             </optgroup>
                             <optgroup label="擴充">
-                                <option value="Monokai">Monokai</option>
-                                <option value="Dracula">Dracula</option>
-                                <option value="Nord">Nord</option>
-                                <option value="Cobalt2">Cobalt2</option>
-                                <option value="Solarized-dark">Solarized Dark</option>
-                                <option value="Solarized-light">Solarized Light</option>
-                                <option value="Tomorrow-Night">Tomorrow Night</option>
-                                <option value="Tomorrow-Night-Eighties">Tomorrow Night Eighties</option>
+                                <option value="monokai">Monokai</option>
+                                <option value="dracula">Dracula</option>
+                                <option value="nord">Nord</option>
+                                <option value="solarized-dark">Solarized Dark</option>
+                                <option value="solarized-light">Solarized Light</option>
+                                <option value="tokyo-night">Tokyo Night</option>
+                                <option value="one-dark-pro">One Dark Pro</option>
+                                <option value="github-dark">GitHub Dark</option>
                             </optgroup>
                         </select>
                     </div>
@@ -278,6 +278,7 @@
 <script src="/static/xterm/xterm.js"></script>
 <script src="/static/xterm/addon-fit.js"></script>
 <script src="/static/xterm/addon-unicode11.js"></script>
+<script src="/static/textmate/textmate.js"></script>
 <script src="/static/monaco/vs/loader.js"></script>
 
 <script>
@@ -477,6 +478,92 @@
 
         function persistSettings(patch) {
             localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
+        }
+
+        // ── TextMate (vscode-textmate + vscode-oniguruma) ─────────────────────────
+        // 對 Monaco 套用 VS Code 等級的 TextMate 分詞，讓 Monokai 等主題的顏色 / 斜體
+        // 與 VS Code 一致（Monaco 內建的 Monarch token 粒度太粗，主題規則命中率低）。
+        const TM_SCOPE_FILE = {
+            'source.js': 'javascript',
+            'source.json': 'json',
+            'source.css': 'css',
+            'text.html.basic': 'html',
+            'source.php': 'php',
+        };
+        const TM_LANG_SCOPE = {
+            javascript: 'source.js',
+            json: 'source.json',
+            css: 'source.css',
+            html: 'text.html.basic',
+            php: 'source.php',
+        };
+        let tmRegistry = null;
+
+        async function initTextMate() {
+            await TM.oniguruma.loadWASM(await fetch('/static/textmate/onig.wasm'));
+            tmRegistry = new TM.textmate.Registry({
+                onigLib: Promise.resolve({
+                    createOnigScanner: ps => new TM.oniguruma.OnigScanner(ps),
+                    createOnigString: s => new TM.oniguruma.OnigString(s),
+                }),
+                loadGrammar: async (scopeName) => {
+                    const name = TM_SCOPE_FILE[scopeName];
+                    if (!name) return null;
+                    const text = await (await fetch(`/static/textmate/grammars/${name}.json`)).text();
+                    return TM.textmate.parseRawGrammar(text, `${name}.json`);
+                },
+            });
+        }
+
+        async function wireTextMateLanguage(langId) {
+            const scope = TM_LANG_SCOPE[langId];
+            if (!scope || !tmRegistry) return;
+            const grammar = await tmRegistry.loadGrammar(scope);
+            if (!grammar) return;
+            monaco.languages.setTokensProvider(langId, {
+                getInitialState: () => ({ ruleStack: TM.textmate.INITIAL }),
+                tokenize: (line, state) => {
+                    const result = grammar.tokenizeLine(line, state.ruleStack);
+                    return {
+                        tokens: result.tokens.map(t => ({
+                            startIndex: t.startIndex,
+                            // 最特定 scope 放最前，讓 Monaco 的 prefix matching 命中最特定 rule
+                            scopes: t.scopes.slice().reverse().join(' '),
+                        })),
+                        endState: { ruleStack: result.ruleStack },
+                    };
+                },
+            });
+        }
+
+        // VS Code theme JSON (有 tokenColors + colors) → Monaco theme (rules + colors)
+        function vscodeThemeToMonaco(vt) {
+            const rules = [];
+            for (const tc of vt.tokenColors || []) {
+                const scopes = Array.isArray(tc.scope) ? tc.scope
+                             : typeof tc.scope === 'string' ? tc.scope.split(',')
+                             : [''];
+                for (let s of scopes) {
+                    s = s.trim();
+                    if (!s) continue;
+                    const r = { token: s };
+                    const st = tc.settings || {};
+                    if (st.foreground) r.foreground = st.foreground.replace('#', '');
+                    if (st.background) r.background = st.background.replace('#', '');
+                    if (st.fontStyle)  r.fontStyle  = st.fontStyle;
+                    rules.push(r);
+                }
+            }
+            const base = vt.type === 'light' ? 'vs'
+                       : vt.type === 'hc'    ? 'hc-black'
+                       : 'vs-dark';
+            return {
+                base, inherit: true, rules,
+                colors: {
+                    'editorWhitespace.foreground': base === 'vs' ? '#a0a0a0' : '#606060',
+                    ...(vt.colors || {}),
+                },
+            };
         }
 
         // ── Built-in: Session check & WS collaboration ────────────────────────────
@@ -2074,10 +2161,8 @@
 
                 async ensureTheme(id) {
                     if (loadedThemes.has(id)) return;
-                    const data = await this.api('/static/themes/' + encodeURIComponent(id) + '.json');
-                    const isDark = data.base === 'vs-dark' || data.base === 'hc-black';
-                    data.colors = { ...data.colors, 'editorWhitespace.foreground': isDark ? '#606060' : '#a0a0a0' };
-                    monaco.editor.defineTheme(id, data);
+                    const raw = await this.api('/static/themes/' + encodeURIComponent(id) + '.json');
+                    monaco.editor.defineTheme(id, vscodeThemeToMonaco(raw));
                     loadedThemes.add(id);
                 },
 
@@ -2297,6 +2382,15 @@
                         monaco.editor.defineTheme(base, { base, inherit: true, rules: [], colors: { 'editorWhitespace.foreground': '#606060' } });
                     for (const base of ['vs', 'hc-light'])
                         monaco.editor.defineTheme(base, { base, inherit: true, rules: [], colors: { 'editorWhitespace.foreground': '#a0a0a0' } });
+
+                    await initTextMate();
+                    await Promise.all([
+                        wireTextMateLanguage('javascript'),
+                        wireTextMateLanguage('json'),
+                        wireTextMateLanguage('css'),
+                        wireTextMateLanguage('html'),
+                        wireTextMateLanguage('php'),
+                    ]);
 
                     const s = this.settings;
                     await this.ensureTheme(s.theme).catch(() => { });
