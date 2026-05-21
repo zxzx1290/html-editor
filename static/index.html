@@ -73,21 +73,21 @@
                     <div class="settings-row">
                         <span class="settings-label">主題</span>
                         <select v-model="settings.theme" class="settings-select" @change="onThemeChange">
-                            <optgroup label="內建">
-                                <option value="vs-dark">Dark</option>
-                                <option value="vs">Light</option>
-                                <option value="hc-black">HC Dark</option>
-                                <option value="hc-light">HC Light</option>
+                            <optgroup label="預設">
+                                <option value="dark-plus">Dark+</option>
+                                <option value="light-plus">Light+</option>
                             </optgroup>
-                            <optgroup label="擴充">
+                            <optgroup label="深色">
                                 <option value="monokai">Monokai</option>
                                 <option value="dracula">Dracula</option>
                                 <option value="nord">Nord</option>
                                 <option value="solarized-dark">Solarized Dark</option>
-                                <option value="solarized-light">Solarized Light</option>
                                 <option value="tokyo-night">Tokyo Night</option>
                                 <option value="one-dark-pro">One Dark Pro</option>
                                 <option value="github-dark">GitHub Dark</option>
+                            </optgroup>
+                            <optgroup label="淺色">
+                                <option value="solarized-light">Solarized Light</option>
                             </optgroup>
                         </select>
                     </div>
@@ -119,6 +119,20 @@
                         <span class="settings-label">Minimap</span>
                         <label class="toggle-switch">
                             <input type="checkbox" v-model="settings.minimap" @change="onMinimapChange" />
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">Sticky Scroll</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" v-model="settings.stickyScroll" @change="onStickyScrollChange" />
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="settings-row">
+                        <span class="settings-label">括號配對上色</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" v-model="settings.bracketColorization" @change="onBracketColorizationChange" />
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
@@ -457,7 +471,9 @@
 
         let monacoEditor = null;
         let updateEolDecorations = () => {};
-        const loadedThemes = new Set(['vs', 'vs-dark', 'hc-black', 'hc-light']);
+        const loadedThemes = new Set();
+        const themeCache = new Map(); // themeId → raw VS Code theme JSON
+        const DEFAULT_THEME = 'dark-plus';
 
         function extOf(path) {
             const m = /\.([^./]+)$/.exec(path);
@@ -483,19 +499,24 @@
         // ── TextMate (vscode-textmate + vscode-oniguruma) ─────────────────────────
         // 對 Monaco 套用 VS Code 等級的 TextMate 分詞，讓 Monokai 等主題的顏色 / 斜體
         // 與 VS Code 一致（Monaco 內建的 Monarch token 粒度太粗，主題規則命中率低）。
+        // .php 檔以 text.html.php 為入口（HTML 為主、嵌入 PHP），它會遞迴 include
+        // text.html.derivative → text.html.basic 以及 source.php，所以 registry 必須
+        // 認得這 4 個 scope。純 PHP 區塊（<?php ... ?>）由 source.php 接手。
         const TM_SCOPE_FILE = {
             'source.js': 'javascript',
             'source.json': 'json',
             'source.css': 'css',
             'text.html.basic': 'html',
+            'text.html.derivative': 'html-derivative',
             'source.php': 'php',
+            'text.html.php': 'php-html',
         };
         const TM_LANG_SCOPE = {
             javascript: 'source.js',
             json: 'source.json',
             css: 'source.css',
             html: 'text.html.basic',
-            php: 'source.php',
+            php: 'text.html.php',
         };
         let tmRegistry = null;
 
@@ -515,53 +536,65 @@
             });
         }
 
+        // Monaco IState 介面要求 clone() 與 equals()，ruleStack 本身在 vscode-textmate
+        // 內是 immutable，所以 clone 直接共用 reference 即可。
+        class TextMateState {
+            constructor(ruleStack) { this.ruleStack = ruleStack; }
+            clone() { return new TextMateState(this.ruleStack); }
+            equals(other) { return other instanceof TextMateState && other.ruleStack === this.ruleStack; }
+        }
+
         async function wireTextMateLanguage(langId) {
             const scope = TM_LANG_SCOPE[langId];
             if (!scope || !tmRegistry) return;
-            const grammar = await tmRegistry.loadGrammar(scope);
+            // 帶上 encodedLanguageId，TokenMetadata 才會編進 language id；缺了會讓
+            // Toggle Line Comment 等以 language 推導的功能在切回單一 line 時失效。
+            const encodedLanguageId = monaco.languages.getEncodedLanguageId(langId);
+            const grammar = await tmRegistry.loadGrammarWithConfiguration(scope, encodedLanguageId, {});
             if (!grammar) return;
+            // 使用 EncodedTokensProvider（tokenizeEncoded → Uint32Array）：colorMap、
+            // 字體樣式都由 vscode-textmate 用 VS Code 同款 scope selector 引擎算好，
+            // Monaco 只負責照 encodedTokensColors 取色，不再經過 Monaco 自己的
+            // string-token prefix matching。
             monaco.languages.setTokensProvider(langId, {
-                getInitialState: () => ({ ruleStack: TM.textmate.INITIAL }),
-                tokenize: (line, state) => {
-                    const result = grammar.tokenizeLine(line, state.ruleStack);
+                getInitialState: () => new TextMateState(TM.textmate.INITIAL),
+                tokenizeEncoded: (line, state) => {
+                    const result = grammar.tokenizeLine2(line, state.ruleStack);
                     return {
-                        tokens: result.tokens.map(t => ({
-                            startIndex: t.startIndex,
-                            // 最特定 scope 放最前，讓 Monaco 的 prefix matching 命中最特定 rule
-                            scopes: t.scopes.slice().reverse().join(' '),
-                        })),
-                        endState: { ruleStack: result.ruleStack },
+                        tokens: result.tokens,
+                        endState: new TextMateState(result.ruleStack),
                     };
                 },
             });
+            console.log('[TextMate] wired language', langId, 'to scope', scope);
         }
 
-        // VS Code theme JSON (有 tokenColors + colors) → Monaco theme (rules + colors)
-        function vscodeThemeToMonaco(vt) {
-            const rules = [];
-            for (const tc of vt.tokenColors || []) {
-                const scopes = Array.isArray(tc.scope) ? tc.scope
-                             : typeof tc.scope === 'string' ? tc.scope.split(',')
-                             : [''];
-                for (let s of scopes) {
-                    s = s.trim();
-                    if (!s) continue;
-                    const r = { token: s };
-                    const st = tc.settings || {};
-                    if (st.foreground) r.foreground = st.foreground.replace('#', '');
-                    if (st.background) r.background = st.background.replace('#', '');
-                    if (st.fontStyle)  r.fontStyle  = st.fontStyle;
-                    rules.push(r);
-                }
-            }
+        // VS Code theme JSON → Monaco theme（encoded tokens 路徑）。
+        // 不再產生 rules：實際的 scope → color 比對由 vscode-textmate registry 處理；
+        // 我們把它算好的 colorMap 直接以 encodedTokensColors 餵給 Monaco，這樣
+        // tokenizeLine2 的 Uint32Array 索引就能對齊 Monaco 的色票。
+        function vscodeThemeToMonaco(vt, colorMap) {
             const base = vt.type === 'light' ? 'vs'
                        : vt.type === 'hc'    ? 'hc-black'
                        : 'vs-dark';
+            // vscode-textmate 的 colorMap[0] 是 sparse hole（保留給 "no color"），但
+            // Monaco 的 ColorMap.getId() 只認 `null`：`if (g===null) return 0; g.match(...)`
+            // 對 undefined 會直接炸。Theia 多年生產採用的修法就是 colorMap[0] = null。
+            const safeColorMap = colorMap.slice();
+            safeColorMap[0] = null;
+            // Monaco 的 minimap.background 預設值是 null（不會自動 fallback 到
+            // editor.background）；目前的 theme JSON 也沒人主動設，導致 canvas 透明
+            // 後吃到的是父層元素背景。沒設就直接用 editor.background 對齊。
+            const themeColors = { ...(vt.colors || {}) };
+            if (themeColors['editor.background'] && !themeColors['minimap.background']) {
+                themeColors['minimap.background'] = themeColors['editor.background'];
+            }
             return {
-                base, inherit: true, rules,
+                base, inherit: true, rules: [],
+                encodedTokensColors: safeColorMap,
                 colors: {
                     'editorWhitespace.foreground': base === 'vs' ? '#a0a0a0' : '#606060',
-                    ...(vt.colors || {}),
+                    ...themeColors,
                 },
             };
         }
@@ -740,11 +773,13 @@
                     tabsList: [],
                     activeTabPath: null,
                     settings: {
-                        theme: s.theme || 'vs-dark',
+                        theme: s.theme || DEFAULT_THEME,
                         fontSize: s.fontSize || 14,
                         fontFamily: s.fontFamily || '',
                         wordWrap: s.wordWrap !== false,
                         minimap: s.minimap !== false,
+                        stickyScroll: s.stickyScroll !== false,
+                        bracketColorization: s.bracketColorization !== false,
                         showInvisible: s.showInvisible === true,
                         trimOnSave: s.trimOnSave !== false,
                         terminalFontFamily: s.terminalFontFamily || '',
@@ -2160,15 +2195,22 @@
                 // ── Settings ──────────────────────────────────────────────────────────
 
                 async ensureTheme(id) {
-                    if (loadedThemes.has(id)) return;
-                    const raw = await this.api('/static/themes/' + encodeURIComponent(id) + '.json');
-                    monaco.editor.defineTheme(id, vscodeThemeToMonaco(raw));
+                    // 每次切換主題都必須重做 setTheme + defineTheme：vscode-textmate 的
+                    // colorMap 會隨 theme 重算（索引佈局完全不同），Monaco 端的
+                    // encodedTokensColors 必須跟著更新，否則舊 token cache 解出來顏色全錯。
+                    let raw = themeCache.get(id);
+                    if (!raw) {
+                        raw = await this.api('/static/themes/' + encodeURIComponent(id) + '.json');
+                        themeCache.set(id, raw);
+                    }
+                    tmRegistry.setTheme({ name: id, settings: raw.tokenColors || [] });
+                    monaco.editor.defineTheme(id, vscodeThemeToMonaco(raw, tmRegistry.getColorMap()));
                     loadedThemes.add(id);
                 },
 
                 async onThemeChange() {
                     const theme = this.settings.theme;
-                    const prev = loadSettings().theme || 'vs-dark';
+                    const prev = loadSettings().theme || DEFAULT_THEME;
                     try {
                         await this.ensureTheme(theme);
                         monaco.editor.setTheme(theme);
@@ -2201,6 +2243,18 @@
                 onMinimapChange() {
                     monacoEditor.updateOptions({ minimap: { enabled: this.settings.minimap } });
                     persistSettings({ minimap: this.settings.minimap });
+                },
+
+                onStickyScrollChange() {
+                    monacoEditor.updateOptions({ stickyScroll: { enabled: this.settings.stickyScroll } });
+                    persistSettings({ stickyScroll: this.settings.stickyScroll });
+                },
+
+                onBracketColorizationChange() {
+                    // Monaco 的 bracketPairColorization 對 updateOptions 不靈敏（issue #3013），
+                    // 改用 CSS class 控制：Monaco 永遠開著上色、由 body class 決定要不要顯示
+                    document.body.classList.toggle('bracket-colors-off', !this.settings.bracketColorization);
+                    persistSettings({ bracketColorization: this.settings.bracketColorization });
                 },
 
                 onShowInvisibleChange() {
@@ -2376,14 +2430,22 @@
                     }
                 };
 
+                document.body.classList.toggle('bracket-colors-off', !this.settings.bracketColorization);
+
                 require.config({ paths: { vs: '/static/monaco/vs' } });
                 require(['vs/editor/editor.main'], async () => {
-                    for (const base of ['vs-dark', 'hc-black'])
-                        monaco.editor.defineTheme(base, { base, inherit: true, rules: [], colors: { 'editorWhitespace.foreground': '#606060' } });
-                    for (const base of ['vs', 'hc-light'])
-                        monaco.editor.defineTheme(base, { base, inherit: true, rules: [], colors: { 'editorWhitespace.foreground': '#a0a0a0' } });
-
                     await initTextMate();
+
+                    // 先載 theme 把 colorMap 餵給 Monaco，再 wire token providers。
+                    // 順序反了的話，第一次 tokenize 拿到的 encoded fg index 會對應到
+                    // 空 colorMap，整段文字會以預設前景色呈現直到下一次 setTheme。
+                    const s = this.settings;
+                    await this.ensureTheme(s.theme).catch(() => { });
+                    let activeTheme = loadedThemes.has(s.theme) ? s.theme : DEFAULT_THEME;
+                    if (!loadedThemes.has(activeTheme)) {
+                        await this.ensureTheme(activeTheme).catch(() => { });
+                    }
+
                     await Promise.all([
                         wireTextMateLanguage('javascript'),
                         wireTextMateLanguage('json'),
@@ -2391,10 +2453,6 @@
                         wireTextMateLanguage('html'),
                         wireTextMateLanguage('php'),
                     ]);
-
-                    const s = this.settings;
-                    await this.ensureTheme(s.theme).catch(() => { });
-                    const activeTheme = loadedThemes.has(s.theme) ? s.theme : 'vs-dark';
 
                     monacoEditor = monaco.editor.create(this.$refs.editorEl, {
                         value: '',
@@ -2405,7 +2463,9 @@
                         fontSize: s.fontSize,
                         fontFamily: s.fontFamily ? `${s.fontFamily}, 'Microsoft JhengHei', sans-serif` : undefined,
                         minimap: { enabled: s.minimap },
+                        stickyScroll: { enabled: s.stickyScroll },
                         renderWhitespace: s.showInvisible ? 'all' : 'none',
+                        bracketPairColorization: { enabled: true },
                     });
 
                     // EOL 隱藏字元標記（showInvisible 開啟時在每行末顯示 ␍ / ␊）

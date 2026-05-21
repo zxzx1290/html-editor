@@ -1,16 +1,27 @@
 :root {
-    --bg: #1e1e1e;
-    --bg-side: #252526;
-    --bg-bar: #333333;
-    --bg-hover: #2a2d2e;
-    --bg-active: #094771;
-    --bg-card: #252526;
-    --fg: #cccccc;
-    --fg-dim: #858585;
-    --border: #333333;
-    --accent: #007acc;
-    --danger: #c84040;
-    --danger-fg: #f48771;
+    /* 結構層（由淺到深）— 對應 VS Code Dark+ 配色 */
+    --bg-toolbar:   #1E1E1E;   /* titleBar.activeBackground; 最上層 toolbar */
+    --bg-bar:       #1E1E1E;   /* activityBar.background; sidebar header / resize handle / 按鈕 */
+    --bg-tab-hover: #37373d;   /* tab.hoverBackground */
+    --bg-tab:       #2d2d2d;   /* tab.inactiveBackground */
+    --bg-side:      #252526;   /* sideBar.background; editorGroupHeader.tabsBackground */
+    --bg:           #1e1e1e;   /* editor.background; tab.activeBackground */
+
+    /* 互動狀態 */
+    --bg-hover:     #2a2d2e;   /* list.hoverBackground */
+    --bg-active:    #094771;   /* list.activeSelectionBackground */
+
+    /* 前景 */
+    --fg:           #cccccc;   /* foreground */
+    --fg-dim:       #858585;   /* descriptionForeground */
+
+    /* 邊框（與 --bg-bar 同色但語義不同，分開以便日後調整） */
+    --border:       #333333;
+
+    /* 強調色與警示 */
+    --accent:       #007acc;   /* focusBorder, statusBar.background */
+    --danger:       #c84040;
+    --danger-fg:    #f48771;
 }
 
 * {
@@ -45,7 +56,7 @@ body {
     width: 250px;
     flex: 0 0 250px;
     background: var(--bg-side);
-    border-right: 1px solid var(--border);
+    /* border-right: 1px solid var(--border); */
     display: flex;
     flex-direction: column;
     transition: margin-left 0.2s ease;
@@ -72,7 +83,7 @@ body {
 
 #sidebar-header {
     padding: 8px 10px;
-    min-height: 38px;
+    height: 38px;
     background: var(--bg-bar);
     font-weight: bold;
     font-size: 11px;
@@ -366,7 +377,7 @@ button.btn:disabled {
 
 #toolbar {
     padding: 0 12px;
-    background: var(--bg-bar);
+    background: var(--bg-toolbar);
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
@@ -415,12 +426,12 @@ button.btn:disabled {
     align-items: center;
     padding: 0 6px 0 12px;
     height: 34px;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--bg-side);
     cursor: pointer;
     white-space: nowrap;
     font-size: 12px;
     color: var(--fg-dim);
-    background: var(--bg-side);
+    background: var(--bg-tab);
     user-select: none;
     gap: 5px;
     max-width: 200px;
@@ -429,7 +440,7 @@ button.btn:disabled {
 }
 
 .tab:hover {
-    background: var(--bg-hover);
+    background: var(--bg-tab-hover);
     color: var(--fg);
 }
 
@@ -902,7 +913,7 @@ body.login-page {
 }
 
 .card {
-    background: var(--bg-card);
+    background: var(--bg-side);
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 32px 36px 28px;
@@ -1008,3 +1019,15 @@ body.login-page {
 .monaco-editor.vs .editor-eol-crlf::after,
 .monaco-editor.hc-light .editor-eol-lf::after,
 .monaco-editor.hc-light .editor-eol-crlf::after { color: #666; }
+
+/* 括號配對上色（Monaco 對 bracketPairColorization 的 updateOptions 不靈敏，
+   改用 CSS 蓋掉它加上的 bracket-highlighting-N class 的顏色） */
+body.bracket-colors-off .monaco-editor .bracket-highlighting-0,
+body.bracket-colors-off .monaco-editor .bracket-highlighting-1,
+body.bracket-colors-off .monaco-editor .bracket-highlighting-2,
+body.bracket-colors-off .monaco-editor .bracket-highlighting-3,
+body.bracket-colors-off .monaco-editor .bracket-highlighting-4,
+body.bracket-colors-off .monaco-editor .bracket-highlighting-5,
+body.bracket-colors-off .monaco-editor .bracket-highlighting-unexpected {
+    color: inherit !important;
+}

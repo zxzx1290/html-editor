@@ -18,6 +18,8 @@
   | `.php` | PHP |
   | 其他 | Plain Text |
 
+- TextMate 語法引擎：以 `vscode-textmate` + `vscode-oniguruma` 取代 Monaco 內建的 Monarch 分詞器（HTML / CSS / JavaScript / JSON / PHP），分詞粒度與 VS Code 一致，搭配 VS Code 原版主題顏色／斜體完全對齊
+
 - 多 tab 開檔，支援同時編輯多個檔案；tab 標題顯示 ● 代表有未儲存變更
 - Tab bar 右側 `+` 按鈕可新增空白匿名檔案（Untitled），儲存時自動彈出「另存為」對話框選擇目錄與檔名
 - 儲存按鈕：有未儲存變更時才可點擊；儲存中顯示「儲存中…」並阻擋重複觸發
@@ -38,14 +40,17 @@
 - IndexedDB session 還原：重新整理後自動恢復上次開啟的 tab 與未儲存草稿；session 還原後自動展開樹狀目錄至 active 檔案所在位置
 - 快取衝突偵測：session 還原時若檔案已被他人修改，提示選擇保留草稿或使用伺服器版本
 - 編輯器設定（儲存於 localStorage）：
-  - **主題**：Dark、Light、HC Dark、HC Light（內建）；Monokai、Dracula、Nord、Cobalt2、Solarized Dark、Solarized Light、Tomorrow Night、Tomorrow Night Eighties（擴充）
+  - **主題**：Dark+、Light+（VS Code 預設）；Monokai、Dracula、Nord、Solarized Dark、Tokyo Night、One Dark Pro、GitHub Dark（深色）；Solarized Light（淺色）。全部來自 `tm-themes`，經 vscode-textmate 引擎以 VS Code 原版 scope selector 算色,預設 Dark+
   - **字體**：預設、Consolas、Menlo、Courier New、Roboto Mono
   - **字體大小**：10–32 px
+  - **自動換行**：開（預設）／關切換
   - **Minimap**：開／關切換
-  - **顯示隱形字元（Whitespace）**：開／關切換
+  - **Sticky Scroll**：開（預設）／關切換；捲動時把目前 scope 的父層宣告固定在編輯器頂部
+  - **括號配對上色**：開（預設）／關切換
+  - **顯示隱形字元（Whitespace）**：開／關切換；同時顯示行尾 LF / CRLF 符號與控制字元
   - **儲存時移除尾端空白**：開（預設）／關切換
+  - **終端機字體 / 字體大小**：僅在帳號有開放終端機時顯示
 - HTML / PHP 模式自動補全閉合標籤（輸入 `>` 後自動插入對應的 `</tag>`，void element 除外）
-- 預設啟用自動換行（Word Wrap）
 - TOTP 二步驟登入：以 `config.json` 設定帳號，每位使用者擁有獨立 workspace
 - Session 以 JWT（HS256）儲存於 `editorToken` cookie，無伺服器端 session 記錄；`jwtSecret` 必須於 `config.json` 設定，否則程式拒絕啟動
 - Session 驗證時同時確認帳號仍存在於 `config.json`，從 config 移除的帳號下次請求即自動失效
@@ -58,7 +63,8 @@
 - tmux 終端機（僅 Linux/macOS）：
   - 啟動時建立共享 socket（寫死 `html-editor`）；伺服器重啟不會殺掉現有 session
   - 設定 `users.<name>.terminal: true` 才開放此功能；`+` 按鈕點擊時改為下拉選單（新增空白檔案 / 新增終端機）
-  - 終端機混入既有 tab-bar，可同時多開；以 xterm.js 呈現
+  - 終端機混入既有 tab-bar，可同時多開；以 xterm.js 呈現，啟用 Unicode 11 寬字元（含 Dingbats 強制寬字元修正）
+  - 終端機 tab 可拖曳排序，順序持久化於 localStorage
   - WebSocket 斷線重連時自動列出該使用者所有 tmux session 並全部還原為 tab
   - 關閉 tab 僅 detach、tmux session 保留；右鍵 tab「終止」才會 `kill-session`
 - Plugin 系統：啟動時自動載入 `static/plugins/plugins.json` 列出的插件
@@ -79,7 +85,12 @@
 npm install
 ```
 
-`postinstall` 腳本（`setup.js`）會自動將 Monaco 靜態檔案複製到 `static/monaco/vs/`，將語法高亮主題複製到 `static/themes/`，並將 xterm.js（含 fit addon）複製到 `static/xterm/`。
+`postinstall` 腳本（`setup.js`）會自動完成以下事情：
+
+- 將 Monaco 靜態檔案複製到 `static/monaco/vs/`
+- 將 VS Code 原版語法高亮主題（`tm-themes`）複製到 `static/themes/`
+- 將 xterm.js（含 fit addon、unicode11 addon）複製到 `static/xterm/`
+- 以 esbuild 將 `vscode-textmate` + `vscode-oniguruma` 打包為 IIFE，連同 `onig.wasm` 與 TextMate grammar（HTML、HTML derivative、CSS、JavaScript、JSON、PHP `source.php` 來自 `tm-grammars`；`.php` 檔的入口 grammar `text.html.php` vendored 自 vscode `extensions/php/syntaxes/html.tmLanguage.json`）一起輸出到 `static/textmate/`
 
 ### 2. 建立 config.json
 
@@ -175,12 +186,17 @@ html-editor/
 ├── config.example.json   # 設定範例
 ├── package.json          # 僅用於安裝靜態資源
 ├── setup.js              # 建置腳本（npm install 時自動執行）
+├── textmate-entry.js     # esbuild entry，打包 vscode-textmate / vscode-oniguruma
+├── php-html.tmLanguage.json  # text.html.php，vendored 自 vscode 官方
 ├── static/
 │   ├── index.html        # 前端（Vue 3 + Monaco，單一 HTML 檔案）
 │   ├── login.html        # 登入頁面
+│   ├── style.css         # 前端樣式
 │   ├── vue.global.js     # Vue 3 runtime
 │   ├── monaco/           # Monaco 靜態檔案（由 npm install 產生，不進 git）
 │   ├── themes/           # 語法高亮主題 JSON（由 npm install 產生，不進 git）
+│   ├── textmate/         # TextMate 引擎、grammar、onig.wasm（由 npm install 產生，不進 git）
+│   ├── xterm/            # xterm.js 與 addon（由 npm install 產生，不進 git）
 │   └── plugins/          # Plugin 目錄（不進 git，依環境各自部署）
 │       ├── plugins.json  # Plugin 載入清單
 │       └── *.js          # 各 plugin 檔案
@@ -266,9 +282,12 @@ config.json
 static/
   index.html
   login.html
+  style.css
   vue.global.js
   monaco/
   themes/
+  textmate/
+  xterm/      ← 若有開放終端機則一併部署
   plugins/    ← 若有 plugin 則一併部署
 ```
 

@@ -717,13 +717,13 @@ func (s *server) isSecureRequest(r *http.Request) bool {
 func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
 	if s.limiter.isBlocked(ip) {
-		logf("[processLogin] ip=%s blocked\n", ip)
+		logf("[login] ip=%s blocked\n", ip)
 		http.Redirect(w, r, "/login?reason=blocked", http.StatusFound)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
-		logf("[processLogin] failed to parse form ip=%s\n", ip)
+		logf("[login] failed to parse form ip=%s\n", ip)
 		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
 		return
 	}
@@ -738,13 +738,13 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	valid := totp.Validate(code, secret)
 	if !ok || !valid {
 		s.limiter.record(ip)
-		logf("[processLogin] invalid credentials ip=%s\n", ip)
+		logf("[login] invalid credentials ip=%s\n", ip)
 		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
 		return
 	}
 	if !s.totpReplay.checkAndRecord(username, code) {
 		s.limiter.record(ip)
-		logf("[processLogin] totp replay user=%s ip=%s\n", username, ip)
+		logf("[login] totp replay user=%s ip=%s\n", username, ip)
 		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
 		return
 	}
@@ -753,7 +753,7 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 		Name: "editorToken", Value: token, MaxAge: int(s.sessionTTL().Seconds()),
 		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.isSecureRequest(r),
 	})
-	logf("[processLogin] user=%s ip=%s\n", username, ip)
+	logf("[login] user=%s ip=%s\n", username, ip)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
