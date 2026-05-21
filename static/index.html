@@ -357,6 +357,13 @@
         const openingPaths = new Set(); // paths currently being fetched (race-condition guard)
         // xterm instances stored outside Vue reactivity. name → { term, fitAddon, paneEl, name }
         const termInstances = new Map();
+        // Dingbats 區（U+2700–U+27BF，含 ➜ ➤ ✓ ✗ ✘ 等）East Asian Width 為 Neutral，
+        // 但 CJK 字型多畫成 2 欄；強制視為寬字元避免被截斷。
+        // （箭頭 ← → / ★ ◆ ⚡ 等多為 Ambiguous，已由 Unicode11 處理成寬字元，無需額外覆寫。）
+        const isTermWideChar = (n) => n >= 0x2700 && n <= 0x27BF;
+        // 提取 Unicode11 provider，以便在自訂版本中委派非覆寫字元
+        let _unicode11Provider = null;
+        new Unicode11Addon.Unicode11Addon().activate({ unicode: { register: (p) => { _unicode11Provider = p; } } });
         const termPathPrefix = 'tmux://';
         // 還原中（由 term_sessions 觸發）的 session name；用來避免重連時搶走 focus
         const restoringTerms = new Set();
@@ -1359,12 +1366,20 @@
                         fontFamily: this._termFontFamily(),
                         fontSize: this._termFontSize(),
                         allowTransparency: true,
+                        allowProposedApi: true,
                         theme: { background: 'rgba(0,0,0,0)', foreground: '#cccccc' },
                         scrollback: 5000,
                     });
-                    const unicode11Addon = new Unicode11Addon.Unicode11Addon();
-                    term.loadAddon(unicode11Addon);
-                    term.unicode.activeVersion = '11';
+                    term.unicode.register({
+                        version: '11-cjk',
+                        wcwidth: (n) => isTermWideChar(n) ? 2 : _unicode11Provider.wcwidth(n),
+                        charProperties: (cp, pre) => {
+                            const v = _unicode11Provider.charProperties(cp, pre);
+                            // width 在 bits 1-2，覆寫為 2 欄
+                            return isTermWideChar(cp) ? (v & ~0x6) | (2 << 1) : v;
+                        },
+                    });
+                    term.unicode.activeVersion = '11-cjk';
                     const fitAddon = new FitAddon.FitAddon();
                     term.loadAddon(fitAddon);
                     term.open(paneEl);
@@ -2103,7 +2118,10 @@
                 },
 
                 onShowInvisibleChange() {
-                    monacoEditor.updateOptions({ renderWhitespace: this.settings.showInvisible ? 'all' : 'none' });
+                    monacoEditor.updateOptions({
+                        renderWhitespace: this.settings.showInvisible ? 'all' : 'none',
+                        renderControlCharacters: this.settings.showInvisible,
+                    });
                     persistSettings({ showInvisible: this.settings.showInvisible });
                 },
 
@@ -2293,6 +2311,7 @@
                         fontFamily: s.fontFamily ? `${s.fontFamily}, 'Microsoft JhengHei', sans-serif` : undefined,
                         minimap: { enabled: s.minimap },
                         renderWhitespace: s.showInvisible ? 'all' : 'none',
+                        renderControlCharacters: s.showInvisible,
                     });
 
                     // 自動補齊 HTML 閉合標籤（html / php 模式，輸入 > 時觸發）
