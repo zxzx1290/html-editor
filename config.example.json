@@ -11,7 +11,8 @@
   "users": {
     "alice": {
       "totpSecret": "JBSWY3DPEHPK3PXP",
-      "workspace": "./workspace/alice"
+      "workspace": "./workspace/alice",
+      "terminal": true
     },
     "bob": {
       "totpSecret": "JBSWY3DPEHPK3PXP",

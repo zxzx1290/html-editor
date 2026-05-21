@@ -55,6 +55,12 @@
   - 檔案開啟與關閉廣播（`file_opened` / `file_closed`）
   - 多人同時開啟同一檔案時互相通知（`same_file_open`）
   - 每位使用者限一條連線；斷線後 30 秒自動重連
+- tmux 終端機（僅 Linux/macOS）：
+  - 啟動時建立共享 socket（寫死 `html-editor`）；伺服器重啟不會殺掉現有 session
+  - 設定 `users.<name>.terminal: true` 才開放此功能；`+` 按鈕點擊時改為下拉選單（新增空白檔案 / 新增終端機）
+  - 終端機混入既有 tab-bar，可同時多開；以 xterm.js 呈現
+  - WebSocket 斷線重連時自動列出該使用者所有 tmux session 並全部還原為 tab
+  - 關閉 tab 僅 detach、tmux session 保留；右鍵 tab「終止」才會 `kill-session`
 - Plugin 系統：啟動時自動載入 `static/plugins/plugins.json` 列出的插件
 - 響應式版面，行動裝置支援側邊欄遮罩
 
@@ -73,7 +79,7 @@
 npm install
 ```
 
-`postinstall` 腳本（`setup-monaco.js`）會自動將 Monaco 靜態檔案複製到 `static/monaco/vs/`，並將語法高亮主題複製到 `static/themes/`。
+`postinstall` 腳本（`setup.js`）會自動將 Monaco 靜態檔案複製到 `static/monaco/vs/`，將語法高亮主題複製到 `static/themes/`，並將 xterm.js（含 fit addon）複製到 `static/xterm/`。
 
 ### 2. 建立 config.json
 
@@ -129,7 +135,8 @@ Windows：
   "users": {
     "alice": {
       "totpSecret": "JBSWY3DPEHPK3PXP",
-      "workspace": "./workspace/alice"
+      "workspace": "./workspace/alice",
+      "terminal": true
     },
     "bob": {
       "totpSecret": "JBSWY3DPEHPK3PXP",
@@ -153,6 +160,7 @@ Windows：
 | `trustProxy` | 是否信任 `X-Forwarded-For` / `X-Forwarded-Proto`（預設 `false`）；僅在已知信任的 reverse proxy 後方開啟 |
 | `users.<name>.totpSecret` | TOTP 金鑰（Base32），可用 Google Authenticator 等 App 掃碼 |
 | `users.<name>.workspace` | 該使用者的 workspace 目錄 |
+| `users.<name>.terminal` | 是否開放此使用者使用 tmux 終端機；預設 `false`。需 Linux/macOS 環境且系統已安裝 `tmux` 才會生效 |
 
 登入頁面（`/login`）要求輸入帳號與 TOTP 驗證碼。同一 IP 在 `rateLimitWindow` 秒內登入失敗達 `rateLimitMaxAttempts` 次，將被封鎖 `rateLimitBanDuration` 秒。
 
@@ -166,7 +174,7 @@ html-editor/
 ├── config.json           # 必要，TOTP 登入與伺服器設定（不進 git）
 ├── config.example.json   # 設定範例
 ├── package.json          # 僅用於安裝靜態資源
-├── setup-monaco.js       # 建置腳本（npm install 時自動執行）
+├── setup.js              # 建置腳本（npm install 時自動執行）
 ├── static/
 │   ├── index.html        # 前端（Vue 3 + Monaco，單一 HTML 檔案）
 │   ├── login.html        # 登入頁面

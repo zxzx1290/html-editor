@@ -9,6 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/xterm/xterm.css">
 </head>
 
 <body>
@@ -149,22 +150,34 @@
         </div>
 
         <div id="tab-bar">
-            <div v-for="tab in tabsList" :key="tab.path" class="tab" :class="{ active: tab.path === activeTabPath }"
+            <div v-for="tab in tabsList" :key="tab.path" class="tab"
+                :class="{ active: tab.path === activeTabPath, 'tab-terminal': tab.isTerminal }"
                 @click="activateTab(tab.path)">
-                <span class="tab-title" :title="tab.isAnonymous ? '' : tab.path">{{ tab.isAnonymous ? 'Untitled ' +
-                    tab.path.split(':')[1] : tab.path.split('/').pop() }}</span>
+                <span v-if="tab.isTerminal" class="tab-icon">🖥</span>
+                <span class="tab-title" :title="tab.isTerminal ? tab.termName : (tab.isAnonymous ? '' : tab.path)">{{
+                    tab.isTerminal
+                        ? (tab.termName ? tab.termName.split('-').slice(-1)[0] : 'term')
+                        : (tab.isAnonymous ? 'Untitled ' + tab.path.split(':')[1] : tab.path.split('/').pop())
+                }}</span>
                 <span v-if="tab.dirty" class="tab-dirty">●</span>
                 <button class="tab-close" @click.stop="closeTab(tab.path)" title="關閉">×</button>
             </div>
-            <button class="tab-new-btn" @click="newAnonymousFile" title="新增空白檔案">+</button>
+            <div id="tab-new-wrap" @click.stop>
+                <button class="tab-new-btn" @click="onNewBtnClick" :title="canTerminal ? '新增…' : '新增空白檔案'">+</button>
+                <div id="tab-new-menu" v-show="newTabMenuOpen">
+                    <div class="item" @click="onMenuPickFile">📄 新增空白檔案</div>
+                    <div class="item" @click="onMenuPickTerminal">🖥 新增終端機</div>
+                </div>
+            </div>
         </div>
 
         <div id="editor-host">
             <div id="empty-hint" v-show="tabsList.length === 0">從左側選擇檔案開始編輯</div>
-            <div id="editor" ref="editorEl" v-show="activeTabPath && !activeTabIsImage"></div>
+            <div id="editor" ref="editorEl" v-show="activeTabPath && !activeTabIsImage && !activeTabIsTerminal"></div>
             <div id="image-preview" v-show="activeTabIsImage">
                 <img :src="imagePreviewSrc" />
             </div>
+            <div id="terminal-host" ref="terminalHost" v-show="activeTabIsTerminal"></div>
         </div>
 
         <div id="status">{{ statusMsg }}</div>
@@ -181,6 +194,8 @@
                 ref="dlgInput" @keydown.enter="dlgOk" @keydown.esc="dlgCancel" />
             <div class="modal-actions">
                 <button v-if="dlg.cancelText" class="btn" @click="dlgCancel">{{ dlg.cancelText }}</button>
+                <button v-if="dlg.altText" class="btn" :class="{ danger: dlg.altDanger }" @click="dlgAlt">{{ dlg.altText
+                    }}</button>
                 <button class="btn" :class="dlg.danger ? 'danger' : 'primary'" @click="dlgOk">{{ dlg.confirmText
                     }}</button>
             </div>
@@ -231,6 +246,8 @@
 
 <script src="/static/vue.global.js"></script>
 <script src="/static/monaco/vs/loader.js"></script>
+<script src="/static/xterm/xterm.js"></script>
+<script src="/static/xterm/addon-fit.js"></script>
 
 <script>
     // ── Plugin System ─────────────────────────────────────────────────────────────
@@ -306,6 +323,9 @@
         // Monaco models and view states stored outside Vue reactivity
         const tabsData = new Map(); // path → { model, originalContent, viewState, isImage }
         const openingPaths = new Set(); // paths currently being fetched (race-condition guard)
+        // xterm instances stored outside Vue reactivity. name → { term, fitAddon, paneEl, name }
+        const termInstances = new Map();
+        const termPathPrefix = 'tmux://';
 
         // ── IndexedDB session persistence ─────────────────────────────────────────
         // meta  store: key='tabs' → { tabs:[...paths], activeTab:'...' }
@@ -446,6 +466,7 @@
                 if (!socket || socket.readyState !== WebSocket.OPEN) return;
                 socket.send(JSON.stringify(data));
             }
+            window.editorPlugin.wsSend = wsSend;
 
             function fileOnOpen(path) {
                 const i = path.lastIndexOf('/');
@@ -468,6 +489,7 @@
                 socket.onopen = function () {
                     app.showToast('已上線');
                     window.editorPlugin.tabManagerSvc.getTabs().forEach(t => fileOnOpen(t.path));
+                    if (app.canTerminal) wsSend({ type: 'term_list' });
                 };
 
                 socket.onmessage = function (event) {
@@ -515,6 +537,19 @@
                             app.showToast(fp.user + ' 關閉了 ' + fullPath);
                             break;
                         }
+                        case 'term_sessions': {
+                            (msg.payload || []).forEach(s => app.attachTerminal(s.name));
+                            break;
+                        }
+                        case 'term_opened':
+                            app.onTerminalOpened(msg.payload.name);
+                            break;
+                        case 'term_output':
+                            app.onTerminalOutput(msg.payload.name, msg.payload.data);
+                            break;
+                        case 'term_closed':
+                            app.onTerminalClosed(msg.payload.name);
+                            break;
                     }
                 };
 
@@ -544,6 +579,7 @@
             let cfg;
             try { cfg = await fetch('/api/config').then(r => r.json()); } catch { return; }
             app.currentUser = cfg.username || '';
+            app.canTerminal = cfg.terminal === true;
             initSessionCheck(app);
             initWsCollab(app);
         }
@@ -577,6 +613,8 @@
                         trimOnSave: s.trimOnSave !== false,
                     },
                     currentUser: '',
+                    canTerminal: false,
+                    newTabMenuOpen: false,
                     settingsOpen: false,
                     statusMsg: '',
                     isSaving: false,
@@ -585,7 +623,7 @@
                     imagePreviewSrc: '',
                     editorReady: false,
                     uploads: [],
-                    dlg: { visible: false, title: '', inputMode: false, inputValue: '', placeholder: '', danger: false, confirmText: '確定', cancelText: '取消', _resolve: null },
+                    dlg: { visible: false, title: '', inputMode: false, inputValue: '', placeholder: '', danger: false, confirmText: '確定', cancelText: '取消', altText: '', altDanger: false, _resolve: null },
                     clipboard: { items: [], mode: null },
                     isPasting: false,
                     selectedPaths: [],
@@ -601,6 +639,9 @@
                 activeTabIsImage() {
                     return this.activeTab ? this.activeTab.isImage : false;
                 },
+                activeTabIsTerminal() {
+                    return this.activeTab ? !!this.activeTab.isTerminal : false;
+                },
                 activeTabDirty() {
                     return this.activeTab ? this.activeTab.dirty : false;
                 },
@@ -609,6 +650,9 @@
             methods: {
                 isImagePath,
 
+                // 回傳值規則：
+                //   2 按鈕模式（未設 altText）：ok → true、cancel → false（input 模式：輸入值 / null）
+                //   3 按鈕模式（有 altText）：ok → 'ok'、alt → 'alt'、cancel → 'cancel'
                 _dlgShow(opts) {
                     return new Promise(resolve => {
                         Object.assign(this.dlg, {
@@ -616,6 +660,7 @@
                             inputMode: !!opts.inputMode, inputValue: opts.defaultValue || '',
                             placeholder: opts.placeholder || '', danger: !!opts.danger,
                             confirmText: opts.confirmText || '確定', cancelText: 'cancelText' in opts ? opts.cancelText : '取消',
+                            altText: opts.altText || '', altDanger: !!opts.altDanger,
                             _resolve: resolve,
                         });
                         this.$nextTick(() => {
@@ -630,15 +675,22 @@
                 },
                 dlgOk() {
                     const r = this.dlg._resolve;
-                    const val = this.dlg.inputMode ? this.dlg.inputValue : true;
+                    const hasAlt = !!this.dlg.altText;
+                    const val = this.dlg.inputMode ? this.dlg.inputValue : (hasAlt ? 'ok' : true);
                     this.dlg.visible = false; this.dlg._resolve = null;
                     if (r) r(val);
                 },
                 dlgCancel() {
                     const r = this.dlg._resolve;
-                    const val = this.dlg.inputMode ? null : false;
+                    const hasAlt = !!this.dlg.altText;
+                    const val = this.dlg.inputMode ? null : (hasAlt ? 'cancel' : false);
                     this.dlg.visible = false; this.dlg._resolve = null;
                     if (r) r(val);
+                },
+                dlgAlt() {
+                    const r = this.dlg._resolve;
+                    this.dlg.visible = false; this.dlg._resolve = null;
+                    if (r) r('alt');
                 },
                 dlgConfirm(title, opts) {
                     return this._dlgShow({ title, ...(opts || {}) });
@@ -828,30 +880,70 @@
                     }
 
                     this.activeTabPath = path;
-                    const data = tabsData.get(path);
+                    const newTab = this.tabsList.find(t => t.path === path);
 
-                    if (data && data.isImage) {
-                        this.imagePreviewSrc = '/api/file?path=' + encodeURIComponent(path) + '&t=' + Date.now();
-                        this.setStatus('圖片預覽：' + path);
-                    } else if (data && monacoEditor) {
-                        monacoEditor.setModel(data.model);
-                        if (data.viewState) monacoEditor.restoreViewState(data.viewState);
-                        this.setStatus('已開啟：' + path);
+                    if (newTab && newTab.isTerminal) {
+                        for (const [n, e] of termInstances) {
+                            e.paneEl.classList.toggle('active', n === newTab.termName);
+                        }
+                        this.setStatus('終端機：' + newTab.termName);
+                        this._fitActiveTerminal();
+                    } else {
+                        const data = tabsData.get(path);
+                        if (data && data.isImage) {
+                            this.imagePreviewSrc = '/api/file?path=' + encodeURIComponent(path) + '&t=' + Date.now();
+                            this.setStatus('圖片預覽：' + path);
+                        } else if (data && monacoEditor) {
+                            monacoEditor.setModel(data.model);
+                            if (data.viewState) monacoEditor.restoreViewState(data.viewState);
+                            this.setStatus('已開啟：' + path);
+                        }
                     }
 
-                    await this.revealInTree(path);
+                    if (!(newTab && newTab.isTerminal)) await this.revealInTree(path);
                     this.scheduleMetaSave();
                     this.$nextTick(() => {
                         const tabEl = document.querySelector('.tab.active');
                         if (tabEl) tabEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
                     });
-                    this.scrollToTreeNode(path);
+                    if (!(newTab && newTab.isTerminal)) this.scrollToTreeNode(path);
                 },
 
                 async closeTab(path) {
                     const idx = this.tabsList.findIndex(t => t.path === path);
                     if (idx < 0) return;
                     const tab = this.tabsList[idx];
+
+                    if (tab.isTerminal) {
+                        const choice = await this._dlgShow({
+                            title: `終端機「${tab.termName}」`,
+                            confirmText: '放到背景',
+                            altText: '關閉 (kill)',
+                            altDanger: true,
+                            cancelText: '取消',
+                        });
+                        if (choice === 'cancel') return;
+                        if (choice === 'alt') {
+                            // kill — wait for server-side term_closed to clean up UI
+                            this.killTerminal(tab.termName);
+                            return;
+                        }
+                        // 'ok' = detach, keep tmux session alive
+                        window.editorPlugin.wsSend({ type: 'term_detach', payload: { name: tab.termName } });
+                        const entry = termInstances.get(tab.termName);
+                        if (entry) {
+                            try { entry.term.dispose(); } catch {}
+                            if (entry.paneEl && entry.paneEl.parentNode) entry.paneEl.parentNode.removeChild(entry.paneEl);
+                            termInstances.delete(tab.termName);
+                        }
+                        this.tabsList.splice(idx, 1);
+                        if (this.activeTabPath === path) {
+                            this.activeTabPath = null;
+                            if (this.tabsList.length > 0) await this.activateTab(this.tabsList[Math.min(idx, this.tabsList.length - 1)].path);
+                        }
+                        return;
+                    }
+
                     const displayName = tab.isAnonymous ? 'Untitled ' + path.split(':')[1] : path.split('/').pop();
                     if (tab.dirty && !await this.dlgConfirm(`「${displayName}」有未儲存的變更，確定要關閉嗎？`)) return;
 
@@ -1046,6 +1138,128 @@
                     window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
                     this.activateTab(path);
                     this.scheduleMetaSave();
+                },
+
+                onNewBtnClick() {
+                    if (this.canTerminal) {
+                        this.newTabMenuOpen = !this.newTabMenuOpen;
+                    } else {
+                        this.newAnonymousFile();
+                    }
+                },
+                onMenuPickFile() {
+                    this.newTabMenuOpen = false;
+                    this.newAnonymousFile();
+                },
+                onMenuPickTerminal() {
+                    this.newTabMenuOpen = false;
+                    this.requestNewTerminal();
+                },
+
+                _termSize() {
+                    const host = this.$refs.terminalHost;
+                    if (!host) return { cols: 80, rows: 24 };
+                    const probe = document.createElement('span');
+                    probe.style.cssText = 'visibility:hidden;position:absolute;font-family:monospace;font-size:14px;';
+                    probe.textContent = 'M';
+                    host.appendChild(probe);
+                    const cw = probe.getBoundingClientRect().width || 8;
+                    host.removeChild(probe);
+                    const rect = host.getBoundingClientRect();
+                    const cols = Math.max(20, Math.floor((rect.width - 8) / cw));
+                    const rows = Math.max(5, Math.floor((rect.height - 8) / 17));
+                    return { cols, rows };
+                },
+
+                requestNewTerminal() {
+                    if (!this.canTerminal) return;
+                    const { cols, rows } = this._termSize();
+                    window.editorPlugin.wsSend({ type: 'term_open', payload: { cols, rows } });
+                },
+
+                attachTerminal(name) {
+                    const { cols, rows } = this._termSize();
+                    window.editorPlugin.wsSend({ type: 'term_attach', payload: { name, cols, rows } });
+                },
+
+                _ensureTerminal(name) {
+                    if (termInstances.has(name)) return termInstances.get(name);
+                    const host = this.$refs.terminalHost;
+                    const paneEl = document.createElement('div');
+                    paneEl.className = 'term-pane';
+                    paneEl.dataset.term = name;
+                    host.appendChild(paneEl);
+
+                    const term = new Terminal({
+                        cursorBlink: true,
+                        fontFamily: 'Roboto Mono, monospace',
+                        fontSize: 14,
+                        theme: { background: '#000000' },
+                        scrollback: 5000,
+                    });
+                    const fitAddon = new FitAddon.FitAddon();
+                    term.loadAddon(fitAddon);
+                    term.open(paneEl);
+
+                    term.onData(d => {
+                        const data = btoa(unescape(encodeURIComponent(d)));
+                        window.editorPlugin.wsSend({ type: 'term_input', payload: { name, data } });
+                    });
+                    term.onResize(({ cols, rows }) => {
+                        window.editorPlugin.wsSend({ type: 'term_resize', payload: { name, cols, rows } });
+                    });
+
+                    const entry = { term, fitAddon, paneEl, name };
+                    termInstances.set(name, entry);
+                    return entry;
+                },
+
+                onTerminalOpened(name) {
+                    const path = termPathPrefix + name;
+                    if (!this.tabsList.find(t => t.path === path)) {
+                        this.tabsList.push({ path, isTerminal: true, termName: name, dirty: false, isImage: false });
+                    }
+                    this._ensureTerminal(name);
+                    this.activateTab(path);
+                },
+
+                onTerminalOutput(name, b64) {
+                    const entry = this._ensureTerminal(name);
+                    const bin = atob(b64);
+                    const buf = new Uint8Array(bin.length);
+                    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+                    entry.term.write(buf);
+                },
+
+                onTerminalClosed(name) {
+                    const path = termPathPrefix + name;
+                    const idx = this.tabsList.findIndex(t => t.path === path);
+                    if (idx >= 0) this.tabsList.splice(idx, 1);
+                    const entry = termInstances.get(name);
+                    if (entry) {
+                        try { entry.term.dispose(); } catch {}
+                        if (entry.paneEl && entry.paneEl.parentNode) entry.paneEl.parentNode.removeChild(entry.paneEl);
+                        termInstances.delete(name);
+                    }
+                    if (this.activeTabPath === path) {
+                        if (this.tabsList.length > 0) this.activateTab(this.tabsList[this.tabsList.length - 1].path);
+                        else this.activeTabPath = null;
+                    }
+                },
+
+                killTerminal(name) {
+                    window.editorPlugin.wsSend({ type: 'term_kill', payload: { name } });
+                },
+
+                _fitActiveTerminal() {
+                    if (!this.activeTabIsTerminal) return;
+                    const tab = this.activeTab;
+                    if (!tab) return;
+                    const entry = termInstances.get(tab.termName);
+                    if (!entry) return;
+                    this.$nextTick(() => {
+                        try { entry.fitAddon.fit(); entry.term.focus(); } catch {}
+                    });
                 },
 
                 downloadFile(path) {
@@ -1752,13 +1966,19 @@
                 document.addEventListener('click', (e) => {
                     this.hideCtxMenu();
                     this.settingsOpen = false;
+                    this.newTabMenuOpen = false;
                     if (!e.target.closest('#file-tree')) this.treeFocused = false;
                 });
                 document.addEventListener('contextmenu', (e) => {
                     if (!e.target.closest('#file-tree')) this.hideCtxMenu();
                 });
-                window.addEventListener('blur', () => { this.hideCtxMenu(); this.settingsOpen = false; });
-                window.addEventListener('resize', () => this.hideCtxMenu());
+                window.addEventListener('blur', () => { this.hideCtxMenu(); this.settingsOpen = false; this.newTabMenuOpen = false; });
+                window.addEventListener('resize', () => {
+                    this.hideCtxMenu();
+                    for (const e of termInstances.values()) {
+                        try { e.fitAddon.fit(); } catch {}
+                    }
+                });
 
                 // Sidebar resize handle
                 const rHandle = document.getElementById('resize-handle');

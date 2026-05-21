@@ -22,3 +22,11 @@ for (const name of THEMES) {
   fs.copyFileSync(`${themeSrc}/${name}.json`, `${themeDst}/${name}.json`);
 }
 console.log(`Copied ${THEMES.length} themes → ${themeDst}`);
+
+const xtermDst = 'static/xterm';
+fs.rmSync(xtermDst, { recursive: true, force: true });
+fs.mkdirSync(xtermDst, { recursive: true });
+fs.copyFileSync('node_modules/@xterm/xterm/lib/xterm.js', `${xtermDst}/xterm.js`);
+fs.copyFileSync('node_modules/@xterm/xterm/css/xterm.css', `${xtermDst}/xterm.css`);
+fs.copyFileSync('node_modules/@xterm/addon-fit/lib/addon-fit.js', `${xtermDst}/addon-fit.js`);
+console.log(`Copied xterm assets → ${xtermDst}`);

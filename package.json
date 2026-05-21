@@ -4,9 +4,11 @@
   "private": true,
   "description": "Monaco editor static assets for html-editor",
   "scripts": {
-    "postinstall": "node setup-monaco.js"
+    "postinstall": "node setup.js"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "monaco-editor": "^0.52.2",
     "monaco-themes": "^0.4.4"
   }

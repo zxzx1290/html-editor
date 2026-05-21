@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,6 +41,7 @@ const dummyTotpSecret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 type UserConfig struct {
 	TotpSecret string `json:"totpSecret"`
 	Workspace  string `json:"workspace"`
+	Terminal   bool   `json:"terminal"`
 }
 
 type Config struct {
@@ -405,6 +407,7 @@ type server struct {
 	hub        *Hub
 	limiter    *rateLimiter
 	totpReplay *totpReplay
+	tmux       *tmuxManager
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -475,6 +478,7 @@ func main() {
 		hub:        newHub(),
 		limiter:    newRateLimiter(rlWindow, rlMax, rlBan),
 		totpReplay: newTotpReplay(90 * time.Second),
+		tmux:       newTmuxManager(),
 	}
 	logf("[config] %d user(s) loaded\n", len(cfg.Users))
 
@@ -811,12 +815,21 @@ func (s *server) handleApiConfig(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("editorToken"); err == nil {
 		if username, ok := s.validateSession(c.Value); ok {
 			resp["username"] = username
+			resp["terminal"] = s.config.Users[username].Terminal && s.tmux != nil && s.tmux.enabled
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
 // ─── WebSocket ────────────────────────────────────────────────────────────────
+
+func (s *server) checkTermPermission(c *WsClient) bool {
+	if !s.config.Users[c.username].Terminal || s.tmux == nil || !s.tmux.enabled {
+		s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "terminal not allowed"})
+		return false
+	}
+	return true
+}
 
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
@@ -864,6 +877,7 @@ const (
 
 func (c *WsClient) readPump(s *server) {
 	defer c.conn.Close()
+	defer s.tmux.detachAllForUser(c.username)
 	defer s.hub.unregister(c)
 	defer logf("[ws] disconnect user=%s\n", c.username)
 
@@ -936,6 +950,137 @@ func (c *WsClient) readPump(s *server) {
 				continue
 			}
 			logf("[ws] after_save user=%s path=%s\n", c.username, p.Path)
+
+		case "term_list":
+			if !s.checkTermPermission(c) {
+				continue
+			}
+			names, err := s.tmux.listSessions(c.username)
+			if err != nil {
+				logf("[ws] term_list err user=%s err=%v\n", c.username, err)
+				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_list: " + err.Error()})
+				continue
+			}
+			items := make([]map[string]string, 0, len(names))
+			for _, n := range names {
+				items = append(items, map[string]string{"name": n})
+			}
+			s.hub.sendTo(c.username, wsOutMsg{Type: "term_sessions", Payload: items})
+
+		case "term_open":
+			if !s.checkTermPermission(c) {
+				continue
+			}
+			var p struct {
+				Cols uint16 `json:"cols"`
+				Rows uint16 `json:"rows"`
+			}
+			_ = json.Unmarshal(msg.Payload, &p)
+			name, err := s.tmux.createSession(c.username, p.Cols, p.Rows)
+			if err != nil {
+				logf("[ws] term_open create_err user=%s err=%v\n", c.username, err)
+				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_open: " + err.Error()})
+				continue
+			}
+			if _, err := s.tmux.attach(c, name, p.Cols, p.Rows); err != nil {
+				logf("[ws] term_open attach_err user=%s name=%s err=%v\n", c.username, name, err)
+				_ = s.tmux.kill(name)
+				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_open attach: " + err.Error()})
+				continue
+			}
+			logf("[ws] term_open user=%s name=%s\n", c.username, name)
+			s.hub.sendTo(c.username, wsOutMsg{Type: "term_opened", Payload: map[string]string{"name": name}})
+
+		case "term_attach":
+			if !s.checkTermPermission(c) {
+				continue
+			}
+			var p struct {
+				Name string `json:"name"`
+				Cols uint16 `json:"cols"`
+				Rows uint16 `json:"rows"`
+			}
+			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				continue
+			}
+			if _, err := s.tmux.attach(c, p.Name, p.Cols, p.Rows); err != nil {
+				logf("[ws] term_attach err user=%s name=%s err=%v\n", c.username, p.Name, err)
+				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_attach: " + err.Error()})
+				continue
+			}
+			logf("[ws] term_attach user=%s name=%s\n", c.username, p.Name)
+			s.hub.sendTo(c.username, wsOutMsg{Type: "term_opened", Payload: map[string]string{"name": p.Name}})
+
+		case "term_input":
+			if !s.checkTermPermission(c) {
+				continue
+			}
+			var p struct {
+				Name string `json:"name"`
+				Data string `json:"data"`
+			}
+			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				continue
+			}
+			raw, err := base64.StdEncoding.DecodeString(p.Data)
+			if err != nil {
+				continue
+			}
+			if err := s.tmux.write(p.Name, raw); err != nil {
+				logf("[ws] term_input err user=%s name=%s err=%v\n", c.username, p.Name, err)
+			}
+
+		case "term_resize":
+			if !s.checkTermPermission(c) {
+				continue
+			}
+			var p struct {
+				Name string `json:"name"`
+				Cols uint16 `json:"cols"`
+				Rows uint16 `json:"rows"`
+			}
+			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				continue
+			}
+			if err := s.tmux.resize(p.Name, p.Cols, p.Rows); err != nil {
+				logf("[ws] term_resize err user=%s name=%s err=%v\n", c.username, p.Name, err)
+			}
+
+		case "term_detach":
+			if !s.checkTermPermission(c) {
+				continue
+			}
+			var p struct {
+				Name string `json:"name"`
+			}
+			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				continue
+			}
+			s.tmux.detach(p.Name)
+			logf("[ws] term_detach user=%s name=%s\n", c.username, p.Name)
+
+		case "term_kill":
+			if !s.checkTermPermission(c) {
+				continue
+			}
+			var p struct {
+				Name string `json:"name"`
+			}
+			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				continue
+			}
+			if !strings.HasPrefix(p.Name, c.username+"-") {
+				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_kill: forbidden session"})
+				continue
+			}
+			s.tmux.detach(p.Name)
+			if err := s.tmux.kill(p.Name); err != nil {
+				logf("[ws] term_kill err user=%s name=%s err=%v\n", c.username, p.Name, err)
+				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_kill: " + err.Error()})
+				continue
+			}
+			logf("[ws] term_kill user=%s name=%s\n", c.username, p.Name)
+			s.hub.sendTo(c.username, wsOutMsg{Type: "term_closed", Payload: map[string]string{"name": p.Name}})
 
 		default:
 			logf("[ws] unknown_type user=%s type=%s\n", c.username, msg.Type)

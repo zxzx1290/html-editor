@@ -2,6 +2,7 @@ workspace/
 node_modules/
 static/monaco/
 static/themes/
+static/xterm/
 static/plugins/
 static/favicon.ico
 html-editor
