@@ -920,3 +920,9 @@ body.login-page {
 .card button[type="submit"]:active {
     background: #0e6eb8;
 }
+
+.card button[type="submit"]:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: var(--accent);
+}

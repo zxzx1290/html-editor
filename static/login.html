@@ -12,13 +12,13 @@
     <div class="card">
         <h2>{{APP_TITLE}}</h2>
         <div id="error-msg" class="error-msg"></div>
-        <form method="POST" action="/login" autocomplete="off">
+        <form id="login-form" method="POST" action="/login" autocomplete="off">
             <label for="username">帳號</label>
             <input type="text" id="username" name="username" autocomplete="username" autofocus required />
             <label for="code">驗證碼 (TOTP)</label>
             <input type="text" id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
                 placeholder="000000" required />
-            <button type="submit">登入</button>
+            <button id="login-submit" type="submit">登入</button>
         </form>
     </div>
     <script>
@@ -37,6 +37,21 @@
             var el = document.getElementById('error-msg');
             el.style.display = 'block';
             el.textContent = msg;
+        })();
+
+        // 防止重複送出登入表單
+        (function () {
+            var form = document.getElementById('login-form');
+            var btn = document.getElementById('login-submit');
+            form.addEventListener('submit', function () {
+                btn.disabled = true;
+                btn.textContent = '登入中…';
+            });
+            // 從 bfcache 還原時把按鈕解鎖（按上一頁回到登入頁的情境）
+            window.addEventListener('pageshow', function () {
+                btn.disabled = false;
+                btn.textContent = '登入';
+            });
         })();
     </script>
 </body>
