@@ -995,3 +995,16 @@ body.login-page {
     cursor: not-allowed;
     background: var(--accent);
 }
+
+/* EOL markers (顯示隱形字元) */
+.monaco-editor .editor-eol-lf::after,
+.monaco-editor .editor-eol-crlf::after {
+    font-size: 0.85em;
+    color: #888;
+}
+.monaco-editor .editor-eol-lf::after   { content: '↓'; }
+.monaco-editor .editor-eol-crlf::after { content: '↵'; }
+.monaco-editor.vs .editor-eol-lf::after,
+.monaco-editor.vs .editor-eol-crlf::after,
+.monaco-editor.hc-light .editor-eol-lf::after,
+.monaco-editor.hc-light .editor-eol-crlf::after { color: #666; }

@@ -455,6 +455,7 @@
         }
 
         let monacoEditor = null;
+        let updateEolDecorations = () => {};
         const loadedThemes = new Set(['vs', 'vs-dark', 'hc-black', 'hc-light']);
 
         function extOf(path) {
@@ -2120,8 +2121,8 @@
                 onShowInvisibleChange() {
                     monacoEditor.updateOptions({
                         renderWhitespace: this.settings.showInvisible ? 'all' : 'none',
-                        renderControlCharacters: this.settings.showInvisible,
                     });
+                    updateEolDecorations();
                     persistSettings({ showInvisible: this.settings.showInvisible });
                 },
 
@@ -2311,8 +2312,30 @@
                         fontFamily: s.fontFamily ? `${s.fontFamily}, 'Microsoft JhengHei', sans-serif` : undefined,
                         minimap: { enabled: s.minimap },
                         renderWhitespace: s.showInvisible ? 'all' : 'none',
-                        renderControlCharacters: s.showInvisible,
                     });
+
+                    // EOL 隱藏字元標記（showInvisible 開啟時在每行末顯示 ␍ / ␊）
+                    const eolDecorCollection = monacoEditor.createDecorationsCollection([]);
+                    updateEolDecorations = () => {
+                        const model = monacoEditor.getModel();
+                        if (!model || !this.settings.showInvisible) {
+                            eolDecorCollection.clear();
+                            return;
+                        }
+                        const isCrlf = model.getEndOfLineSequence() === 1;
+                        const cls = isCrlf ? 'editor-eol-crlf' : 'editor-eol-lf';
+                        const lineCount = model.getLineCount();
+                        const decors = [];
+                        for (let i = 1; i <= lineCount; i++) {
+                            const col = model.getLineMaxColumn(i);
+                            decors.push({
+                                range: new monaco.Range(i, col, i, col),
+                                options: { afterContentClassName: cls },
+                            });
+                        }
+                        eolDecorCollection.set(decors);
+                    };
+                    monacoEditor.onDidChangeModel(() => updateEolDecorations());
 
                     // 自動補齊 HTML 閉合標籤（html / php 模式，輸入 > 時觸發）
                     const VOID_HTML_TAGS = new Set([
