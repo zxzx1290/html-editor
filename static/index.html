@@ -163,8 +163,8 @@
                 <button class="tab-close" @click.stop="closeTab(tab.path)" title="關閉">×</button>
             </div>
             <div id="tab-new-wrap" @click.stop>
-                <button class="tab-new-btn" @click="onNewBtnClick" :title="canTerminal ? '新增…' : '新增空白檔案'">+</button>
-                <div id="tab-new-menu" v-show="newTabMenuOpen">
+                <button ref="tabNewBtn" class="tab-new-btn" @click="onNewBtnClick" :title="canTerminal ? '新增…' : '新增空白檔案'">+</button>
+                <div id="tab-new-menu" v-show="newTabMenuOpen" :style="newTabMenuStyle">
                     <div class="item" @click="onMenuPickFile">📄 新增空白檔案</div>
                     <div class="item" @click="onMenuPickTerminal">🖥 新增終端機</div>
                 </div>
@@ -245,9 +245,9 @@
 </div>
 
 <script src="/static/vue.global.js"></script>
-<script src="/static/monaco/vs/loader.js"></script>
 <script src="/static/xterm/xterm.js"></script>
 <script src="/static/xterm/addon-fit.js"></script>
+<script src="/static/monaco/vs/loader.js"></script>
 
 <script>
     // ── Plugin System ─────────────────────────────────────────────────────────────
@@ -615,6 +615,7 @@
                     currentUser: '',
                     canTerminal: false,
                     newTabMenuOpen: false,
+                    newTabMenuStyle: {},
                     settingsOpen: false,
                     statusMsg: '',
                     isSaving: false,
@@ -1141,11 +1142,23 @@
                 },
 
                 onNewBtnClick() {
-                    if (this.canTerminal) {
-                        this.newTabMenuOpen = !this.newTabMenuOpen;
-                    } else {
+                    if (!this.canTerminal) {
                         this.newAnonymousFile();
+                        return;
                     }
+                    if (this.newTabMenuOpen) {
+                        this.newTabMenuOpen = false;
+                        return;
+                    }
+                    const btn = this.$refs.tabNewBtn;
+                    if (btn) {
+                        const r = btn.getBoundingClientRect();
+                        // 對齊到按鈕右下角，但若會超出視窗右緣則改靠右
+                        const menuWidth = 180;
+                        const left = Math.min(r.left, window.innerWidth - menuWidth - 8);
+                        this.newTabMenuStyle = { top: r.bottom + 'px', left: left + 'px' };
+                    }
+                    this.newTabMenuOpen = true;
                 },
                 onMenuPickFile() {
                     this.newTabMenuOpen = false;
@@ -1194,7 +1207,8 @@
                         cursorBlink: true,
                         fontFamily: 'Roboto Mono, monospace',
                         fontSize: 14,
-                        theme: { background: '#000000' },
+                        allowTransparency: true,
+                        theme: { background: 'rgba(0,0,0,0)' },
                         scrollback: 5000,
                     });
                     const fitAddon = new FitAddon.FitAddon();

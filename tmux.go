@@ -53,6 +53,11 @@ func newTmuxManager() *tmuxManager {
 	}
 	m.binary = bin
 	m.enabled = true
+	// 把這個 socket 的預設 shell 固定成 bash；會影響之後新建的 window / pane
+	// （包含 prefix+c、prefix+"）。已存在的 pane 不會被改寫。
+	if out, err := m.cmd("set-option", "-g", "default-shell", "/bin/bash").CombinedOutput(); err != nil {
+		logf("[tmux] set default-shell failed: %v: %s\n", err, strings.TrimSpace(string(out)))
+	}
 	logf("[tmux] enabled socket=%s binary=%s os=%s\n", tmuxSocketName, bin, runtime.GOOS)
 	return m
 }
@@ -279,6 +284,7 @@ func (m *tmuxManager) detachAllForUser(user string) {
 	for _, v := range victims {
 		v.close()
 	}
+	logf("[tmux] detached all sessions for user=%s count=%d\n", user, len(victims))
 }
 
 func (m *tmuxManager) resize(name string, cols, rows uint16) error {

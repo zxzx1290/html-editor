@@ -503,9 +503,7 @@ button.btn:disabled {
 }
 
 #tab-new-menu {
-    position: absolute;
-    top: 100%;
-    left: 0;
+    position: fixed;
     z-index: 100;
     background: var(--bg);
     border: 1px solid var(--border, #444);
@@ -539,7 +537,7 @@ button.btn:disabled {
 #terminal-host {
     position: absolute;
     inset: 0;
-    background: #000;
+    background: var(--bg);
     padding: 4px 0 0 4px;
     box-sizing: border-box;
 }
