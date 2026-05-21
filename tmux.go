@@ -53,11 +53,6 @@ func newTmuxManager() *tmuxManager {
 	}
 	m.binary = bin
 	m.enabled = true
-	// 把這個 socket 的預設 shell 固定成 bash；會影響之後新建的 window / pane
-	// （包含 prefix+c、prefix+"）。已存在的 pane 不會被改寫。
-	if out, err := m.cmd("set-option", "-g", "default-shell", "/bin/bash").CombinedOutput(); err != nil {
-		logf("[tmux] set default-shell failed: %v: %s\n", err, strings.TrimSpace(string(out)))
-	}
 	logf("[tmux] enabled socket=%s binary=%s os=%s\n", tmuxSocketName, bin, runtime.GOOS)
 	return m
 }
@@ -141,7 +136,11 @@ func (m *tmuxManager) createSession(user string, cols, rows uint16) (string, err
 	// tmux session name
 	name := user + "-" + strings.ToLower(rand.Text())[:8]
 
-	c := m.cmd("new-session", "-d", "-s", name, "-x", fmt.Sprintf("%d", cols), "-y", fmt.Sprintf("%d", rows))
+	// 一條 tmux invocation 內串：new-session ; set-option（關狀態列）
+	c := m.cmd("new-session", "-d", "-s", name,
+		"-x", fmt.Sprintf("%d", cols), "-y", fmt.Sprintf("%d", rows),
+		"/bin/bash",
+		";", "set-option", "-t", name, "status", "off")
 	if out, err := c.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("tmux new-session: %v: %s", err, string(out))
 	}
@@ -222,7 +221,8 @@ func (m *tmuxManager) pump(a *tmuxAttach) {
 			})
 		}
 		if err != nil {
-			if err != io.EOF {
+			// EOF 與 fs.ErrClosed 都是 PTY 正常關閉（exit / detach / kill），不必 log
+			if err != io.EOF && !errors.Is(err, os.ErrClosed) {
 				logf("[tmux] pump_read_err session=%s err=%v\n", a.name, err)
 			}
 			break

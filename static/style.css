@@ -433,6 +433,18 @@ button.btn:disabled {
     color: var(--fg);
 }
 
+.tab.drag-source {
+    opacity: 0.4;
+}
+
+.tab.drag-before {
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.tab.drag-after {
+    box-shadow: inset -2px 0 0 var(--accent);
+}
+
 .tab.active {
     background: var(--bg);
     color: var(--fg);

@@ -137,6 +137,24 @@
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
+                    <template v-if="canTerminal">
+                        <div class="settings-sep"></div>
+                        <div class="settings-row">
+                            <span class="settings-label">終端機字體</span>
+                            <select v-model="settings.terminalFontFamily" class="settings-select" @change="onTerminalFontFamilyChange">
+                                <option value="">預設</option>
+                                <option value="Consolas">Consolas</option>
+                                <option value="Menlo">Menlo</option>
+                                <option value="'Courier New'">Courier New</option>
+                                <option value="'Roboto Mono'">Roboto Mono</option>
+                            </select>
+                        </div>
+                        <div class="settings-row">
+                            <span class="settings-label">終端機字體大小</span>
+                            <input type="number" v-model.number="settings.terminalFontSize" class="settings-number" min="10"
+                                max="32" @change="onTerminalFontSizeChange" />
+                        </div>
+                    </template>
                     <div class="settings-sep"></div>
                     <div class="settings-row">
                         <button class="btn" style="width:100%;border-color:var(--danger-fg);color:var(--danger-fg)"
@@ -151,22 +169,34 @@
 
         <div id="tab-bar">
             <div v-for="tab in tabsList" :key="tab.path" class="tab"
-                :class="{ active: tab.path === activeTabPath, 'tab-terminal': tab.isTerminal }"
-                @click="activateTab(tab.path)">
-                <span v-if="tab.isTerminal" class="tab-icon">🖥</span>
+                :class="{
+                    active: tab.path === activeTabPath,
+                    'tab-terminal': tab.isTerminal,
+                    'drag-before': dragOverTab === tab.path && dragInsertBefore,
+                    'drag-after':  dragOverTab === tab.path && !dragInsertBefore,
+                    'drag-source': dragSourceTab === tab.path,
+                }"
+                draggable="true"
+                @click="activateTab(tab.path)"
+                @dragstart="onTabDragStart($event, tab)"
+                @dragover.prevent="onTabDragOver($event, tab)"
+                @dragleave="onTabDragLeave($event, tab)"
+                @drop.prevent="onTabDrop($event, tab)"
+                @dragend="onTabDragEnd">
+                <span v-if="tab.isTerminal" class="tab-icon">⬛</span>
                 <span class="tab-title" :title="tab.isTerminal ? tab.termName : (tab.isAnonymous ? '' : tab.path)">{{
                     tab.isTerminal
                         ? (tab.termName ? tab.termName.split('-').slice(-1)[0] : 'term')
                         : (tab.isAnonymous ? 'Untitled ' + tab.path.split(':')[1] : tab.path.split('/').pop())
                 }}</span>
                 <span v-if="tab.dirty" class="tab-dirty">●</span>
-                <button class="tab-close" @click.stop="closeTab(tab.path)" title="關閉">×</button>
+                <button class="tab-close" draggable="false" @click.stop="closeTab(tab.path)" title="關閉">×</button>
             </div>
             <div id="tab-new-wrap" @click.stop>
                 <button ref="tabNewBtn" class="tab-new-btn" @click="onNewBtnClick" :title="canTerminal ? '新增…' : '新增空白檔案'">+</button>
                 <div id="tab-new-menu" v-show="newTabMenuOpen" :style="newTabMenuStyle">
                     <div class="item" @click="onMenuPickFile">📄 新增空白檔案</div>
-                    <div class="item" @click="onMenuPickTerminal">🖥 新增終端機</div>
+                    <div class="item" @click="onMenuPickTerminal">⬛ 新增終端機</div>
                 </div>
             </div>
         </div>
@@ -320,12 +350,15 @@
             php: 'php',
         };
         const SETTINGS_KEY = 'html-editor-settings';
+        const TAB_ORDER_KEY = 'html-editor-tab-order';
         // Monaco models and view states stored outside Vue reactivity
         const tabsData = new Map(); // path → { model, originalContent, viewState, isImage }
         const openingPaths = new Set(); // paths currently being fetched (race-condition guard)
         // xterm instances stored outside Vue reactivity. name → { term, fitAddon, paneEl, name }
         const termInstances = new Map();
         const termPathPrefix = 'tmux://';
+        // 還原中（由 term_sessions 觸發）的 session name；用來避免重連時搶走 focus
+        const restoringTerms = new Set();
 
         // ── IndexedDB session persistence ─────────────────────────────────────────
         // meta  store: key='tabs' → { tabs:[...paths], activeTab:'...' }
@@ -494,7 +527,11 @@
 
                 socket.onmessage = function (event) {
                     const msg = JSON.parse(event.data);
-                    console.log('[ws]', msg.type, msg);
+
+                    if(msg.type !== 'term_output'){
+                        console.log('[ws]', msg.type, msg);
+                    }
+
                     switch (msg.type) {
                         case 'error':
                             if (msg.payload === 'duplicate connect') {
@@ -538,7 +575,10 @@
                             break;
                         }
                         case 'term_sessions': {
-                            (msg.payload || []).forEach(s => app.attachTerminal(s.name));
+                            (msg.payload || []).forEach(s => {
+                                restoringTerms.add(s.name);
+                                app.attachTerminal(s.name);
+                            });
                             break;
                         }
                         case 'term_opened':
@@ -611,11 +651,17 @@
                         minimap: s.minimap !== false,
                         showInvisible: s.showInvisible === true,
                         trimOnSave: s.trimOnSave !== false,
+                        terminalFontFamily: s.terminalFontFamily || '',
+                        terminalFontSize: s.terminalFontSize || 14,
                     },
                     currentUser: '',
                     canTerminal: false,
                     newTabMenuOpen: false,
                     newTabMenuStyle: {},
+                    dragSourceTab: null,
+                    dragOverTab: null,
+                    dragInsertBefore: false,
+                    _pendingActiveTab: null,
                     settingsOpen: false,
                     statusMsg: '',
                     isSaving: false,
@@ -970,6 +1016,78 @@
                     }
                 },
 
+                // ── Tab drag-and-drop reorder ─────────────────────────────────────────
+                onTabDragStart(ev, tab) {
+                    this.dragSourceTab = tab.path;
+                    try {
+                        ev.dataTransfer.effectAllowed = 'move';
+                        ev.dataTransfer.setData('text/plain', tab.path);
+                    } catch {}
+                },
+                onTabDragOver(ev, tab) {
+                    if (!this.dragSourceTab || tab.path === this.dragSourceTab) return;
+                    ev.dataTransfer.dropEffect = 'move';
+                    const r = ev.currentTarget.getBoundingClientRect();
+                    this.dragInsertBefore = (ev.clientX - r.left) < r.width / 2;
+                    this.dragOverTab = tab.path;
+                },
+                onTabDragLeave(ev, tab) {
+                    if (this.dragOverTab === tab.path) this.dragOverTab = null;
+                },
+                onTabDrop(ev, tab) {
+                    const src = this.dragSourceTab;
+                    this.dragOverTab = null;
+                    this.dragSourceTab = null;
+                    if (!src || src === tab.path) return;
+                    const fromIdx = this.tabsList.findIndex(t => t.path === src);
+                    let toIdx = this.tabsList.findIndex(t => t.path === tab.path);
+                    if (fromIdx < 0 || toIdx < 0) return;
+                    const moved = this.tabsList.splice(fromIdx, 1)[0];
+                    if (fromIdx < toIdx) toIdx--;
+                    if (!this.dragInsertBefore) toIdx++;
+                    this.tabsList.splice(toIdx, 0, moved);
+                    this._saveTabOrder();
+                    this.scheduleMetaSave();
+                },
+                onTabDragEnd() {
+                    this.dragSourceTab = null;
+                    this.dragOverTab = null;
+                },
+
+                // 紀錄使用者手動排好的 tab 路徑順序；保留已關閉的路徑，這樣下次同名 path
+                // （例如重連後還原的 terminal、或重新打開的檔案）會回到原位
+                _saveTabOrder() {
+                    const present = this.tabsList.map(t => t.path);
+                    let prev = [];
+                    try { prev = JSON.parse(localStorage.getItem(TAB_ORDER_KEY) || '[]'); } catch {}
+                    const presentSet = new Set(present);
+                    // 把已不存在的歷史 path 依原相對位置塞回 present
+                    const merged = present.slice();
+                    for (let i = 0; i < prev.length; i++) {
+                        const p = prev[i];
+                        if (presentSet.has(p)) continue;
+                        // 找出 prev 中下一個仍在 present 的路徑，當作錨點插在它前面
+                        let anchorPos = merged.length;
+                        for (let j = i + 1; j < prev.length; j++) {
+                            const idx = merged.indexOf(prev[j]);
+                            if (idx >= 0) { anchorPos = idx; break; }
+                        }
+                        merged.splice(anchorPos, 0, p);
+                    }
+                    try { localStorage.setItem(TAB_ORDER_KEY, JSON.stringify(merged)); } catch {}
+                },
+                _findInsertPos(path) {
+                    let order = [];
+                    try { order = JSON.parse(localStorage.getItem(TAB_ORDER_KEY) || '[]'); } catch {}
+                    const target = order.indexOf(path);
+                    if (target < 0) return this.tabsList.length;
+                    for (let i = 0; i < this.tabsList.length; i++) {
+                        const oi = order.indexOf(this.tabsList[i].path);
+                        if (oi > target) return i;
+                    }
+                    return this.tabsList.length;
+                },
+
                 // ── File operations ───────────────────────────────────────────────────
 
                 async saveCurrent() {
@@ -1169,19 +1287,51 @@
                     this.requestNewTerminal();
                 },
 
+                _termFontFamily() {
+                    const base = this.settings.terminalFontFamily;
+                    return base ? `${base}, 'Roboto Mono', monospace` : "'Roboto Mono', monospace";
+                },
+                _termFontSize() {
+                    const n = parseInt(this.settings.terminalFontSize, 10);
+                    return Number.isFinite(n) && n >= 10 && n <= 32 ? n : 14;
+                },
+
                 _termSize() {
                     const host = this.$refs.terminalHost;
                     if (!host) return { cols: 80, rows: 24 };
+                    const size = this._termFontSize();
                     const probe = document.createElement('span');
-                    probe.style.cssText = 'visibility:hidden;position:absolute;font-family:monospace;font-size:14px;';
+                    probe.style.cssText = `visibility:hidden;position:absolute;font-family:${this._termFontFamily()};font-size:${size}px;`;
                     probe.textContent = 'M';
                     host.appendChild(probe);
-                    const cw = probe.getBoundingClientRect().width || 8;
+                    const cw = probe.getBoundingClientRect().width || size * 0.6;
                     host.removeChild(probe);
                     const rect = host.getBoundingClientRect();
                     const cols = Math.max(20, Math.floor((rect.width - 8) / cw));
-                    const rows = Math.max(5, Math.floor((rect.height - 8) / 17));
+                    const rows = Math.max(5, Math.floor((rect.height - 8) / (size * 1.2)));
                     return { cols, rows };
+                },
+
+                onTerminalFontFamilyChange() {
+                    persistSettings({ terminalFontFamily: this.settings.terminalFontFamily });
+                    this._applyTerminalStyle();
+                },
+                onTerminalFontSizeChange() {
+                    const n = Math.min(32, Math.max(10, parseInt(this.settings.terminalFontSize, 10) || 14));
+                    this.settings.terminalFontSize = n;
+                    persistSettings({ terminalFontSize: n });
+                    this._applyTerminalStyle();
+                },
+                _applyTerminalStyle() {
+                    const fontFamily = this._termFontFamily();
+                    const fontSize = this._termFontSize();
+                    for (const entry of termInstances.values()) {
+                        try {
+                            entry.term.options.fontFamily = fontFamily;
+                            entry.term.options.fontSize = fontSize;
+                            entry.fitAddon.fit();
+                        } catch (e) { console.warn('[term] style apply failed', e); }
+                    }
                 },
 
                 requestNewTerminal() {
@@ -1205,8 +1355,8 @@
 
                     const term = new Terminal({
                         cursorBlink: true,
-                        fontFamily: 'Roboto Mono, monospace',
-                        fontSize: 14,
+                        fontFamily: this._termFontFamily(),
+                        fontSize: this._termFontSize(),
                         allowTransparency: true,
                         theme: { background: 'rgba(0,0,0,0)' },
                         scrollback: 5000,
@@ -1231,10 +1381,19 @@
                 onTerminalOpened(name) {
                     const path = termPathPrefix + name;
                     if (!this.tabsList.find(t => t.path === path)) {
-                        this.tabsList.push({ path, isTerminal: true, termName: name, dirty: false, isImage: false });
+                        const pos = this._findInsertPos(path);
+                        this.tabsList.splice(pos, 0, { path, isTerminal: true, termName: name, dirty: false, isImage: false });
                     }
                     this._ensureTerminal(name);
-                    this.activateTab(path);
+                    const isRestoring = restoringTerms.delete(name);
+                    if (!isRestoring) {
+                        // 使用者剛建的新終端機 → 切過去
+                        this.activateTab(path);
+                    } else if (this._pendingActiveTab === path) {
+                        // 還原中、且這個剛好是上次關閉前的 focus tab → 切過去
+                        this._pendingActiveTab = null;
+                        this.activateTab(path);
+                    }
                 },
 
                 onTerminalOutput(name, b64) {
@@ -1806,6 +1965,8 @@
                     const anonTabs = new Set(session.anonTabs || []);
                     for (const path of session.tabs) {
                         if (this.tabsList.find(t => t.path === path)) continue;
+                        // 終端機 tab 由 WS term_sessions 回應後另外還原
+                        if (path.startsWith(termPathPrefix)) continue;
                         try {
                             if (anonTabs.has(path)) {
                                 const saved = dirtyContents[path];
@@ -1864,6 +2025,10 @@
                                 console.warn('[session] failed to restore tab:', path, err);
                             }
                         }
+                    }
+                    // 若上次 focus 的是 terminal tab，先記下來，等 term_sessions 還原該 tab 時再切過去
+                    if (typeof session.activeTab === 'string' && session.activeTab.startsWith(termPathPrefix)) {
+                        this._pendingActiveTab = session.activeTab;
                     }
                     if (this.tabsList.length > 0) {
                         const target = this.tabsList.find(t => t.path === session.activeTab) || this.tabsList[0];
