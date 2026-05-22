@@ -144,6 +144,7 @@ func (m *tmuxManager) createSession(user string, cols, rows uint16) (string, err
 	if out, err := c.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("tmux new-session: %v: %s", err, string(out))
 	}
+	logf("[tmux] created user=%s session=%s\n", user, name)
 	return name, nil
 }
 
@@ -159,6 +160,7 @@ func (m *tmuxManager) kill(name string) error {
 	if out, err := c.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux kill-session: %v: %s", err, string(out))
 	}
+	logf("[tmux] killed session=%s\n", name)
 	return nil
 }
 
@@ -206,6 +208,7 @@ func (m *tmuxManager) attach(client *WsClient, name string, cols, rows uint16) (
 	m.mu.Unlock()
 
 	go m.pump(a)
+	logf("[tmux] attached user=%s session=%s pid=%d\n", client.username, name, cmd.Process.Pid)
 	return a, nil
 }
 
@@ -270,6 +273,7 @@ func (m *tmuxManager) detach(name string) {
 	if ok {
 		a.close()
 	}
+	logf("[tmux] detached session=%s\n", name)
 }
 
 func (m *tmuxManager) detachAllForUser(user string) {
@@ -323,6 +327,7 @@ func (m *tmuxManager) shutdown() {
 	}
 	// Give pump goroutines a moment to drain.
 	time.Sleep(50 * time.Millisecond)
+	logf("[tmux] shutdown complete\n")
 }
 
 func isValidUsernamePart(u string) bool {

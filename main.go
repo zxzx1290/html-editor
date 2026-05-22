@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -523,10 +525,27 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}()
+
+	// 等待中斷訊號，收到後優雅關閉：先停 HTTP server，再收掉 tmux attach。
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	<-sig
+	logf("html-editor shutting down...\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err == nil {
+		logf("[http] shutdown complete\n")
+	} else {
+		fmt.Fprintln(os.Stderr, "http shutdown:", err)
 	}
+	s.tmux.shutdown()
 }
 
 // ─── Middleware ───────────────────────────────────────────────────────────────

@@ -595,14 +595,23 @@
             equals(other) { return other instanceof TextMateState && other.ruleStack === this.ruleStack; }
         }
 
+        // 已成功 wire 的語言：langId → grammar。切換主題時要重新註冊 token provider
+        // 觸發 re-tokenize，所以 grammar 一律快取，避免每次重抓 grammar JSON。
+        const tmGrammarCache = new Map();
+        const tmWiredLangs = new Set();
+
         async function wireTextMateLanguage(langId) {
             const scope = TM_LANG_SCOPE[langId];
             if (!scope || !tmRegistry) return;
-            // 帶上 encodedLanguageId，TokenMetadata 才會編進 language id；缺了會讓
-            // Toggle Line Comment 等以 language 推導的功能在切回單一 line 時失效。
-            const encodedLanguageId = monaco.languages.getEncodedLanguageId(langId);
-            const grammar = await tmRegistry.loadGrammarWithConfiguration(scope, encodedLanguageId, {});
-            if (!grammar) return;
+            let grammar = tmGrammarCache.get(langId);
+            if (!grammar) {
+                // 帶上 encodedLanguageId，TokenMetadata 才會編進 language id；缺了會讓
+                // Toggle Line Comment 等以 language 推導的功能在切回單一 line 時失效。
+                const encodedLanguageId = monaco.languages.getEncodedLanguageId(langId);
+                grammar = await tmRegistry.loadGrammarWithConfiguration(scope, encodedLanguageId, {});
+                if (!grammar) return;
+                tmGrammarCache.set(langId, grammar);
+            }
             // 使用 EncodedTokensProvider（tokenizeEncoded → Uint32Array）：colorMap、
             // 字體樣式都由 vscode-textmate 用 VS Code 同款 scope selector 引擎算好，
             // Monaco 只負責照 encodedTokensColors 取色，不再經過 Monaco 自己的
@@ -624,7 +633,16 @@
                     };
                 },
             });
+            tmWiredLangs.add(langId);
             console.log('[TextMate] wired language', langId, 'to scope', scope);
+        }
+
+        // 切換主題後呼叫。vscode-textmate 的 colorMap 已隨新主題重算，但 Monaco 對
+        // 自訂 setTokensProvider 在 setTheme 時只重繪、不會 re-tokenize，舊 token 仍
+        // 帶舊主題的 colorMap index → 顏色錯亂。重新註冊 token provider 會讓
+        // TokenizationRegistry 發出變更事件，逼該語言所有 model resetTokenization。
+        function retokenizeTextMate() {
+            for (const langId of tmWiredLangs) wireTextMateLanguage(langId);
         }
 
         // ── HTML 配對標籤高亮 ────────────────────────────────────────────────────
@@ -2426,6 +2444,7 @@
                     try {
                         await this.ensureTheme(theme);
                         monaco.editor.setTheme(theme);
+                        retokenizeTextMate();
                         persistSettings({ theme });
                     } catch (err) {
                         console.log('Failed to load theme:', theme, err);
