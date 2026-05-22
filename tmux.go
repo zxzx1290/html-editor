@@ -38,6 +38,7 @@ type tmuxManager struct {
 type tmuxAttach struct {
 	name      string
 	owner     string
+	binary    string
 	pty       *os.File
 	cmd       *exec.Cmd
 	hub       *Hub
@@ -144,7 +145,7 @@ func (m *tmuxManager) createSession(user string, cols, rows uint16) (string, err
 	if out, err := c.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("tmux new-session: %v: %s", err, string(out))
 	}
-	logf("[tmux] created user=%s session=%s\n", user, name)
+	logf("[tmux] created user=%s session=%s pid=%d\n", user, name, c.Process.Pid)
 	return name, nil
 }
 
@@ -198,11 +199,12 @@ func (m *tmuxManager) attach(client *WsClient, name string, cols, rows uint16) (
 		return nil, err
 	}
 	a := &tmuxAttach{
-		name:  name,
-		owner: client.username,
-		pty:   ptmx,
-		cmd:   cmd,
-		hub:   client.hub,
+		name:   name,
+		owner:  client.username,
+		binary: m.binary,
+		pty:    ptmx,
+		cmd:    cmd,
+		hub:    client.hub,
 	}
 	m.attaches[name] = a
 	m.mu.Unlock()
@@ -252,10 +254,11 @@ func (m *tmuxManager) pump(a *tmuxAttach) {
 
 func (a *tmuxAttach) close() {
 	a.closeOnce.Do(func() {
+		if a.binary != "" {
+			_ = exec.Command(a.binary, "detach-client", "-t", a.name).Run()
+		}
 		_ = a.pty.Close()
 		if a.cmd != nil && a.cmd.Process != nil {
-			_ = a.cmd.Process.Kill()
-			// Reap zombie in background; ignore error.
 			go func(c *exec.Cmd) {
 				_, _ = c.Process.Wait()
 			}(a.cmd)
@@ -316,14 +319,14 @@ func (m *tmuxManager) write(name string, data []byte) error {
 
 func (m *tmuxManager) shutdown() {
 	m.mu.Lock()
-	all := make([]*tmuxAttach, 0, len(m.attaches))
-	for _, a := range m.attaches {
-		all = append(all, a)
+	names := make([]string, 0, len(m.attaches))
+	for name := range m.attaches {
+		names = append(names, name)
 	}
-	m.attaches = make(map[string]*tmuxAttach)
 	m.mu.Unlock()
-	for _, a := range all {
-		a.close()
+	for _, name := range names {
+		m.detach(name)
+		_ = m.kill(name)
 	}
 	// Give pump goroutines a moment to drain.
 	time.Sleep(50 * time.Millisecond)
