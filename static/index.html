@@ -1699,7 +1699,10 @@
 
                 _termFontFamily() {
                     const base = this.settings.terminalFontFamily;
-                    return base ? `${base}, 'Roboto Mono', monospace` : "'Roboto Mono', monospace";
+                    const cjk = "'Microsoft JhengHei', 'PingFang TC', 'Noto Sans CJK TC'";
+                    return base
+                        ? `${base}, 'Roboto Mono', ${cjk}, monospace`
+                        : `'Roboto Mono', ${cjk}, monospace`;
                 },
                 _termFontSize() {
                     const n = parseInt(this.settings.terminalFontSize, 10);
