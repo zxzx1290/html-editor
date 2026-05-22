@@ -60,7 +60,11 @@ console.log(`Copied onig.wasm → ${tmDst}/onig.wasm`);
 // 缺了 .php 檔需要的入口 grammar text.html.php（HTML 為主、嵌入 source.php）。
 // 那份 grammar 從 vscode 官方 PHP 套件 vendored 到 php-html.tmLanguage.json，
 // 它會再 include text.html.derivative，所以一併複製 html-derivative.json。
-const GRAMMARS = ['html', 'html-derivative', 'css', 'javascript', 'json', 'php'];
+const GRAMMARS = [
+  'html', 'html-derivative', 'css', 'javascript', 'json', 'php',
+  'python', 'go', 'rust', 'ruby', 'shellscript', 'markdown',
+  'cpp', 'java', 'docker', 'yaml', 'sql', 'typescript',
+];
 for (const name of GRAMMARS) {
   fs.copyFileSync(`node_modules/tm-grammars/grammars/${name}.json`, `${tmDst}/grammars/${name}.json`);
 }

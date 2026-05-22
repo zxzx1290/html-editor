@@ -116,13 +116,6 @@
                         </label>
                     </div>
                     <div class="settings-row">
-                        <span class="settings-label">Minimap</span>
-                        <label class="toggle-switch">
-                            <input type="checkbox" v-model="settings.minimap" @change="onMinimapChange" />
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                    <div class="settings-row">
                         <span class="settings-label">Sticky Scroll</span>
                         <label class="toggle-switch">
                             <input type="checkbox" v-model="settings.stickyScroll" @change="onStickyScrollChange" />
@@ -503,6 +496,18 @@
             'text.html.derivative': 'html-derivative',
             'source.php': 'php',
             'text.html.php': 'php-html',
+            'source.python': 'python',
+            'source.go': 'go',
+            'source.rust': 'rust',
+            'source.ruby': 'ruby',
+            'source.shell': 'shellscript',
+            'text.html.markdown': 'markdown',
+            'source.cpp': 'cpp',
+            'source.java': 'java',
+            'source.dockerfile': 'docker',
+            'source.yaml': 'yaml',
+            'source.sql': 'sql',
+            'source.ts': 'typescript',
         };
         const TM_LANG_SCOPE = {
             javascript: 'source.js',
@@ -510,6 +515,18 @@
             css: 'source.css',
             html: 'text.html.basic',
             php: 'text.html.php',
+            python: 'source.python',
+            go: 'source.go',
+            rust: 'source.rust',
+            ruby: 'source.ruby',
+            shell: 'source.shell',
+            markdown: 'text.html.markdown',
+            cpp: 'source.cpp',
+            java: 'source.java',
+            dockerfile: 'source.dockerfile',
+            yaml: 'source.yaml',
+            sql: 'source.sql',
+            typescript: 'source.ts',
         };
         let tmRegistry = null;
 
@@ -582,13 +599,6 @@
             // 對 undefined 會直接炸。Theia 多年生產採用的修法就是 colorMap[0] = null。
             const safeColorMap = colorMap.slice();
             safeColorMap[0] = null;
-            // Monaco 的 minimap.background 預設值是 null（不會自動 fallback 到
-            // editor.background）；目前的 theme JSON 也沒人主動設，導致 canvas 透明
-            // 後吃到的是父層元素背景。沒設就直接用 editor.background 對齊。
-            const themeColors = { ...(vt.colors || {}) };
-            if (themeColors['editor.background'] && !themeColors['minimap.background']) {
-                themeColors['minimap.background'] = themeColors['editor.background'];
-            }
             return {
                 base, inherit: true, rules: [],
                 encodedTokensColors: safeColorMap,
@@ -773,7 +783,6 @@
                         fontSize: s.fontSize || 14,
                         fontFamily: s.fontFamily || '',
                         wordWrap: s.wordWrap !== false,
-                        minimap: s.minimap !== false,
                         stickyScroll: s.stickyScroll !== false,
                         showInvisible: s.showInvisible === true,
                         trimOnSave: s.trimOnSave !== false,
@@ -2235,11 +2244,6 @@
                     persistSettings({ wordWrap: this.settings.wordWrap });
                 },
 
-                onMinimapChange() {
-                    monacoEditor.updateOptions({ minimap: { enabled: this.settings.minimap } });
-                    persistSettings({ minimap: this.settings.minimap });
-                },
-
                 onStickyScrollChange() {
                     monacoEditor.updateOptions({ stickyScroll: { enabled: this.settings.stickyScroll } });
                     persistSettings({ stickyScroll: this.settings.stickyScroll });
@@ -2432,13 +2436,18 @@
                         await this.ensureTheme(activeTheme).catch(() => { });
                     }
 
-                    await Promise.all([
-                        wireTextMateLanguage('javascript'),
-                        wireTextMateLanguage('json'),
-                        wireTextMateLanguage('css'),
-                        wireTextMateLanguage('html'),
-                        wireTextMateLanguage('php'),
-                    ]);
+                    // Theia 風格的 lazy wire：對每個我們有 tm-grammar 的 langId 掛
+                    // monaco.languages.onLanguage 監聽器，等 Monaco 首次需要該語言才
+                    // fetch grammar JSON / 註冊 tokens provider，避免 boot 拉一堆用不到
+                    // 的 grammar。
+                    const wiredLangs = new Set();
+                    for (const langId of Object.keys(TM_LANG_SCOPE)) {
+                        monaco.languages.onLanguage(langId, () => {
+                            if (wiredLangs.has(langId)) return;
+                            wiredLangs.add(langId);
+                            wireTextMateLanguage(langId);
+                        });
+                    }
 
                     monacoEditor = monaco.editor.create(this.$refs.editorEl, {
                         value: '',
@@ -2448,7 +2457,7 @@
                         automaticLayout: true,
                         fontSize: s.fontSize,
                         fontFamily: s.fontFamily ? `${s.fontFamily}, 'Microsoft JhengHei', sans-serif` : undefined,
-                        minimap: { enabled: s.minimap },
+                        minimap: { enabled: false },
                         stickyScroll: { enabled: s.stickyScroll },
                         renderWhitespace: s.showInvisible ? 'all' : 'none',
                     });

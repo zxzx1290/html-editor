@@ -18,7 +18,7 @@
   | `.php` | PHP |
   | 其他 | Plain Text |
 
-- TextMate 語法引擎：以 `vscode-textmate` + `vscode-oniguruma` 取代 Monaco 內建的 Monarch 分詞器（HTML / CSS / JavaScript / JSON / PHP），分詞粒度與 VS Code 一致，搭配 VS Code 原版主題顏色／斜體完全對齊
+- TextMate 語法引擎：以 `vscode-textmate` + `vscode-oniguruma` 取代 Monaco 內建的 Monarch 分詞器（HTML / CSS / JavaScript / JSON / PHP / Python / Go / Rust / Ruby / Shell / Markdown / C++ / Java / Dockerfile / YAML / SQL / TypeScript），各語言以 `monaco.languages.onLanguage` 在首次開檔時 lazy 載入對應 grammar，分詞粒度與 VS Code 一致，搭配 VS Code 原版主題顏色／斜體完全對齊
 
 - 多 tab 開檔，支援同時編輯多個檔案；tab 標題顯示 ● 代表有未儲存變更
 - Tab bar 右側 `+` 按鈕可新增空白匿名檔案（Untitled），儲存時自動彈出「另存為」對話框選擇目錄與檔名
@@ -44,9 +44,7 @@
   - **字體**：預設、Consolas、Menlo、Courier New、Roboto Mono
   - **字體大小**：10–32 px
   - **自動換行**：開（預設）／關切換
-  - **Minimap**：開／關切換
   - **Sticky Scroll**：開（預設）／關切換；捲動時把目前 scope 的父層宣告固定在編輯器頂部
-  - **括號配對上色**：開（預設）／關切換
   - **顯示隱形字元（Whitespace）**：開／關切換；同時顯示行尾 LF / CRLF 符號與控制字元
   - **儲存時移除尾端空白**：開（預設）／關切換
   - **終端機字體 / 字體大小**：僅在帳號有開放終端機時顯示
@@ -90,7 +88,7 @@ npm install
 - 將 Monaco 靜態檔案複製到 `static/monaco/vs/`
 - 將 VS Code 原版語法高亮主題（`tm-themes`）複製到 `static/themes/`
 - 將 xterm.js（含 fit addon、unicode11 addon）複製到 `static/xterm/`
-- 以 esbuild 將 `vscode-textmate` + `vscode-oniguruma` 打包為 IIFE，連同 `onig.wasm` 與 TextMate grammar（HTML、HTML derivative、CSS、JavaScript、JSON、PHP `source.php` 來自 `tm-grammars`；`.php` 檔的入口 grammar `text.html.php` vendored 自 vscode `extensions/php/syntaxes/html.tmLanguage.json`）一起輸出到 `static/textmate/`
+- 以 esbuild 將 `vscode-textmate` + `vscode-oniguruma` 打包為 IIFE，連同 `onig.wasm` 與 TextMate grammar（HTML、HTML derivative、CSS、JavaScript、JSON、PHP `source.php`、Python、Go、Rust、Ruby、Shell（`shellscript`）、Markdown、C++、Java、Dockerfile（`docker`）、YAML、SQL、TypeScript 來自 `tm-grammars`；`.php` 檔的入口 grammar `text.html.php` vendored 自 vscode `extensions/php/syntaxes/html.tmLanguage.json`）一起輸出到 `static/textmate/`
 
 ### 2. 建立 config.json
 
