@@ -123,6 +123,13 @@
                         </label>
                     </div>
                     <div class="settings-row">
+                        <span class="settings-label">括號配對上色</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" v-model="settings.bracketColorization" @change="onBracketColorizationChange" />
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="settings-row">
                         <span class="settings-label">顯示隱形字元</span>
                         <label class="toggle-switch">
                             <input type="checkbox" v-model="settings.showInvisible"
@@ -210,7 +217,21 @@
             <div id="terminal-host" ref="terminalHost" v-show="activeTabIsTerminal"></div>
         </div>
 
-        <div id="status">{{ statusMsg }}</div>
+        <div id="status">
+            <span class="status-msg">{{ statusMsg }}</span>
+            <span class="status-lang" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal"
+                @click.stop="openLangPicker" title="選擇語法高亮語言">{{ currentLangLabel }}</span>
+        </div>
+
+        <div id="lang-picker" v-show="langPicker.open" @click.stop>
+            <div class="lang-picker-list" ref="langPickerList">
+                <div v-for="lang in langPicker.langs" :key="lang.id" class="lang-picker-item"
+                    :class="{ active: lang.id === currentLangId }" @click="selectLang(lang.id)">
+                    <span>{{ lang.label }}</span>
+                    <span class="lang-picker-id">{{ lang.id }}</span>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div id="toast-container" :style="toasts.length ? { zIndex: 9999 } : {}">
@@ -340,16 +361,32 @@
 
 <script>
     (function () {
+        // 圖片副檔名清單
         const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico'];
+        // 副檔名 → Monaco 語言 id 映射
         const LANG_MAP = {
             html: 'html', htm: 'html',
             css: 'css',
-            js: 'javascript',
+            js: 'javascript', mjs: 'javascript', cjs: 'javascript',
             json: 'json',
-            md: 'markdown',
+            md: 'markdown', markdown: 'markdown',
             txt: 'plaintext',
             svg: 'xml',
             php: 'php',
+            py: 'python', pyw: 'python',
+            go: 'go',
+            rs: 'rust',
+            rb: 'ruby',
+            sh: 'shell', bash: 'shell', zsh: 'shell',
+            cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hxx: 'cpp', h: 'cpp', c: 'cpp',
+            java: 'java',
+            yml: 'yaml', yaml: 'yaml',
+            sql: 'sql',
+            ts: 'typescript', tsx: 'typescript',
+        };
+        // 副檔名抓不到、改用完整檔名（小寫）對應的 langId；例如 Dockerfile 沒副檔名
+        const FILENAME_LANG = {
+            'dockerfile': 'dockerfile',
         };
         const SETTINGS_KEY = 'html-editor-settings';
         const TAB_ORDER_KEY = 'html-editor-tab-order';
@@ -470,8 +507,12 @@
             return IMG_EXT.includes(extOf(path));
         }
 
+        // 把檔案路徑映射到 Monaco 的 langId（先副檔名、再純檔名、最後 fallback plaintext）
         function detectLang(path) {
-            return LANG_MAP[extOf(path)] || 'plaintext';
+            const ext = extOf(path);
+            if (ext && LANG_MAP[ext]) return LANG_MAP[ext];
+            const base = path.split('/').pop().toLowerCase();
+            return FILENAME_LANG[base] || 'plaintext';
         }
 
         function loadSettings() {
@@ -586,6 +627,122 @@
             console.log('[TextMate] wired language', langId, 'to scope', scope);
         }
 
+        // ── HTML 配對標籤高亮 ────────────────────────────────────────────────────
+        // Monaco 的 min build 雖然把 vs/language/html/htmlMode bundle 進來，但實際
+        // 的 DocumentHighlightProvider 依賴 worker 拉 vscode-html-languageservice
+        // 才會回傳「點 <div> 高亮 </div>」這種行為；與 TextMate token 路徑混用時
+        // 容易吃到 worker 環境變數或 race，乾脆自己同步算。演算法 mirror VS Code
+        // 的 findDocumentHighlights：游標必須落在 tag name 上，回對應另一端的
+        // tag name range；void 與 self-closing tag 不配對。
+        const VOID_HTML_TAGS_FOR_MATCH = new Set([
+            'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+            'link', 'meta', 'param', 'source', 'track', 'wbr',
+        ]);
+        function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+        // 從整篇文本 + offset 抓出包夾游標的那個 tag（含 tag name 範圍與類型）。
+        // 失敗回 null：游標在屬性值字串內、註解內、CDATA 內等情況本實作不處理，
+        // 該回 null 的就回 null。
+        function findHtmlTagAtOffset(text, offset) {
+            let start = -1;
+            for (let i = Math.min(offset, text.length); i >= 0; i--) {
+                const c = text.charAt(i);
+                if (c === '<') { start = i; break; }
+                if (c === '>') return null;
+            }
+            if (start < 0) return null;
+            let end = -1;
+            for (let i = offset; i < text.length; i++) {
+                const c = text.charAt(i);
+                if (c === '>') { end = i; break; }
+                if (c === '<' && i !== start) return null;
+            }
+            if (end < 0) return null;
+            const tagText = text.substring(start, end + 1);
+            const m = tagText.match(/^<(\/?)([a-zA-Z][\w-]*)/);
+            if (!m) return null;
+            const isClose = m[1] === '/';
+            const nameStart = start + 1 + (isClose ? 1 : 0);
+            return {
+                isClose,
+                tagName: m[2],
+                tagStart: start,
+                tagEnd: end + 1,
+                nameStart,
+                nameEnd: nameStart + m[2].length,
+                selfClosing: /\/\s*>$/.test(tagText),
+            };
+        }
+
+        // 找配對 tag 的 tag name range；以 depth counting 處理同名巢狀。
+        function findMatchingHtmlTag(model, position) {
+            const text = model.getValue();
+            const offset = model.getOffsetAt(position);
+            const here = findHtmlTagAtOffset(text, offset);
+            if (!here) return null;
+            if (offset < here.nameStart || offset > here.nameEnd) return null;
+            const tn = here.tagName;
+            if (VOID_HTML_TAGS_FOR_MATCH.has(tn.toLowerCase())) return null;
+            if (here.selfClosing) return null;
+
+            // 尋找對應的開／關 tag，同名巢狀以 depth 計數
+            const re = new RegExp(`<(/)?\\s*(${escapeRegex(tn)})(?=[\\s/>])`, 'gi');
+            let depth = 1;
+            let other = null;
+            if (!here.isClose) {
+                re.lastIndex = here.tagEnd;
+                let match;
+                while ((match = re.exec(text)) !== null) {
+                    const isClose = match[1] === '/';
+                    if (isClose) {
+                        depth--;
+                        if (depth === 0) {
+                            const nameStart = match.index + match[0].indexOf(tn);
+                            other = { nameStart, nameEnd: nameStart + tn.length };
+                            break;
+                        }
+                    } else {
+                        const gt = text.indexOf('>', match.index);
+                        if (gt < 0) break;
+                        if (!/\/\s*>$/.test(text.substring(match.index, gt + 1))) depth++;
+                    }
+                }
+            } else {
+                // 反向走：先找出所有 here 之前的同名 tag，從尾巴往前算 depth
+                const matches = [];
+                let match;
+                re.lastIndex = 0;
+                while ((match = re.exec(text)) !== null) {
+                    if (match.index >= here.tagStart) break;
+                    const isClose = match[1] === '/';
+                    let selfClosing = false;
+                    if (!isClose) {
+                        const gt = text.indexOf('>', match.index);
+                        if (gt >= 0) selfClosing = /\/\s*>$/.test(text.substring(match.index, gt + 1));
+                    }
+                    matches.push({ index: match.index, isClose, selfClosing });
+                }
+                for (let i = matches.length - 1; i >= 0; i--) {
+                    const x = matches[i];
+                    if (x.isClose) {
+                        depth++;
+                    } else if (!x.selfClosing) {
+                        depth--;
+                        if (depth === 0) {
+                            const nameStart = text.indexOf(tn, x.index);
+                            other = { nameStart, nameEnd: nameStart + tn.length };
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!other) return null;
+            return {
+                me: { nameStart: here.nameStart, nameEnd: here.nameEnd },
+                other,
+            };
+        }
+
         // VS Code theme JSON → Monaco theme（encoded tokens 路徑）。
         // 不再產生 rules：實際的 scope → color 比對由 vscode-textmate registry 處理；
         // 我們把它算好的 colorMap 直接以 encodedTokensColors 餵給 Monaco，這樣
@@ -604,7 +761,7 @@
                 encodedTokensColors: safeColorMap,
                 colors: {
                     'editorWhitespace.foreground': base === 'vs' ? '#a0a0a0' : '#606060',
-                    ...themeColors,
+                    ...(vt.colors || {}),
                 },
             };
         }
@@ -784,6 +941,7 @@
                         fontFamily: s.fontFamily || '',
                         wordWrap: s.wordWrap !== false,
                         stickyScroll: s.stickyScroll !== false,
+                        bracketColorization: s.bracketColorization === true,
                         showInvisible: s.showInvisible === true,
                         trimOnSave: s.trimOnSave !== false,
                         terminalFontFamily: s.terminalFontFamily || '',
@@ -811,6 +969,8 @@
                     selectedPaths: [],
                     anchorPath: null,
                     saveAsDlg: { visible: false, tree: [], selectedDir: '', filename: '', _resolve: null },
+                    currentLangId: 'plaintext',
+                    langPicker: { open: false, langs: [] },
                 };
             },
 
@@ -826,6 +986,11 @@
                 },
                 activeTabDirty() {
                     return this.activeTab ? this.activeTab.dirty : false;
+                },
+                // 狀態列要顯示的語言名稱（從 Monaco aliases 取，沒有就退 raw id）
+                currentLangLabel() {
+                    const found = this.langPicker.langs.find(l => l.id === this.currentLangId);
+                    return found ? found.label : (this.currentLangId || 'Plain Text');
                 },
             },
 
@@ -898,6 +1063,49 @@
 
                 setStatus(msg) {
                     this.statusMsg = msg || '';
+                },
+
+                // 從目前 Monaco model 讀回語言 id 並同步到 currentLangId（供狀態列顯示）
+                refreshCurrentLang() {
+                    const m = monacoEditor && monacoEditor.getModel();
+                    this.currentLangId = m ? m.getLanguageId() : 'plaintext';
+                },
+
+                // 第一次開 picker 時懶載入並快取整份 Monaco 已註冊語言清單，依 label 排序
+                loadLangList() {
+                    if (this.langPicker.langs.length || !window.monaco) return;
+                    const list = monaco.languages.getLanguages().map(l => ({
+                        id: l.id,
+                        label: (l.aliases && l.aliases[0]) || l.id,
+                    }));
+                    list.sort((a, b) => a.label.localeCompare(b.label));
+                    this.langPicker.langs = list;
+                },
+
+                // 開啟語言選單，並 scroll 到目前語言所在位置
+                openLangPicker() {
+                    this.loadLangList();
+                    this.langPicker.open = true;
+                    this.$nextTick(() => {
+                        const idx = this.langPicker.langs.findIndex(l => l.id === this.currentLangId);
+                        const el = this.$refs.langPickerList && this.$refs.langPickerList.children[idx];
+                        if (el) el.scrollIntoView({ block: 'nearest' });
+                    });
+                },
+
+                // 關閉語言選單
+                closeLangPicker() {
+                    this.langPicker.open = false;
+                },
+
+                // 把目前編輯器 model 的語言改成 langId，並關閉選單
+                selectLang(langId) {
+                    const m = monacoEditor && monacoEditor.getModel();
+                    if (m) {
+                        monaco.editor.setModelLanguage(m, langId);
+                        this.currentLangId = langId;
+                    }
+                    this.closeLangPicker();
                 },
 
                 async api(path, opts) {
@@ -2219,7 +2427,8 @@
                         await this.ensureTheme(theme);
                         monaco.editor.setTheme(theme);
                         persistSettings({ theme });
-                    } catch {
+                    } catch (err) {
+                        console.log('Failed to load theme:', theme, err);
                         this.showError('載入主題失敗');
                         this.settings.theme = prev;
                     }
@@ -2242,6 +2451,26 @@
                 onWordWrapChange() {
                     monacoEditor.updateOptions({ wordWrap: this.settings.wordWrap ? 'on' : 'off' });
                     persistSettings({ wordWrap: this.settings.wordWrap });
+                },
+
+                // 切換括號配對上色：editor.updateOptions 對 bracketPairColorization
+                // 不靈敏（issue #3013 / discussion #3980），改用 TextModel.updateOptions
+                // 的 bracketColorizationOptions 直接打到 model 層，BracketPairs tree
+                // 會以 createChangeEvent 觸發重建。對所有已開的 model 套用一輪。
+                onBracketColorizationChange() {
+                    this.applyBracketColorization();
+                    persistSettings({ bracketColorization: this.settings.bracketColorization });
+                },
+                applyBracketColorization() {
+                    const opts = { bracketColorizationOptions: {
+                        enabled: this.settings.bracketColorization,
+                        independentColorPoolPerBracketType: false,
+                    }};
+                    tabsData.forEach(d => { if (d.model) d.model.updateOptions(opts); });
+                    if (monacoEditor) {
+                        const m = monacoEditor.getModel();
+                        if (m) m.updateOptions(opts);
+                    }
                 },
 
                 onStickyScrollChange() {
@@ -2303,6 +2532,10 @@
                     this.settingsOpen = false;
                     this.newTabMenuOpen = false;
                     if (!e.target.closest('#file-tree')) this.treeFocused = false;
+                    if (this.langPicker.open && !e.target.closest('#lang-picker') &&
+                        !e.target.closest('.status-lang')) {
+                        this.closeLangPicker();
+                    }
                 });
                 document.addEventListener('contextmenu', (e) => {
                     if (!e.target.closest('#file-tree')) this.hideCtxMenu();
@@ -2462,6 +2695,26 @@
                         renderWhitespace: s.showInvisible ? 'all' : 'none',
                     });
 
+                    // 註冊 HTML 配對標籤高亮（含 .php 檔）
+                    const htmlTagPairProvider = {
+                        provideDocumentHighlights(model, position) {
+                            const pair = findMatchingHtmlTag(model, position);
+                            if (!pair) return null;
+                            const range = (s, e) => {
+                                const sp = model.getPositionAt(s);
+                                const ep = model.getPositionAt(e);
+                                return new monaco.Range(sp.lineNumber, sp.column, ep.lineNumber, ep.column);
+                            };
+                            const kind = monaco.languages.DocumentHighlightKind.Read;
+                            return [
+                                { range: range(pair.me.nameStart, pair.me.nameEnd), kind },
+                                { range: range(pair.other.nameStart, pair.other.nameEnd), kind },
+                            ];
+                        },
+                    };
+                    monaco.languages.registerDocumentHighlightProvider('html', htmlTagPairProvider);
+                    monaco.languages.registerDocumentHighlightProvider('php', htmlTagPairProvider);
+
                     // EOL 隱藏字元標記（showInvisible 開啟時在每行末顯示 ␍ / ␊）
                     const eolDecorCollection = monacoEditor.createDecorationsCollection([]);
                     updateEolDecorations = () => {
@@ -2483,7 +2736,18 @@
                         }
                         eolDecorCollection.set(decors);
                     };
-                    monacoEditor.onDidChangeModel(() => updateEolDecorations());
+                    monacoEditor.onDidChangeModel(() => {
+                        updateEolDecorations();
+                        this.refreshCurrentLang();
+                        // 切換 model 時把當前的括號上色設定套到新 model
+                        // （createModel 是 Monaco 預設值 enabled:true，沒套會看到一閃）
+                        const m = monacoEditor.getModel();
+                        if (m) m.updateOptions({ bracketColorizationOptions: {
+                            enabled: this.settings.bracketColorization,
+                            independentColorPoolPerBracketType: false,
+                        }});
+                    });
+                    monacoEditor.onDidChangeModelLanguage(() => this.refreshCurrentLang());
 
                     // 自動補齊 HTML 閉合標籤（html / php 模式，輸入 > 時觸發）
                     const VOID_HTML_TAGS = new Set([
