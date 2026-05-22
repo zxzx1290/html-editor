@@ -260,7 +260,7 @@ button.btn.primary {
 }
 
 button.btn.primary:hover {
-    background: #1180d4;
+    background: color-mix(in srgb, var(--accent) 85%, #fff);
 }
 
 button.btn.danger {
@@ -270,7 +270,7 @@ button.btn.danger {
 }
 
 button.btn.danger:hover {
-    background: #d44;
+    background: color-mix(in srgb, var(--danger) 85%, #fff);
 }
 
 button.btn:disabled {
@@ -430,13 +430,14 @@ button.btn:disabled {
 }
 
 .tab {
+    position: relative;
     display: flex;
     align-items: center;
+    /* 頂部 accent 與底線都改用 ::before / ::after overlay 繪製，
+       .tab 本身不帶上下 border → content box 完整 30px，文字真正垂直置中 */
     padding: 0 6px 0 12px;
     height: 30px;
-    border-top: 2px solid transparent;
     border-right: 1px solid var(--bg-side);
-    border-bottom: 1px solid var(--border);
     cursor: pointer;
     white-space: nowrap;
     font-size: 12px;
@@ -447,6 +448,38 @@ button.btn:disabled {
     max-width: 200px;
     min-width: 80px;
     flex-shrink: 0;
+}
+
+/* 頂部 accent 線與底線：position:absolute overlay，不佔佈局 →
+   active 切換時文字不位移、且不影響 content box 的垂直置中 */
+.tab::before,
+.tab::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    pointer-events: none;
+}
+
+.tab::before {
+    top: 0;
+    height: 2px;
+    background: transparent;
+}
+
+.tab::after {
+    bottom: 0;
+    height: 1px;
+    background: var(--border);
+}
+
+.tab.active::before {
+    background: var(--accent);
+}
+
+/* active tab 底線改成內容區背景色 → 與內容相連、看不到分隔線 */
+.tab.active::after {
+    background: var(--bg);
 }
 
 .tab:hover {
@@ -469,10 +502,6 @@ button.btn:disabled {
 .tab.active {
     background: var(--bg);
     color: var(--fg);
-    /* 所有分頁都預留 2px 透明 border-top，active 只改顏色 → 點擊時文字不位移 */
-    border-top-color: var(--accent);
-    /* 底線改成內容區背景色 → active tab 與內容相連、看不到分隔線 */
-    border-bottom-color: var(--bg);
 }
 
 .tab-title {

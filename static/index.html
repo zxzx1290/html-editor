@@ -853,6 +853,8 @@
             window.editorPlugin.wsSend = wsSend;
 
             function fileOnOpen(path) {
+                const tab = app.tabsList.find(t => t.path === path);
+                if (tab && tab.isAnonymous) return;  // 匿名檔案不通知
                 const i = path.lastIndexOf('/');
                 const folder = i >= 0 ? path.slice(0, i) : '';
                 const file = i >= 0 ? path.slice(i + 1) : path;
@@ -860,6 +862,8 @@
             }
 
             function fileOnClose(path) {
+                const tab = app.tabsList.find(t => t.path === path);
+                if (tab && tab.isAnonymous) return;  // 匿名檔案不通知
                 const i = path.lastIndexOf('/');
                 const folder = i >= 0 ? path.slice(0, i) : '';
                 const file = i >= 0 ? path.slice(i + 1) : path;
@@ -913,16 +917,17 @@
                         case 'user_offline':
                             app.showToast(msg.payload.user + ' 已離線');
                             break;
+                        // 暫時取消「他人開/關檔」通知
                         case 'file_opened': {
                             const fp = msg.payload;
                             const fullPath = [fp.path, fp.file].filter(Boolean).join('/');
-                            app.showToast(fp.user + ' 開啟了 ' + fullPath);
+                            // app.showToast(fp.user + ' 開啟了 ' + fullPath);
                             break;
                         }
                         case 'file_closed': {
                             const fp = msg.payload;
                             const fullPath = [fp.path, fp.file].filter(Boolean).join('/');
-                            app.showToast(fp.user + ' 關閉了 ' + fullPath);
+                            // app.showToast(fp.user + ' 關閉了 ' + fullPath);
                             break;
                         }
                         case 'term_sessions': {
