@@ -137,7 +137,8 @@ func (m *tmuxManager) createSession(user string, cols, rows uint16) (string, err
 	// tmux session name
 	name := user + "-" + strings.ToLower(rand.Text())[:8]
 
-	// 一條 tmux invocation 內串：new-session ; set-option（關狀態列）
+	// 一條 tmux invocation 內串：new-session ; set-option（關狀態列）; 這樣 session 就不會閃一下狀態列然後消失了。
+	// -d(detached) 後給 attach 用，-x -y 指定初始大小避免 attach 後閃一下 resize。
 	c := m.cmd("new-session", "-d", "-s", name,
 		"-x", fmt.Sprintf("%d", cols), "-y", fmt.Sprintf("%d", rows),
 		"/bin/bash",
@@ -145,7 +146,7 @@ func (m *tmuxManager) createSession(user string, cols, rows uint16) (string, err
 	if out, err := c.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("tmux new-session: %v: %s", err, string(out))
 	}
-	logf("[tmux] created user=%s session=%s pid=%d\n", user, name, c.Process.Pid)
+	logf("[tmux] created user=%s session=%s\n", user, name)
 	return name, nil
 }
 
@@ -210,7 +211,7 @@ func (m *tmuxManager) attach(client *WsClient, name string, cols, rows uint16) (
 	m.mu.Unlock()
 
 	go m.pump(a)
-	logf("[tmux] attached user=%s session=%s pid=%d\n", client.username, name, cmd.Process.Pid)
+	logf("[tmux] attached user=%s session=%s pid=%d\n", client.username, name, cmd.Process.Pid) // pid 是 attach 進程的，不是 tmux session 的
 	return a, nil
 }
 
