@@ -66,7 +66,9 @@
     <div id="main">
         <div id="toolbar">
             <button id="toggle-sidebar" @click="sidebarCollapsed = !sidebarCollapsed" title="切換側邊欄">☰</button>
-            <span id="top-status"></span>
+            <span id="top-status">
+                <!-- 預留：工具列狀態文字 -->
+            </span>
             <div id="settings-wrap" @click.stop>
                 <button class="btn" @click="settingsOpen = !settingsOpen">⚙ 設定</button>
                 <div id="settings-panel" v-show="settingsOpen">
@@ -391,7 +393,7 @@
         const SETTINGS_KEY = 'html-editor-settings';
         const TAB_ORDER_KEY = 'html-editor-tab-order';
         // Monaco models and view states stored outside Vue reactivity
-        const tabsData = new Map(); // path → { model, originalContent, viewState, isImage }
+        const tabsData = new Map(); // path → { model, originalContent, viewState, baseHash }
         const openingPaths = new Set(); // paths currently being fetched (race-condition guard)
         // xterm instances stored outside Vue reactivity. name → { term, fitAddon, paneEl, name }
         const termInstances = new Map();
@@ -645,7 +647,9 @@
         // 容易吃到 worker 環境變數或 race，乾脆自己同步算。演算法 mirror VS Code
         // 的 findDocumentHighlights：游標必須落在 tag name 上，回對應另一端的
         // tag name range；void 與 self-closing tag 不配對。
-        const VOID_HTML_TAGS_FOR_MATCH = new Set([
+        // void / self-closing tag：不配對、也不自動補閉合標籤。
+        // 同時供「配對標籤高亮」與「自動補齊閉合標籤」兩處共用。
+        const VOID_HTML_TAGS = new Set([
             'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
             'link', 'meta', 'param', 'source', 'track', 'wbr',
         ]);
@@ -693,7 +697,7 @@
             if (!here) return null;
             if (offset < here.nameStart || offset > here.nameEnd) return null;
             const tn = here.tagName;
-            if (VOID_HTML_TAGS_FOR_MATCH.has(tn.toLowerCase())) return null;
+            if (VOID_HTML_TAGS.has(tn.toLowerCase())) return null;
             if (here.selfClosing) return null;
 
             // 尋找對應的開／關 tag，同名巢狀以 depth 計數
@@ -1247,14 +1251,14 @@
 
                     try {
                         if (isImagePath(path)) {
-                            tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
+                            tabsData.set(path, { model: null, originalContent: '', viewState: null });
                             this.tabsList.push({ path, dirty: false, isImage: true });
                             window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
                         } else {
                             try {
                                 const text = await this.api('/api/file?path=' + encodeURIComponent(path));
                                 const model = monaco.editor.createModel(text, detectLang(path));
-                                tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
+                                tabsData.set(path, { model, originalContent: text, viewState: null, baseHash: simpleHash(text) });
                                 this.tabsList.push({ path, dirty: false, isImage: false });
                                 window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
                             } catch (e) {
@@ -1277,7 +1281,7 @@
 
                     if (this.activeTabPath) {
                         const cur = tabsData.get(this.activeTabPath);
-                        if (cur && monacoEditor && !cur.isImage) cur.viewState = monacoEditor.saveViewState();
+                        if (cur && monacoEditor && !this.activeTabIsImage) cur.viewState = monacoEditor.saveViewState();
                     }
 
                     this.activeTabPath = path;
@@ -1291,10 +1295,14 @@
                         this._fitActiveTerminal();
                     } else {
                         const data = tabsData.get(path);
-                        if (data && data.isImage) {
+                        if (!data) {
+                            console.warn('[activateTab] 找不到 tabsData 項目，tabsList/tabsData 可能不同步:', path);
+                            return;
+                        }
+                        if (newTab.isImage) {
                             this.imagePreviewSrc = '/api/file?path=' + encodeURIComponent(path) + '&t=' + Date.now();
                             this.setStatus('圖片預覽：' + path);
-                        } else if (data && monacoEditor) {
+                        } else {
                             monacoEditor.setModel(data.model);
                             if (data.viewState) monacoEditor.restoreViewState(data.viewState);
                             this.setStatus('已開啟：' + path);
@@ -1319,7 +1327,7 @@
                         const choice = await this._dlgShow({
                             title: `終端機「${tab.termName}」`,
                             confirmText: '放到背景',
-                            altText: '關閉 (kill)',
+                            altText: '關閉',
                             altDanger: true,
                             cancelText: '取消',
                         });
@@ -1573,7 +1581,6 @@
                         });
                         monaco.editor.setModelLanguage(data.model, detectLang(targetPath));
                         data.originalContent = content;
-                        data.isAnonymous = false;
                         tabsData.delete(oldPath);
                         tabsData.set(targetPath, data);
                         const tab = this.tabsList.find(t => t.path === oldPath);
@@ -1606,7 +1613,7 @@
                     while (this.tabsList.find(t => t.path === `untitled:${n}`)) n++;
                     const path = `untitled:${n}`;
                     const model = monaco.editor.createModel('', 'plaintext');
-                    tabsData.set(path, { model, originalContent: '', viewState: null, isImage: false, isAnonymous: true });
+                    tabsData.set(path, { model, originalContent: '', viewState: null });
                     this.tabsList.push({ path, dirty: false, isImage: false, isAnonymous: true });
                     window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
                     this.activateTab(path);
@@ -2334,13 +2341,13 @@
                                 const saved = dirtyContents[path];
                                 const content = saved !== undefined ? saved : '';
                                 const model = monaco.editor.createModel(content, 'plaintext');
-                                tabsData.set(path, { model, originalContent: '', viewState: null, isImage: false, isAnonymous: true });
+                                tabsData.set(path, { model, originalContent: '', viewState: null });
                                 this.tabsList.push({ path, dirty: content !== '', isImage: false, isAnonymous: true });
                                 window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: content } } });
                                 continue;
                             }
                             if (isImagePath(path)) {
-                                tabsData.set(path, { model: null, originalContent: '', viewState: null, isImage: true });
+                                tabsData.set(path, { model: null, originalContent: '', viewState: null });
                                 this.tabsList.push({ path, dirty: false, isImage: true });
                                 window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
                             } else {
@@ -2348,7 +2355,7 @@
                                 const model = monaco.editor.createModel(text, detectLang(path));
                                 const saved = dirtyContents[path];
                                 let isDirty = saved !== undefined && saved !== text;
-                                tabsData.set(path, { model, originalContent: text, viewState: null, isImage: false, baseHash: simpleHash(text) });
+                                tabsData.set(path, { model, originalContent: text, viewState: null, baseHash: simpleHash(text) });
                                 this.tabsList.push({ path, dirty: false, isImage: false });
                                 window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
                                 if (isDirty) {
@@ -2377,7 +2384,7 @@
                                 if (keep) {
                                     const saved = dirtyContents[path];
                                     const model = monaco.editor.createModel(saved, detectLang(path));
-                                    tabsData.set(path, { model, originalContent: '', viewState: null, isImage: false, isAnonymous: true });
+                                    tabsData.set(path, { model, originalContent: '', viewState: null });
                                     this.tabsList.push({ path, dirty: true, isImage: false, isAnonymous: true });
                                     window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: saved } } });
                                 } else {
@@ -2759,10 +2766,6 @@
                     monacoEditor.onDidChangeModelLanguage(() => this.refreshCurrentLang());
 
                     // 自動補齊 HTML 閉合標籤（html / php 模式，輸入 > 時觸發）
-                    const VOID_HTML_TAGS = new Set([
-                        'area','base','br','col','embed','hr','img','input',
-                        'link','meta','param','source','track','wbr'
-                    ]);
                     let _closingHtmlTag = false;
                     monacoEditor.onDidChangeModelContent((e) => {
                         if (_closingHtmlTag) return;
@@ -2857,7 +2860,7 @@
                     monacoEditor.onDidChangeModelContent(() => {
                         if (!this.activeTabPath) return;
                         const data = tabsData.get(this.activeTabPath);
-                        if (!data || data.isImage) return;
+                        if (!data || this.activeTabIsImage) return;
                         const isDirty = monacoEditor.getValue() !== data.originalContent;
                         const tab = this.tabsList.find(t => t.path === this.activeTabPath);
                         if (tab && isDirty !== tab.dirty) tab.dirty = isDirty;
