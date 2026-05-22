@@ -61,7 +61,8 @@
 - tmux 終端機（僅 Linux/macOS）：
   - 啟動時建立共享 socket（寫死 `html-editor`）；伺服器重啟不會殺掉現有 session
   - 設定 `users.<name>.terminal: true` 才開放此功能；`+` 按鈕點擊時改為下拉選單（新增空白檔案 / 新增終端機）
-  - 終端機混入既有 tab-bar，可同時多開；以 xterm.js 呈現，啟用 Unicode 11 寬字元（含 Dingbats 強制寬字元修正）
+  - 終端機混入既有 tab-bar，可同時多開；以 xterm.js 呈現，啟用標準 Unicode 11 寬字元
+  - 終端機 tab 標題加上「終端機」前綴，並顯示 tmux session 名末段以利辨識
   - 終端機 tab 可拖曳排序，順序持久化於 localStorage
   - WebSocket 斷線重連時自動列出該使用者所有 tmux session 並全部還原為 tab
   - 關閉 tab 僅 detach、tmux session 保留；右鍵 tab「終止」才會 `kill-session`
@@ -141,6 +142,7 @@ Windows：
   "rateLimitMaxAttempts": 5,
   "rateLimitBanDuration": 300,
   "jwtSecret": "change-this-to-a-long-random-string",
+  "trustProxy": false,
   "users": {
     "alice": {
       "totpSecret": "JBSWY3DPEHPK3PXP",
@@ -165,7 +167,7 @@ Windows：
 | `rateLimitWindow` | 失敗次數計算的時間視窗（秒）；預設 300 |
 | `rateLimitMaxAttempts` | 視窗內最大失敗次數；達到後觸發封鎖；預設 5 |
 | `rateLimitBanDuration` | 觸發封鎖後的封鎖時長（秒）；預設同 `rateLimitWindow` |
-| `jwtSecret` | JWT 簽署金鑰（**必填**）；建議使用長度 32 字元以上的隨機字串 |
+| `jwtSecret` | JWT 簽署金鑰（**必填**）；長度須至少 32 字元，否則程式拒絕啟動 |
 | `trustProxy` | 是否信任 `X-Forwarded-For` / `X-Forwarded-Proto`（預設 `false`）；僅在已知信任的 reverse proxy 後方開啟 |
 | `users.<name>.totpSecret` | TOTP 金鑰（Base32），可用 Google Authenticator 等 App 掃碼 |
 | `users.<name>.workspace` | 該使用者的 workspace 目錄 |
@@ -306,7 +308,7 @@ static/
 | `POST` | `/api/mkdir?path=` | 建立目錄（含巢狀） |
 | `POST` | `/api/rename?from=&to=` | 重新命名或移動；目的地已存在回傳 409（`?auto=1` 時自動加序號） |
 | `POST` | `/api/copy?from=&to=` | 複製檔案或目錄（遞迴）；目的地已存在自動加序號 |
-| `GET` | `/api/config` | 回傳 `{ username?: string }`；`username` 在 session 有效時附上目前登入帳號 |
+| `GET` | `/api/config` | 回傳 `{ sessionCheck: true, username?, terminal? }`；session 有效時附上 `username`（目前登入帳號）與 `terminal`（該帳號是否可用終端機） |
 | `POST` | `/login` | 登入（form: username, code） |
 | `GET` | `/logout` | 登出並清除 `editorToken` cookie |
 | `GET` | `/check` | 回傳 `{ "data": <剩餘秒數>, "extended": bool }`；TTL 不足 `sessionTTL / 2` 時自動延長並寫入新 JWT cookie；無效 token 回傳 401 |

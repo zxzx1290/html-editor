@@ -1,12 +1,14 @@
 const fs = require('fs');
 const esbuild = require('esbuild');
 
+// Monaco Editor 的資源檔（包含核心程式碼、語言定義、編輯器主題等）。
 const src = 'node_modules/monaco-editor/min/vs';
 const dst = 'static/monaco/vs';
 fs.rmSync(dst, { recursive: true, force: true });
 fs.mkdirSync('static/monaco', { recursive: true });
 fs.cpSync(src, dst, { recursive: true });
 console.log(`Copied ${src} → ${dst}`);
+
 
 // 下拉選單實際使用的主題（全部來自 tm-themes，即 VS Code 原版）。
 // dark-plus / light-plus = VS Code Dark+ / Light+，是預設選項。
@@ -26,6 +28,8 @@ for (const name of THEMES) {
 }
 console.log(`Copied ${THEMES.length} themes → ${themeDst}`);
 
+
+// xterm.js 的核心程式碼與 CSS，還有 fit addon（讓 terminal 自動適應容器大小）和 unicode11 addon（提供更完整的 Unicode 支援）。
 const xtermDst = 'static/xterm';
 fs.rmSync(xtermDst, { recursive: true, force: true });
 fs.mkdirSync(xtermDst, { recursive: true });
@@ -34,6 +38,7 @@ fs.copyFileSync('node_modules/@xterm/xterm/css/xterm.css', `${xtermDst}/xterm.cs
 fs.copyFileSync('node_modules/@xterm/addon-fit/lib/addon-fit.js', `${xtermDst}/addon-fit.js`);
 fs.copyFileSync('node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js', `${xtermDst}/addon-unicode11.js`);
 console.log(`Copied xterm assets → ${xtermDst}`);
+
 
 // TextMate engine：bundle vscode-textmate + vscode-oniguruma 成 IIFE，
 // 配合 grammar 檔與 WASM 一起部署到 static/textmate/
@@ -53,8 +58,11 @@ esbuild.buildSync({
 });
 console.log(`Bundled textmate engine → ${tmDst}/textmate.js`);
 
+
+// vscode-oniguruma 的 WASM 二進位檔，TextMate engine 會載入它來解析 grammar。
 fs.copyFileSync('node_modules/vscode-oniguruma/release/onig.wasm', `${tmDst}/onig.wasm`);
 console.log(`Copied onig.wasm → ${tmDst}/onig.wasm`);
+
 
 // tm-grammars 的 php.json 是 source.php（純 PHP，僅給 <?php ... ?> 內部用），
 // 缺了 .php 檔需要的入口 grammar text.html.php（HTML 為主、嵌入 source.php）。
@@ -68,5 +76,8 @@ const GRAMMARS = [
 for (const name of GRAMMARS) {
   fs.copyFileSync(`node_modules/tm-grammars/grammars/${name}.json`, `${tmDst}/grammars/${name}.json`);
 }
+
+
+// 上面那個 php.json 是給純 PHP 用的，缺了 .php 檔需要的 text.html.php grammar（HTML 為主、嵌入 source.php）。
 fs.copyFileSync('php-html.tmLanguage.json', `${tmDst}/grammars/php-html.json`);
 console.log(`Copied ${GRAMMARS.length + 1} TextMate grammars → ${tmDst}/grammars`);

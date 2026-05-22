@@ -562,12 +562,7 @@ button.btn:disabled {
 }
 
 .tab-icon {
-    margin-right: 4px;
     font-size: 12px;
-}
-
-.tab-terminal .tab-title {
-    font-family: 'Roboto Mono', monospace;
 }
 
 #terminal-host {

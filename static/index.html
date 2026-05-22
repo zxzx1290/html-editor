@@ -629,7 +629,7 @@
                 },
             });
             tmWiredLangs.add(langId);
-            console.log('[TextMate] wired language', langId, 'to scope', scope);
+            console.log('[TextMate] wireTextMateLanguage', langId, 'to scope', scope);
         }
 
         // 切換主題後呼叫。vscode-textmate 的 colorMap 已隨新主題重算，但 Monaco 對
@@ -637,7 +637,24 @@
         // 帶舊主題的 colorMap index → 顏色錯亂。重新註冊 token provider 會讓
         // TokenizationRegistry 發出變更事件，逼該語言所有 model resetTokenization。
         function retokenizeTextMate() {
+            console.log('[TextMate] retokenizeTextMate');
             for (const langId of tmWiredLangs) wireTextMateLanguage(langId);
+        }
+
+        // 確保某語言的 TextMate grammar 已 wire 完成。第一次呼叫觸發 grammar fetch 並
+        // 把 Promise 快取，之後（含 onLanguage lazy 觸發）共用同一個，不會重複抓檔。
+        // 開檔前先 await 它，token provider 就會在 model 顯示前備妥，避免第一次開該
+        // 語言時短暫看到未上色（預設前景色）的內容。
+        const tmWirePromises = new Map();
+        async function ensureLangWired(langId) {
+            if (!TM_LANG_SCOPE[langId]) return; // 不支援 TextMate 的語言不必確保
+            let p = tmWirePromises.get(langId);
+            if (!p) {
+                p = wireTextMateLanguage(langId);
+                tmWirePromises.set(langId, p);
+                console.log('[TextMate] ensureLangWired', langId);
+            }
+            return p;
         }
 
         // ── HTML 配對標籤高亮 ────────────────────────────────────────────────────
@@ -1114,9 +1131,10 @@
                 },
 
                 // 把目前編輯器 model 的語言改成 langId，並關閉選單
-                selectLang(langId) {
+                async selectLang(langId) {
                     const m = monacoEditor && monacoEditor.getModel();
                     if (m) {
+                        await ensureLangWired(langId);
                         monaco.editor.setModelLanguage(m, langId);
                         this.currentLangId = langId;
                     }
@@ -1256,8 +1274,11 @@
                             window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
                         } else {
                             try {
+                                const langId = detectLang(path);
+                                const wirePromise = ensureLangWired(langId);
                                 const text = await this.api('/api/file?path=' + encodeURIComponent(path));
-                                const model = monaco.editor.createModel(text, detectLang(path));
+                                await wirePromise;
+                                const model = monaco.editor.createModel(text, langId);
                                 tabsData.set(path, { model, originalContent: text, viewState: null, baseHash: simpleHash(text) });
                                 this.tabsList.push({ path, dirty: false, isImage: false });
                                 window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
@@ -2351,8 +2372,11 @@
                                 this.tabsList.push({ path, dirty: false, isImage: true });
                                 window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
                             } else {
+                                const langId = detectLang(path);
+                                const wirePromise = ensureLangWired(langId);
                                 const text = await this.api('/api/file?path=' + encodeURIComponent(path));
-                                const model = monaco.editor.createModel(text, detectLang(path));
+                                await wirePromise;
+                                const model = monaco.editor.createModel(text, langId);
                                 const saved = dirtyContents[path];
                                 let isDirty = saved !== undefined && saved !== text;
                                 tabsData.set(path, { model, originalContent: text, viewState: null, baseHash: simpleHash(text) });
@@ -2383,7 +2407,9 @@
                                 );
                                 if (keep) {
                                     const saved = dirtyContents[path];
-                                    const model = monaco.editor.createModel(saved, detectLang(path));
+                                    const langId = detectLang(path);
+                                    await ensureLangWired(langId);
+                                    const model = monaco.editor.createModel(saved, langId);
                                     tabsData.set(path, { model, originalContent: '', viewState: null });
                                     this.tabsList.push({ path, dirty: true, isImage: false, isAnonymous: true });
                                     window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: saved } } });
@@ -2689,13 +2715,8 @@
                     // monaco.languages.onLanguage 監聽器，等 Monaco 首次需要該語言才
                     // fetch grammar JSON / 註冊 tokens provider，避免 boot 拉一堆用不到
                     // 的 grammar。
-                    const wiredLangs = new Set();
                     for (const langId of Object.keys(TM_LANG_SCOPE)) {
-                        monaco.languages.onLanguage(langId, () => {
-                            if (wiredLangs.has(langId)) return;
-                            wiredLangs.add(langId);
-                            wireTextMateLanguage(langId);
-                        });
+                        monaco.languages.onLanguage(langId, () => ensureLangWired(langId));
                     }
 
                     monacoEditor = monaco.editor.create(this.$refs.editorEl, {
