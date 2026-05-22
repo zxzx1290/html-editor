@@ -135,7 +135,7 @@ func (m *tmuxManager) createSession(user string, cols, rows uint16) (string, err
 	cols, rows = clampSize(cols, rows)
 
 	// tmux session name
-	name := user + "-" + strings.ToLower(rand.Text())[:8]
+	name := user + "-" + strings.ToLower(rand.Text())[:6]
 
 	// 一條 tmux invocation 內串：new-session ; set-option（關狀態列）; 這樣 session 就不會閃一下狀態列然後消失了。
 	// -d(detached) 後給 attach 用，-x -y 指定初始大小避免 attach 後閃一下 resize。
