@@ -130,13 +130,6 @@
                         </label>
                     </div>
                     <div class="settings-row">
-                        <span class="settings-label">括號配對上色</span>
-                        <label class="toggle-switch">
-                            <input type="checkbox" v-model="settings.bracketColorization" @change="onBracketColorizationChange" />
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                    <div class="settings-row">
                         <span class="settings-label">顯示隱形字元</span>
                         <label class="toggle-switch">
                             <input type="checkbox" v-model="settings.showInvisible"
@@ -560,8 +553,15 @@
                 getInitialState: () => new TextMateState(TM.textmate.INITIAL),
                 tokenizeEncoded: (line, state) => {
                     const result = grammar.tokenizeLine2(line, state.ruleStack);
+                    // Monaco 的 bracket pair tree 只掃 metadata 帶 BALANCED_BRACKETS_MASK
+                    // (bit 10, 0x400) 的 token；vscode-textmate 不會設這個 bit，所以
+                    // 括號配對框 / pair colorization 全部失效。比照 vscode PR #176084
+                    // 在 token metadata 一律補上這個 bit；string / comment token 由
+                    // tokenType 欄位過濾，補了也不會誤判括號。
+                    const tokens = result.tokens;
+                    for (let i = 1; i < tokens.length; i += 2) tokens[i] |= 0x400;
                     return {
-                        tokens: result.tokens,
+                        tokens,
                         endState: new TextMateState(result.ruleStack),
                     };
                 },
@@ -734,10 +734,6 @@
                 };
             }
 
-            window.editorPlugin.saveService.on('afterSave', function (e) {
-                wsSend({ type: 'after_save', payload: { path: e.path } });
-            });
-
             window.editorPlugin.tabManagerSvc.on('open', function (e) { fileOnOpen(e.tab.path); });
             window.editorPlugin.tabManagerSvc.on('tabDestroy', function (e) { fileOnClose(e.tab.path); });
 
@@ -779,7 +775,6 @@
                         wordWrap: s.wordWrap !== false,
                         minimap: s.minimap !== false,
                         stickyScroll: s.stickyScroll !== false,
-                        bracketColorization: s.bracketColorization !== false,
                         showInvisible: s.showInvisible === true,
                         trimOnSave: s.trimOnSave !== false,
                         terminalFontFamily: s.terminalFontFamily || '',
@@ -2250,13 +2245,6 @@
                     persistSettings({ stickyScroll: this.settings.stickyScroll });
                 },
 
-                onBracketColorizationChange() {
-                    // Monaco 的 bracketPairColorization 對 updateOptions 不靈敏（issue #3013），
-                    // 改用 CSS class 控制：Monaco 永遠開著上色、由 body class 決定要不要顯示
-                    document.body.classList.toggle('bracket-colors-off', !this.settings.bracketColorization);
-                    persistSettings({ bracketColorization: this.settings.bracketColorization });
-                },
-
                 onShowInvisibleChange() {
                     monacoEditor.updateOptions({
                         renderWhitespace: this.settings.showInvisible ? 'all' : 'none',
@@ -2430,8 +2418,6 @@
                     }
                 };
 
-                document.body.classList.toggle('bracket-colors-off', !this.settings.bracketColorization);
-
                 require.config({ paths: { vs: '/static/monaco/vs' } });
                 require(['vs/editor/editor.main'], async () => {
                     await initTextMate();
@@ -2465,7 +2451,6 @@
                         minimap: { enabled: s.minimap },
                         stickyScroll: { enabled: s.stickyScroll },
                         renderWhitespace: s.showInvisible ? 'all' : 'none',
-                        bracketPairColorization: { enabled: true },
                     });
 
                     // EOL 隱藏字元標記（showInvisible 開啟時在每行末顯示 ␍ / ␊）

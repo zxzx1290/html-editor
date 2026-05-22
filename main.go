@@ -941,16 +941,6 @@ func (c *WsClient) readPump(s *server) {
 				"user": c.username, "path": p.Path, "file": p.File,
 			}}, c.username)
 
-		case "after_save":
-			var p struct {
-				Path string `json:"path"`
-			}
-			if err := json.Unmarshal(msg.Payload, &p); err != nil {
-				logf("[ws] after_save bad_payload user=%s err=%v\n", c.username, err)
-				continue
-			}
-			logf("[ws] after_save user=%s path=%s\n", c.username, p.Path)
-
 		case "term_list":
 			if !s.checkTermPermission(c) {
 				continue

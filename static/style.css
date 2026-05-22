@@ -425,7 +425,7 @@ button.btn:disabled {
     display: flex;
     align-items: center;
     padding: 0 6px 0 12px;
-    height: 34px;
+    height: 30px;
     border-right: 1px solid var(--bg-side);
     cursor: pointer;
     white-space: nowrap;
@@ -506,7 +506,7 @@ button.btn:disabled {
 
 .tab-new-btn {
     flex-shrink: 0;
-    height: 34px;
+    height: 30px;
     padding: 0 10px;
     background: transparent;
     border: none;
@@ -1019,15 +1019,3 @@ body.login-page {
 .monaco-editor.vs .editor-eol-crlf::after,
 .monaco-editor.hc-light .editor-eol-lf::after,
 .monaco-editor.hc-light .editor-eol-crlf::after { color: #666; }
-
-/* 括號配對上色（Monaco 對 bracketPairColorization 的 updateOptions 不靈敏，
-   改用 CSS 蓋掉它加上的 bracket-highlighting-N class 的顏色） */
-body.bracket-colors-off .monaco-editor .bracket-highlighting-0,
-body.bracket-colors-off .monaco-editor .bracket-highlighting-1,
-body.bracket-colors-off .monaco-editor .bracket-highlighting-2,
-body.bracket-colors-off .monaco-editor .bracket-highlighting-3,
-body.bracket-colors-off .monaco-editor .bracket-highlighting-4,
-body.bracket-colors-off .monaco-editor .bracket-highlighting-5,
-body.bracket-colors-off .monaco-editor .bracket-highlighting-unexpected {
-    color: inherit !important;
-}
