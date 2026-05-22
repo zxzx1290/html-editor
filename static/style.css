@@ -201,7 +201,7 @@ body {
 #context-menu {
     position: fixed;
     z-index: 1000;
-    background: #252526;
+    background: var(--bg-side);
     border: 1px solid var(--border-popup);
     border-radius: 4px;
     padding: 4px 0;
@@ -250,7 +250,7 @@ button.btn {
 }
 
 button.btn:hover {
-    background: #3c3c3c;
+    background: var(--bg-tab-hover);
 }
 
 button.btn.primary {
@@ -286,7 +286,7 @@ button.btn:disabled {
     position: absolute;
     top: calc(100% + 6px);
     right: 0;
-    background: #2d2d2d;
+    background: var(--bg-side);
     border: 1px solid var(--border-popup);
     border-radius: 4px;
     padding: 6px 0;
@@ -434,6 +434,7 @@ button.btn:disabled {
     align-items: center;
     padding: 0 6px 0 12px;
     height: 30px;
+    border-top: 2px solid transparent;
     border-right: 1px solid var(--bg-side);
     border-bottom: 1px solid var(--border);
     cursor: pointer;
@@ -468,10 +469,10 @@ button.btn:disabled {
 .tab.active {
     background: var(--bg);
     color: var(--fg);
-    border-top: 2px solid var(--accent);
+    /* 所有分頁都預留 2px 透明 border-top，active 只改顏色 → 點擊時文字不位移 */
+    border-top-color: var(--accent);
     /* 底線改成內容區背景色 → active tab 與內容相連、看不到分隔線 */
     border-bottom-color: var(--bg);
-    padding-top: 2px;
 }
 
 .tab-title {
@@ -721,8 +722,8 @@ button.btn:disabled {
 }
 
 .toast-item {
-    background: #333;
-    color: #fff;
+    background: var(--bg-side);
+    color: var(--fg);
     padding: 8px 14px;
     border-radius: 4px;
     border: 1px solid var(--border);
@@ -732,6 +733,7 @@ button.btn:disabled {
 
 .toast-item.error {
     background: var(--danger);
+    color: #fff;
 }
 
 #sidebar-backdrop {
@@ -770,7 +772,7 @@ button.btn:disabled {
 
 #modal-box,
 #saveas-box {
-    background: #2d2d2d;
+    background: var(--bg-side);
     border: 1px solid var(--border-popup);
     border-radius: 6px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);

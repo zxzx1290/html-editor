@@ -81,11 +81,6 @@
                             </optgroup>
                             <optgroup label="深色">
                                 <option value="monokai">Monokai</option>
-                                <option value="dracula">Dracula</option>
-                                <option value="nord">Nord</option>
-                                <option value="solarized-dark">Solarized Dark</option>
-                                <option value="tokyo-night">Tokyo Night</option>
-                                <option value="one-dark-pro">One Dark Pro</option>
                                 <option value="github-dark">GitHub Dark</option>
                             </optgroup>
                             <optgroup label="淺色">
@@ -400,6 +395,34 @@
         const termPathPrefix = 'tmux://';
         // 還原中（由 term_sessions 觸發）的 session name；用來避免重連時搶走 focus
         const restoringTerms = new Set();
+
+        // ── 主題色彩工具：VS Code theme colors → UI ───────────────────────────────
+        function hexToRgb(h) {
+            h = String(h).trim().replace(/^#/, '');
+            if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+            if (h.length === 8) h = h.slice(0, 6); // 丟掉 alpha
+            const n = parseInt(h, 16) || 0;
+            return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+        }
+        function rgbToHex(c) {
+            const h = v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0');
+            return '#' + h(c.r) + h(c.g) + h(c.b);
+        }
+        // 把 a 朝 b 混合 t 比例（0~1）
+        function mixColor(a, b, t) {
+            const x = hexToRgb(a), y = hexToRgb(b);
+            return rgbToHex({
+                r: x.r + (y.r - x.r) * t,
+                g: x.g + (y.g - x.g) * t,
+                b: x.b + (y.b - x.b) * t,
+            });
+        }
+        // 依目前 CSS 變數產生 xterm 主題（背景透明 → 沿用 #terminal-host 的 --bg）
+        function termColorTheme() {
+            const cs = getComputedStyle(document.documentElement);
+            const fg = cs.getPropertyValue('--fg').trim() || '#cccccc';
+            return { background: 'rgba(0,0,0,0)', foreground: fg, cursor: fg };
+        }
 
         // ── IndexedDB session persistence ─────────────────────────────────────────
         // meta  store: key='tabs' → { tabs:[...paths], activeTab:'...' }
@@ -1746,7 +1769,7 @@
                         fontSize: this._termFontSize(),
                         allowTransparency: true,
                         allowProposedApi: true,
-                        theme: { background: 'rgba(0,0,0,0)', foreground: '#cccccc' },
+                        theme: termColorTheme(),
                         scrollback: 0,
                     });
                     const fitAddon = new FitAddon.FitAddon();
@@ -2461,12 +2484,52 @@
                     loadedThemes.add(id);
                 },
 
+                // 把 VS Code theme 的 colors 套到整個 UI（分頁、側欄、終端機…），
+                // 讓 chrome 與編輯器同主題。theme 沒提供的色票就由 editor.background
+                // 與固定前景色推導，確保淺色主題的分頁不會配到深色預設值。
+                applyThemeColors(id) {
+                    const raw = themeCache.get(id);
+                    if (!raw || !raw.colors) return;
+                    const c = raw.colors;
+                    const get = (...keys) => { for (const k of keys) if (c[k]) return c[k]; return null; };
+                    const bg = get('editor.background') || '#1e1e1e';
+                    const accent = get('focusBorder') || '#007acc';
+                    // --fg 不取主題的 editor.foreground（各主題深淺不一、當 UI 文字易偏淡），
+                    // 改依亮/暗色系固定兩種值，確保 chrome 文字對比一致。
+                    const bgc = hexToRgb(bg);
+                    const lum = bgc.r * 0.299 + bgc.g * 0.587 + bgc.b * 0.114;
+                    const isLight = raw.type === 'light' || (raw.type == null && lum > 140);
+                    const fg = isLight ? '#3b3b3b' : '#cccccc';
+                    const vars = {
+                        '--bg': bg,
+                        '--fg': fg,
+                        '--accent': accent,
+                        '--bg-side':      get('editorGroupHeader.tabsBackground', 'sideBar.background') || mixColor(bg, fg, 0.05),
+                        '--bg-tab':       get('tab.inactiveBackground')         || mixColor(bg, fg, 0.09),
+                        '--bg-tab-hover': get('tab.hoverBackground')            || mixColor(bg, fg, 0.16),
+                        '--bg-bar':       get('activityBar.background')         || bg,
+                        '--bg-toolbar':   get('titleBar.activeBackground')      || bg,
+                        '--bg-hover':     get('list.hoverBackground')           || mixColor(bg, fg, 0.10),
+                        '--bg-active':    get('list.activeSelectionBackground') || mixColor(bg, accent, 0.55),
+                        '--fg-dim':       get('descriptionForeground')          || mixColor(fg, bg, 0.45),
+                        '--border':       get('editorGroup.border', 'tab.border', 'panel.border') || mixColor(bg, fg, 0.13),
+                        '--border-popup': get('menu.border', 'editorWidget.border')               || mixColor(bg, fg, 0.25),
+                    };
+                    const root = document.documentElement.style;
+                    for (const k in vars) root.setProperty(k, vars[k]);
+                    // 終端機背景透明 → 自動沿用 --bg；前景／游標跟著主題更新
+                    const tt = termColorTheme();
+                    for (const entry of termInstances.values()) entry.term.options.theme = tt;
+                    console.log('Applied theme colors:', vars);
+                },
+
                 async onThemeChange() {
                     const theme = this.settings.theme;
                     const prev = loadSettings().theme || DEFAULT_THEME;
                     try {
                         await this.ensureTheme(theme);
                         monaco.editor.setTheme(theme);
+                        this.applyThemeColors(theme);
                         retokenizeTextMate();
                         persistSettings({ theme });
                     } catch (err) {
@@ -2710,6 +2773,7 @@
                     if (!loadedThemes.has(activeTheme)) {
                         await this.ensureTheme(activeTheme).catch(() => { });
                     }
+                    this.applyThemeColors(activeTheme);
 
                     // Theia 風格的 lazy wire：對每個我們有 tm-grammar 的 langId 掛
                     // monaco.languages.onLanguage 監聽器，等 Monaco 首次需要該語言才
