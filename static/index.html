@@ -300,13 +300,21 @@
 <script src="/static/monaco/vs/loader.js"></script>
 
 <script>
+    // ── Logger ────────────────────────────────────────────────────────────────────
+    function mylog(src, ...args) {
+        const t = new Date();
+        const p = (n, w = 2) => String(n).padStart(w, '0');
+        const ts = `${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}.${p(t.getMilliseconds(), 3)}`;
+        console.log(`[${ts}]`, `[${src}]`, ...args);
+    }
+
     // ── Plugin System ─────────────────────────────────────────────────────────────
     window.editorPlugin = (function () {
         class EventEmitter {
             constructor() { this._l = {}; }
             on(ev, fn) { (this._l[ev] = this._l[ev] || []).push(fn); return this; }
             off(ev, fn) { if (this._l[ev]) this._l[ev] = this._l[ev].filter(f => f !== fn); return this; }
-            emit(ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { console.error('[plugin emit]', ev, e); } }); }
+            emit(ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { mylog('plugin emit', ev, e); } }); }
         }
 
         const saveService = new EventEmitter();
@@ -321,7 +329,7 @@
             popup(msg) {
                 const app = window._editorApp;
                 if (app) app.showToast(String(msg));
-                else console.log('[bubble]', msg);
+                else mylog('bubble', msg);
             },
         };
 
@@ -346,9 +354,9 @@
                     return r.text();
                 });
                 new Function(code)();
-                console.log('[plugin] loaded:', url);
+                mylog('plugin', 'loaded:', url);
             } catch (e) {
-                console.error('[plugin] failed to load:', url, e);
+                mylog('plugin', 'failed to load:', url, e);
             }
         }
 
@@ -474,6 +482,7 @@
         }
 
         async function loadSession() {
+            mylog('loadSession', 'Loading session');
             try {
                 const [meta, dirtyContents, baseHashes] = await Promise.all([
                     idbOp(STORE_META, 'readonly', s => s.get('tabs')),
@@ -590,6 +599,7 @@
         let tmRegistry = null;
 
         async function initTextMate() {
+            mylog('initTextMate', 'initializing');
             await TM.oniguruma.loadWASM(await fetch('/static/textmate/onig.wasm'));
             tmRegistry = new TM.textmate.Registry({
                 onigLib: Promise.resolve({
@@ -652,7 +662,7 @@
                 },
             });
             tmWiredLangs.add(langId);
-            console.log('[TextMate] wireTextMateLanguage', langId, 'to scope', scope);
+            mylog('TextMate', 'wireTextMateLanguage', langId, 'to scope', scope);
         }
 
         // 切換主題後呼叫。vscode-textmate 的 colorMap 已隨新主題重算，但 Monaco 對
@@ -660,7 +670,7 @@
         // 帶舊主題的 colorMap index → 顏色錯亂。重新註冊 token provider 會讓
         // TokenizationRegistry 發出變更事件，逼該語言所有 model resetTokenization。
         function retokenizeTextMate() {
-            console.log('[TextMate] retokenizeTextMate');
+            mylog('TextMate', 'retokenizeTextMate');
             for (const langId of tmWiredLangs) wireTextMateLanguage(langId);
         }
 
@@ -675,7 +685,7 @@
             if (!p) {
                 p = wireTextMateLanguage(langId);
                 tmWirePromises.set(langId, p);
-                console.log('[TextMate] ensureLangWired', langId);
+                mylog('TextMate', 'ensureLangWired', langId);
             }
             return p;
         }
@@ -824,6 +834,7 @@
         // ── Built-in: Session check & WS collaboration ────────────────────────────
 
         function initSessionCheck(app) {
+            mylog('initSessionCheck', 'starting session check timer');
             const timer = setInterval(async function () {
                 try {
                     const r = await fetch('/check');
@@ -842,6 +853,7 @@
         }
 
         function initWsCollab(app) {
+            mylog('initWsCollab', 'Initializing WebSocket collaboration');
             const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             let socket = null;
             let dupCount = 0;
@@ -884,7 +896,7 @@
                     const msg = JSON.parse(event.data);
 
                     if(msg.type !== 'term_output'){
-                        console.log('[ws]', msg.type, msg);
+                        mylog('ws', msg.type, msg);
                     }
 
                     switch (msg.type) {
@@ -950,13 +962,13 @@
                 };
 
                 socket.onerror = function (err) {
-                    console.error('[ws-collab] error', err);
+                    mylog('ws-collab', 'error', err);
                 };
 
                 socket.onclose = function () {
                     socket = null;
                     app.showError('已離線，將自動重新連線');
-                    console.warn('[ws-collab] connection closed, retrying');
+                    mylog('ws-collab', 'connection closed, retrying');
                     setTimeout(connect, 30000);
                 };
             }
@@ -968,6 +980,7 @@
         }
 
         async function initBuiltins(app) {
+            mylog('initBuiltins', 'Fetching config');
             let cfg;
             try { cfg = await fetch('/api/config').then(r => r.json()); } catch { return; }
             app.currentUser = cfg.username || '';
@@ -1198,6 +1211,7 @@
                 },
 
                 async loadTree() {
+                    mylog('loadTree', 'loading file tree');
                     try {
                         const files = await this.fetchDir('');
                         this.treeItems = files.map(f => ({
@@ -1345,7 +1359,7 @@
                     } else {
                         const data = tabsData.get(path);
                         if (!data) {
-                            console.warn('[activateTab] 找不到 tabsData 項目，tabsList/tabsData 可能不同步:', path);
+                            mylog('activateTab', '找不到 tabsData 項目，tabsList/tabsData 可能不同步:', path);
                             return;
                         }
                         if (newTab.isImage) {
@@ -1748,7 +1762,7 @@
                             entry.term.options.fontFamily = fontFamily;
                             entry.term.options.fontSize = fontSize;
                             entry.fitAddon.fit();
-                        } catch (e) { console.warn('[term] style apply failed', e); }
+                        } catch (e) { mylog('term', 'style apply failed', e); }
                     }
                 },
 
@@ -2380,6 +2394,7 @@
                 },
 
                 async restoreSession() {
+                    mylog('restoreSession', 'restoring session');
                     const session = await loadSession();
                     if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) return;
                     const dirtyContents = session.dirtyContents || {};
@@ -2416,7 +2431,7 @@
                                 if (isDirty) {
                                     const storedHash = (session.baseHashes || {})[path];
                                     if (storedHash !== undefined && storedHash !== simpleHash(text)) {
-                                        console.warn('[session] hash mismatch:', path, '| stored:', storedHash, '| current:', simpleHash(text));
+                                        mylog('session', 'hash mismatch:', path, '| stored:', storedHash, '| current:', simpleHash(text));
                                         const fname = path.split('/').pop();
                                         const keep = await this.dlgConfirm(
                                             `「${fname}」在您離開後已被他人修改。\n是否仍要載入您的未儲存草稿？（儲存時將覆蓋他人的修改）`,
@@ -2448,7 +2463,7 @@
                                     this.clearDirtyEntry(path);
                                 }
                             } else {
-                                console.warn('[session] failed to restore tab:', path, err);
+                                mylog('session', 'failed to restore tab:', path, err);
                             }
                         }
                     }
@@ -2482,8 +2497,10 @@
                     // 每次切換主題都必須重做 setTheme + defineTheme：vscode-textmate 的
                     // colorMap 會隨 theme 重算（索引佈局完全不同），Monaco 端的
                     // encodedTokensColors 必須跟著更新，否則舊 token cache 解出來顏色全錯。
+                    mylog('ensureTheme', id);
                     let raw = themeCache.get(id);
                     if (!raw) {
+                        mylog('ensureTheme', 'Loading theme:', id);
                         raw = await this.api('/static/themes/' + encodeURIComponent(id) + '.json');
                         themeCache.set(id, raw);
                     }
@@ -2528,7 +2545,7 @@
                     // 終端機背景透明 → 自動沿用 --bg；前景／游標跟著主題更新
                     const tt = termColorTheme();
                     for (const entry of termInstances.values()) entry.term.options.theme = tt;
-                    console.log('Applied theme colors:', vars);
+                    mylog('theme', 'Applied theme colors:', vars);
                 },
 
                 async onThemeChange() {
@@ -2541,7 +2558,7 @@
                         retokenizeTextMate();
                         persistSettings({ theme });
                     } catch (err) {
-                        console.log('Failed to load theme:', theme, err);
+                        mylog('theme', 'Failed to load theme:', theme, err);
                         this.showError('載入主題失敗');
                         this.settings.theme = prev;
                     }
@@ -2650,10 +2667,13 @@
                         this.closeLangPicker();
                     }
                 });
+
                 document.addEventListener('contextmenu', (e) => {
                     if (!e.target.closest('#file-tree')) this.hideCtxMenu();
                 });
+
                 window.addEventListener('blur', () => { this.hideCtxMenu(); this.settingsOpen = false; this.newTabMenuOpen = false; });
+
                 window.addEventListener('resize', () => {
                     this.hideCtxMenu();
                     for (const e of termInstances.values()) {
@@ -2688,6 +2708,7 @@
                 });
 
                 document.addEventListener('keydown', (e) => {
+                    // modal關閉
                     if (this.saveAsDlg.visible) {
                         if (e.key === 'Escape') { e.preventDefault(); this.saveAsDlgCancel(); }
                         return;
@@ -2697,10 +2718,12 @@
                         if (e.key === 'Enter' && !this.dlg.inputMode) { e.preventDefault(); this.dlgOk(); }
                         return;
                     }
+                    // 檔案儲存
                     if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
                         e.preventDefault();
                         this.saveCurrent();
                     }
+                    // 檔案刪除
                     if (this.treeFocused && e.key === 'Delete' && !e.ctrlKey && !e.metaKey) {
                         const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
                         const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
@@ -2712,6 +2735,7 @@
                             this.deleteFile(selItem.path, selItem.isDir);
                         }
                     }
+                    // 剪貼簿操作
                     if (this.treeFocused && (e.ctrlKey || e.metaKey)) {
                         const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
                         const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
@@ -2756,6 +2780,7 @@
                     flushSession();
                 });
 
+                // 檔案拖曳上傳
                 window.addEventListener('dragover', (e) => { if (this.hasFiles(e.dataTransfer)) e.preventDefault(); });
                 window.addEventListener('drop', (e) => { if (this.hasFiles(e.dataTransfer)) e.preventDefault(); });
 
@@ -2767,6 +2792,8 @@
                         );
                     }
                 };
+
+                mylog('mounted', 'Loading Monaco editor');
 
                 require.config({ paths: { vs: '/static/monaco/vs' } });
                 require(['vs/editor/editor.main'], async () => {
@@ -2969,19 +2996,20 @@
                     // Auto-load plugins listed in plugins.json (absent file = no plugins)
                     // Must run before restoreSession so plugin handlers are registered
                     // before open events are emitted for restored tabs.
+                    mylog('onmount', 'Checking for plugins.json');
                     try {
                         const res = await fetch('/static/plugins/plugins.json');
                         if (res.ok) {
                             const list = await res.json();
                             if (Array.isArray(list)) {
-                                console.log('[plugin] plugins.json:', list);
+                                mylog('plugin', 'plugins.json:', list);
                                 for (const url of list) {
                                     await window.editorPlugin.loadPlugin(url);
                                 }
                             }
                         }
                     } catch (e) {
-                        console.warn('[plugin] plugins.json load error:', e);
+                        mylog('plugin', 'plugins.json load error:', e);
                     }
 
                     // Init built-in session check + WS collaboration
