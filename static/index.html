@@ -1413,6 +1413,7 @@
                         if (this.activeTabPath === path) {
                             this.activeTabPath = null;
                             if (this.tabsList.length > 0) await this.activateTab(this.tabsList[Math.min(idx, this.tabsList.length - 1)].path);
+                            else { this.setStatus(''); this.scheduleMetaSave(); }
                         }
                         return;
                     }
@@ -1518,8 +1519,17 @@
 
                 async saveCurrent() {
                     if (!this.activeTabPath || this.activeTabIsImage || this.isSaving || !this.activeTabDirty) return;
+
                     const activeTab = this.tabsList.find(t => t.path === this.activeTabPath);
-                    if (activeTab && activeTab.isAnonymous) { await this.saveAnonymousAs(); return; }
+
+                    mylog('saveCurrent', 'saving', this.activeTabPath);
+
+                    if (activeTab && activeTab.isAnonymous) {
+                        mylog('saveCurrent', 'active tab is anonymous, invoking saveAs');
+                        await this.saveAnonymousAs();
+                        return;
+                    }
+
                     const data = tabsData.get(this.activeTabPath);
                     if (!data || !monacoEditor) return;
                     this.isSaving = true;
@@ -1802,10 +1812,39 @@
                     term.unicode.activeVersion = '11';
                     term.open(paneEl);
 
+                    // Ctrl+C 有反白→複製，否則放行送 SIGINT；Ctrl+V → 貼上；F12 → 放給瀏覽器開 DevTools
+                    term.attachCustomKeyEventHandler((ev) => {
+                        if (ev.type !== 'keydown') return true;
+                        // DevTools 常用 F12，放行讓瀏覽器處理
+                        if (ev.code === 'F12') return false;
+                        if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && ev.code === 'KeyC') {
+                            if (term.hasSelection()) {
+                                navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+                                return false;
+                            }
+                            return true;
+                        }
+                        // Ctrl+V：回 false 讓 xterm 不送 ^V、且不 preventDefault → 瀏覽器才會觸發原生 paste 事件
+                        if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && ev.code === 'KeyV') {
+                            return false;
+                        }
+                        return true;
+                    });
+
+                    // capture phase 先攔截 paste：用 term.input() 跳過 bracketed paste 包覆，shell 不會反白
+                    paneEl.addEventListener('paste', (e) => {
+                        const text = e.clipboardData && e.clipboardData.getData('text');
+                        if (!text) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        term.input(text);
+                    }, true);
+
                     term.onData(d => {
                         const data = btoa(unescape(encodeURIComponent(d)));
                         window.editorPlugin.wsSend({ type: 'term_input', payload: { name, data } });
                     });
+
                     term.onResize(({ cols, rows }) => {
                         window.editorPlugin.wsSend({ type: 'term_resize', payload: { name, cols, rows } });
                     });
@@ -1853,7 +1892,7 @@
                     }
                     if (this.activeTabPath === path) {
                         if (this.tabsList.length > 0) this.activateTab(this.tabsList[this.tabsList.length - 1].path);
-                        else this.activeTabPath = null;
+                        else { this.activeTabPath = null; this.setStatus(''); this.scheduleMetaSave(); }
                     }
                 },
 
