@@ -834,7 +834,7 @@
         // ── Built-in: Session check & WS collaboration ────────────────────────────
 
         function initSessionCheck(app) {
-            mylog('initSessionCheck', 'starting session check timer');
+            mylog('initSessionCheck', 'init session check timer');
             const timer = setInterval(async function () {
                 try {
                     const r = await fetch('/check');
@@ -853,7 +853,7 @@
         }
 
         function initWs(app) {
-            mylog('initWs', 'initializing WebSocket');
+            mylog('initWs', 'init websocket');
             const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             let socket = null;
             let dupCount = 0;
@@ -1359,6 +1359,7 @@
                     } else {
                         const data = tabsData.get(path);
                         if (!data) {
+                            this.showError('找不到文件數據');
                             mylog('activateTab', '找不到 tabsData 項目，tabsList/tabsData 可能不同步:', path);
                             return;
                         }
@@ -1779,6 +1780,7 @@
 
                 _ensureTerminal(name) {
                     if (termInstances.has(name)) return termInstances.get(name);
+                    mylog('_ensureTerminal', 'creating terminal pane for', name);
                     const host = this.$refs.terminalHost;
                     const paneEl = document.createElement('div');
                     paneEl.className = 'term-pane';
@@ -2469,12 +2471,16 @@
                     }
                     // 若上次 focus 的是 terminal tab，先記下來，等 term_sessions 還原該 tab 時再切過去
                     if (typeof session.activeTab === 'string' && session.activeTab.startsWith(termPathPrefix)) {
+                        mylog('restoreSession', 'active tab is terminal, defer activating:', session.activeTab);
                         this._pendingActiveTab = session.activeTab;
                     }
                     if (this.tabsList.length > 0) {
                         const target = this.tabsList.find(t => t.path === session.activeTab) || this.tabsList[0];
+                        mylog('restoreSession', 'activating tab:', target.path);
                         await this.activateTab(target.path);
                         await this.revealInTree(target.path);
+                    } else if (this._pendingActiveTab === null) {
+                        mylog('restoreSession', 'no tabs to restore');
                     }
                 },
 
@@ -2885,6 +2891,17 @@
                     });
                     monacoEditor.onDidChangeModelLanguage(() => this.refreshCurrentLang());
 
+                    // 內容變動時刷新 EOL decorations。原本只在切 model / 切設定時跑，
+                    // 貼大檔（行數暴增、或貼入點延長現有行）會造成原 decoration 卡在
+                    // 舊欄位、新增的行又沒 decoration，後半段 ␍/␊ 跑版。每行都要建一
+                    // 個 decoration，所以 debounce 避免逐 keystroke 重建拖慢大檔。
+                    let _eolRefreshTimer = null;
+                    monacoEditor.onDidChangeModelContent(() => {
+                        if (!this.settings.showInvisible) return;
+                        clearTimeout(_eolRefreshTimer);
+                        _eolRefreshTimer = setTimeout(updateEolDecorations, 100);
+                    });
+
                     // 自動補齊 HTML 閉合標籤（html / php 模式，輸入 > 時觸發）
                     let _closingHtmlTag = false;
                     monacoEditor.onDidChangeModelContent((e) => {
@@ -3012,8 +3029,10 @@
                         mylog('plugin', 'plugins.json load error:', e);
                     }
 
+                    mylog('onmount', 'initBuiltins start');
                     // Init built-in session check + WS collaboration
                     await initBuiltins(this);
+                    mylog('onmount', 'initBuiltins done');
 
                     // Restore session (tabs, active tab, unsaved contents)
                     await this.restoreSession();
