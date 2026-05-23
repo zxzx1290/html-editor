@@ -482,7 +482,7 @@
         }
 
         async function loadSession() {
-            mylog('loadSession', 'Loading session');
+            mylog('loadSession', 'loading session');
             try {
                 const [meta, dirtyContents, baseHashes] = await Promise.all([
                     idbOp(STORE_META, 'readonly', s => s.get('tabs')),
@@ -852,8 +852,8 @@
             }, 60000);
         }
 
-        function initWsCollab(app) {
-            mylog('initWsCollab', 'Initializing WebSocket collaboration');
+        function initWs(app) {
+            mylog('initWs', 'initializing WebSocket');
             const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             let socket = null;
             let dupCount = 0;
@@ -980,13 +980,13 @@
         }
 
         async function initBuiltins(app) {
-            mylog('initBuiltins', 'Fetching config');
+            mylog('initBuiltins', 'fetching config');
             let cfg;
             try { cfg = await fetch('/api/config').then(r => r.json()); } catch { return; }
             app.currentUser = cfg.username || '';
             app.canTerminal = cfg.terminal === true;
             initSessionCheck(app);
-            initWsCollab(app);
+            initWs(app);
         }
 
         // ─────────────────────────────────────────────────────────────────────────────
@@ -2500,7 +2500,7 @@
                     mylog('ensureTheme', id);
                     let raw = themeCache.get(id);
                     if (!raw) {
-                        mylog('ensureTheme', 'Loading theme:', id);
+                        mylog('ensureTheme', 'loading theme:', id);
                         raw = await this.api('/static/themes/' + encodeURIComponent(id) + '.json');
                         themeCache.set(id, raw);
                     }
@@ -2545,7 +2545,7 @@
                     // 終端機背景透明 → 自動沿用 --bg；前景／游標跟著主題更新
                     const tt = termColorTheme();
                     for (const entry of termInstances.values()) entry.term.options.theme = tt;
-                    mylog('theme', 'Applied theme colors:', vars);
+                    mylog('theme', 'applied theme colors:', vars);
                 },
 
                 async onThemeChange() {
@@ -2793,7 +2793,7 @@
                     }
                 };
 
-                mylog('mounted', 'Loading Monaco editor');
+                mylog('mounted', 'loading Monaco editor');
 
                 require.config({ paths: { vs: '/static/monaco/vs' } });
                 require(['vs/editor/editor.main'], async () => {
@@ -2996,7 +2996,7 @@
                     // Auto-load plugins listed in plugins.json (absent file = no plugins)
                     // Must run before restoreSession so plugin handlers are registered
                     // before open events are emitted for restored tabs.
-                    mylog('onmount', 'Checking for plugins.json');
+                    mylog('onmount', 'checking for plugins.json');
                     try {
                         const res = await fetch('/static/plugins/plugins.json');
                         if (res.ok) {
