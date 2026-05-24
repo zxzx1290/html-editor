@@ -388,6 +388,7 @@
             yml: 'yaml', yaml: 'yaml',
             sql: 'sql',
             ts: 'typescript', tsx: 'typescript',
+            vue: 'vue',
         };
         // 副檔名抓不到、改用完整檔名（小寫）對應的 langId；例如 Dockerfile 沒副檔名
         const FILENAME_LANG = {
@@ -576,6 +577,7 @@
             'source.yaml': 'yaml',
             'source.sql': 'sql',
             'source.ts': 'typescript',
+            'text.html.vue': 'vue',
         };
         const TM_LANG_SCOPE = {
             javascript: 'source.js',
@@ -595,6 +597,63 @@
             yaml: 'source.yaml',
             sql: 'source.sql',
             typescript: 'source.ts',
+            vue: 'text.html.vue',
+        };
+        // 比照 VS Code / Theia（package.json contributes.grammars.embeddedLanguages）：
+        // 把 grammar 內常見子 scope 對應到 Monaco langId，loadGrammarWithConfiguration
+        // 帶下去後，vscode-textmate 會把 embedded langId 編進 token metadata，於是
+        // Monaco 內建的 commentLine / autoClose / suggest 在 <script>/<style>/template
+        // 區塊裡會自動拿對應語言的 language configuration，不必再寫 Ctrl+/ hack。
+        // 映射來源（langId 對齊 Monaco basic-languages，沒 wire 的會被 if(eid) 過濾）：
+        //   vue       — vuejs/language-tools extensions/vscode/package.json
+        //   html      — microsoft/vscode extensions/html/package.json
+        //   php       — microsoft/vscode extensions/php/package.json
+        //   markdown  — microsoft/vscode extensions/markdown-basics/package.json
+        const TM_EMBEDDED_LANGS = {
+            vue: {
+                'text.html.derivative': 'html',
+                'text.html.markdown': 'markdown',
+                'source.css': 'css',
+                'source.js': 'javascript',
+                'source.ts': 'typescript',
+                'source.json': 'json',
+                'source.yaml': 'yaml',
+            },
+            html: {
+                'text.html': 'html',
+                'source.css': 'css',
+                'source.js': 'javascript',
+                'source.python': 'python',
+            },
+            php: {
+                'text.html': 'html',
+                'source.php': 'php',
+                'source.sql': 'sql',
+                'source.js': 'javascript',
+                'source.json': 'json',
+                'source.css': 'css',
+            },
+            markdown: {
+                // 同 VS Code markdown-basics：legacy 兩個 source.* + meta.embedded.block.*
+                'source.js': 'javascript',
+                'source.css': 'css',
+                'meta.embedded.block.html': 'html',
+                'meta.embedded.block.css': 'css',
+                'meta.embedded.block.javascript': 'javascript',
+                'meta.embedded.block.typescript': 'typescript',
+                'meta.embedded.block.json': 'json',
+                'meta.embedded.block.yaml': 'yaml',
+                'meta.embedded.block.python': 'python',
+                'meta.embedded.block.go': 'go',
+                'meta.embedded.block.rust': 'rust',
+                'meta.embedded.block.ruby': 'ruby',
+                'meta.embedded.block.shellscript': 'shell',
+                'meta.embedded.block.cpp': 'cpp',
+                'meta.embedded.block.java': 'java',
+                'meta.embedded.block.sql': 'sql',
+                'meta.embedded.block.dockerfile': 'dockerfile',
+                'meta.embedded.block.php': 'php',
+            },
         };
         let tmRegistry = null;
 
@@ -636,7 +695,18 @@
                 // 帶上 encodedLanguageId，TokenMetadata 才會編進 language id；缺了會讓
                 // Toggle Line Comment 等以 language 推導的功能在切回單一 line 時失效。
                 const encodedLanguageId = monaco.languages.getEncodedLanguageId(langId);
-                grammar = await tmRegistry.loadGrammarWithConfiguration(scope, encodedLanguageId, {});
+                // embeddedLanguages：scope → 已 encode 的 langId。對應 VS Code
+                // package.json contributes.grammars.embeddedLanguages。沒 register 的
+                // langId 取出來會是 0，過濾掉避免污染 metadata。
+                const embeddedLanguages = {};
+                const embMap = TM_EMBEDDED_LANGS[langId];
+                if (embMap) {
+                    for (const [scopeName, embLangId] of Object.entries(embMap)) {
+                        const eid = monaco.languages.getEncodedLanguageId(embLangId);
+                        if (eid) embeddedLanguages[scopeName] = eid;
+                    }
+                }
+                grammar = await tmRegistry.loadGrammarWithConfiguration(scope, encodedLanguageId, { embeddedLanguages });
                 if (!grammar) return;
                 tmGrammarCache.set(langId, grammar);
             }
@@ -2855,6 +2925,74 @@
                     }
                     this.applyThemeColors(activeTheme);
 
+                    // Vue 不在 Monaco basic-languages 內，必須先 register 才能讓
+                    // setModelLanguage('vue') 與下方 onLanguage 監聽器生效。
+                    monaco.languages.register({ id: 'vue', extensions: ['.vue'], aliases: ['Vue', 'vue'] });
+                    // language configuration 直接 port 自 Volar
+                    // (vuejs/language-tools extensions/vscode/languages/vue-language-configuration.json)。
+                    // 範本區的 Ctrl+/ / 自動縮排 / folding 全部對齊 VS Code 行為；<script> /
+                    // <style> 內的 Ctrl+/ 由 TM_EMBEDDED_LANGS 把 token 標成 javascript /
+                    // css，Monaco 內建 commentLine 會自動切到對應語言 config。
+                    monaco.languages.setLanguageConfiguration('vue', {
+                        comments: { blockComment: ['<!--', '-->'] },
+                        brackets: [['<!--', '-->'], ['{', '}'], ['(', ')']],
+                        autoClosingPairs: [
+                            { open: '{', close: '}' },
+                            { open: '[', close: ']' },
+                            { open: '(', close: ')' },
+                            { open: "'", close: "'" },
+                            { open: '"', close: '"' },
+                            { open: '<!--', close: '-->', notIn: ['comment', 'string'] },
+                            { open: '`', close: '`', notIn: ['string', 'comment'] },
+                            { open: '/**', close: ' */', notIn: ['string'] },
+                        ],
+                        autoCloseBefore: ';:.,=}])><`\'\" \n\t',
+                        surroundingPairs: [
+                            { open: "'", close: "'" },
+                            { open: '"', close: '"' },
+                            { open: '{', close: '}' },
+                            { open: '[', close: ']' },
+                            { open: '(', close: ')' },
+                            { open: '<', close: '>' },
+                            { open: '`', close: '`' },
+                        ],
+                        colorizedBracketPairs: [],
+                        folding: {
+                            markers: {
+                                start: new RegExp('^\\s*<!--\\s*#region\\b.*-->'),
+                                end: new RegExp('^\\s*<!--\\s*#endregion\\b.*-->'),
+                            },
+                        },
+                        wordPattern: new RegExp(
+                            "(-?\\d*\\.\\d\\w*)|([^\\`\\~\\!\\@\\$\\^\\&\\*\\(\\)\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\s]+)"
+                        ),
+                        onEnterRules: [
+                            {
+                                beforeText: new RegExp(
+                                    "<(?!(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr|script|style))([_:\\w][_:\\w-.\\d]*)(?:(?:[^'\"/>]|\"[^\"]*\"|'[^']*')*?(?!\\/)>)[^<]*$",
+                                    'i'
+                                ),
+                                afterText: new RegExp("^<\\/([_:\\w][_:\\w-.\\d]*)\\s*>", 'i'),
+                                action: { indentAction: monaco.languages.IndentAction.IndentOutdent },
+                            },
+                            {
+                                beforeText: new RegExp(
+                                    "<(?!(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr|script|style))([_:\\w][_:\\w-.\\d]*)(?:(?:[^'\"/>]|\"[^\"]*\"|'[^']*')*?(?!\\/)>)[^<]*$",
+                                    'i'
+                                ),
+                                action: { indentAction: monaco.languages.IndentAction.Indent },
+                            },
+                        ],
+                        indentationRules: {
+                            increaseIndentPattern: new RegExp(
+                                "<(?!\\?|(?:area|base|br|col|frame|hr|html|img|input|keygen|link|menuitem|meta|param|source|track|wbr|script|style)\\b|[^>]*\\/>)([-_\\.A-Za-z0-9]+)(?=\\s|>)\\b[^>]*>(?!.*<\\/\\1>)|<!--(?!.*-->)|\\{[^}\"']*$"
+                            ),
+                            decreaseIndentPattern: new RegExp(
+                                "^\\s*(<\\/(?!html)[-_\\.A-Za-z0-9]+\\b[^>]*>|-->|\\})"
+                            ),
+                        },
+                    });
+
                     // Theia 風格的 lazy wire：對每個我們有 tm-grammar 的 langId 掛
                     // monaco.languages.onLanguage 監聽器，等 Monaco 首次需要該語言才
                     // fetch grammar JSON / 註冊 tokens provider，避免 boot 拉一堆用不到
@@ -2895,6 +3033,7 @@
                     };
                     monaco.languages.registerDocumentHighlightProvider('html', htmlTagPairProvider);
                     monaco.languages.registerDocumentHighlightProvider('php', htmlTagPairProvider);
+                    monaco.languages.registerDocumentHighlightProvider('vue', htmlTagPairProvider);
 
                     // EOL 隱藏字元標記（showInvisible 開啟時在每行末顯示 ␍ / ␊）
                     const eolDecorCollection = monacoEditor.createDecorationsCollection([]);
@@ -2941,14 +3080,14 @@
                         _eolRefreshTimer = setTimeout(updateEolDecorations, 100);
                     });
 
-                    // 自動補齊 HTML 閉合標籤（html / php 模式，輸入 > 時觸發）
+                    // 自動補齊 HTML 閉合標籤（html / php / vue 模式，輸入 > 時觸發）
                     let _closingHtmlTag = false;
                     monacoEditor.onDidChangeModelContent((e) => {
                         if (_closingHtmlTag) return;
                         const model = monacoEditor.getModel();
                         if (!model) return;
                         const lang = model.getLanguageId();
-                        if (lang !== 'html' && lang !== 'php') return;
+                        if (lang !== 'html' && lang !== 'php' && lang !== 'vue') return;
                         const insertions = [];
                         for (const ch of e.changes) {
                             if (ch.text !== '>') continue;
@@ -2977,60 +3116,6 @@
                             () => insertions.map(({ line, col }) => new monaco.Selection(line, col, line, col))
                         );
                         _closingHtmlTag = false;
-                    });
-
-                    // open/close 不含空白；dedup=true 時跳過已註解行（僅 HTML 使用）
-                    const toggleLineComment = (model, editor, open, close = '', dedup = false) => {
-                        const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                        const isCommented = close
-                            ? l => new RegExp(`^\\s*${esc(open)}[\\s\\S]*${esc(close)}\\s*$`).test(l)
-                            : l => new RegExp(`^\\s*${esc(open)}`).test(l);
-                        const sel = editor.getSelection();
-                        const startLine = sel.startLineNumber;
-                        const endLine = sel.isEmpty() ? startLine : sel.endLineNumber;
-                        const lines = [];
-                        for (let i = startLine; i <= endLine; i++) lines.push(model.getLineContent(i));
-                        const allCommented = lines.every(l => isCommented(l) || l.trim() === '');
-                        const edits = [];
-                        for (let i = 0; i < lines.length; i++) {
-                            const line = lines[i];
-                            const lineNum = startLine + i;
-                            if (allCommented) {
-                                let text = line.replace(new RegExp(`^(\\s*)${esc(open)}\\s?`), '$1');
-                                if (close) text = text.replace(new RegExp(`\\s?${esc(close)}\\s*$`), '');
-                                edits.push({ range: new monaco.Range(lineNum, 1, lineNum, line.length + 1), text });
-                            } else {
-                                if (dedup && (isCommented(line) || line.trim() === '')) continue;
-                                const indent = (line.match(/^(\s*)/) || ['', ''])[1];
-                                const content = line.trimStart();
-                                const text = close ? `${indent}${open} ${content} ${close}` : `${indent}${open} ${content}`;
-                                edits.push({ range: new monaco.Range(lineNum, 1, lineNum, line.length + 1), text });
-                            }
-                        }
-                        if (edits.length) model.pushEditOperations([], edits, () => null);
-                    };
-
-                    // 依游標位置偵測 PHP 檔案內的語法 context：取游標前最後一個 context 標籤決定當前語境
-                    // <script src="..."> 完全排除在外，不視為開啟 JS block
-                    const togglePhpComment = (model, editor) => {
-                        const pos = editor.getPosition();
-                        const textBefore = model.getValueInRange({
-                            startLineNumber: 1, startColumn: 1,
-                            endLineNumber: pos.lineNumber, endColumn: pos.column,
-                        });
-                        const tags = textBefore.match(/<\?(?!=)|\?>|<script(?![^>]*\bsrc\s*=)[^>]*>|<\/script>|<style[^>]*>|<\/style>/gi) || [];
-                        const last = tags[tags.length - 1] || '';
-                        if (/^<\?/i.test(last))     return toggleLineComment(model, editor, '//');
-                        if (/^<script/i.test(last)) return toggleLineComment(model, editor, '//');
-                        if (/^<style/i.test(last))  return editor.trigger('', 'editor.action.blockComment', null);
-                        toggleLineComment(model, editor, '<!--', '-->', true);
-                    };
-
-                    monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Slash, () => {
-                        const model = monacoEditor.getModel();
-                        if (!model) return;
-                        if (model.getLanguageId() === 'php') togglePhpComment(model, monacoEditor);
-                        else monacoEditor.trigger('', 'editor.action.commentLine', null);
                     });
 
                     monacoEditor.onDidChangeModelContent(() => {

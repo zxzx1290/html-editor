@@ -72,6 +72,7 @@ const GRAMMARS = [
   'html', 'html-derivative', 'css', 'javascript', 'json', 'php',
   'python', 'go', 'rust', 'ruby', 'shellscript', 'markdown',
   'cpp', 'java', 'docker', 'yaml', 'sql', 'typescript',
+  'vue',
 ];
 for (const name of GRAMMARS) {
   fs.copyFileSync(`node_modules/tm-grammars/grammars/${name}.json`, `${tmDst}/grammars/${name}.json`);
