@@ -692,6 +692,7 @@
             if (!scope || !tmRegistry) return;
             let grammar = tmGrammarCache.get(langId);
             if (!grammar) {
+                mylog('wireTextMateLanguage', 'loading grammar for', langId, 'with scope', scope);
                 // 帶上 encodedLanguageId，TokenMetadata 才會編進 language id；缺了會讓
                 // Toggle Line Comment 等以 language 推導的功能在切回單一 line 時失效。
                 const encodedLanguageId = monaco.languages.getEncodedLanguageId(langId);
@@ -703,13 +704,18 @@
                 if (embMap) {
                     for (const [scopeName, embLangId] of Object.entries(embMap)) {
                         const eid = monaco.languages.getEncodedLanguageId(embLangId);
-                        if (eid) embeddedLanguages[scopeName] = eid;
+                        if (eid) {
+                            embeddedLanguages[scopeName] = eid;
+                            ensureBasicLangLoaded(embLangId);
+                        }
                     }
                 }
                 grammar = await tmRegistry.loadGrammarWithConfiguration(scope, encodedLanguageId, { embeddedLanguages });
                 if (!grammar) return;
                 tmGrammarCache.set(langId, grammar);
             }
+
+            mylog('wireTextMateLanguage', 'wiring language', langId, 'with scope', scope);
             // 使用 EncodedTokensProvider（tokenizeEncoded → Uint32Array）：colorMap、
             // 字體樣式都由 vscode-textmate 用 VS Code 同款 scope selector 引擎算好，
             // Monaco 只負責照 encodedTokensColors 取色，不再經過 Monaco 自己的
@@ -732,7 +738,6 @@
                 },
             });
             tmWiredLangs.add(langId);
-            mylog('TextMate', 'wireTextMateLanguage', langId, 'to scope', scope);
         }
 
         // 切換主題後呼叫。vscode-textmate 的 colorMap 已隨新主題重算，但 Monaco 對
@@ -744,18 +749,51 @@
             for (const langId of tmWiredLangs) wireTextMateLanguage(langId);
         }
 
+        // Monaco basic-languages 的 language configuration（commentLine / blockComment /
+        // brackets …）是 lazy load：onLanguageEncountered 在某 langId 第一次有 model 用
+        // 上時才會跑 loader。SFC 情境下 outer model 是 vue / php，內層只是 token metadata
+        // 帶 html / javascript 的 embedded langId，從沒人 createModel('', 'html')，loader
+        // 永遠沒被觸發 → getLanguageConfiguration('html').comments 是空的 → Monaco
+        // 內建 commentLine 在 <template> / HTML 區塊裡無聲 return（Ctrl+/ 沒反應）。
+        // createModel + dispose 是 Monaco 官方 loadLanguage() 採用的觸發方式，最小代價。
+        //
+        // 副作用：createModel 也會觸發我們掛在 onLanguage 上的 ensureLangWired，把該
+        // embedded 語言的 TextMate grammar 一起載。但 embedded 不需要 grammar（token
+        // 由 outer grammar 透過 embeddedLanguages 標出來），且 markdown 的 embedded
+        // 清單涵蓋 ts/json/yaml/go/rust/ruby/shell/cpp/java/sql/dockerfile/php，
+        // 任一入口就會雪球式拉滿全部 grammar JSON。用 _suppressGrammarWire 旗標讓
+        // 這次 onLanguage 內的 ensureLangWired 直接 skip，只保留 Monaco 內部 loader
+        // 設 language configuration 的效果；grammar 留到該語言真的被開檔時再載。
+        const basicLangsLoaded = new Set();
+        let _suppressGrammarWire = false;
+        function ensureBasicLangLoaded(langId) {
+            mylog('ensureBasicLangLoaded', langId);
+            if (basicLangsLoaded.has(langId)) return;
+            basicLangsLoaded.add(langId);
+            _suppressGrammarWire = true;
+            try {
+                const m = monaco.editor.createModel('', langId);
+                m.dispose();
+            } finally {
+                _suppressGrammarWire = false;
+            }
+        }
+
         // 確保某語言的 TextMate grammar 已 wire 完成。第一次呼叫觸發 grammar fetch 並
         // 把 Promise 快取，之後（含 onLanguage lazy 觸發）共用同一個，不會重複抓檔。
         // 開檔前先 await 它，token provider 就會在 model 顯示前備妥，避免第一次開該
         // 語言時短暫看到未上色（預設前景色）的內容。
         const tmWirePromises = new Map();
         async function ensureLangWired(langId) {
+            mylog('ensureLangWired', langId);
             if (!TM_LANG_SCOPE[langId]) return; // 不支援 TextMate 的語言不必確保
+            // 由 ensureBasicLangLoaded 走 createModel 觸發進來的不真的需要 grammar，
+            // 跳過以免 markdown / vue 的 embeddedLanguages 連鎖把所有 grammar 都拉光。
+            if (_suppressGrammarWire) return;
             let p = tmWirePromises.get(langId);
             if (!p) {
                 p = wireTextMateLanguage(langId);
                 tmWirePromises.set(langId, p);
-                mylog('TextMate', 'ensureLangWired', langId);
             }
             return p;
         }
@@ -1243,6 +1281,7 @@
 
                 // 把目前編輯器 model 的語言改成 langId，並關閉選單
                 async selectLang(langId) {
+                    mylog('selectLang', langId);
                     const m = monacoEditor && monacoEditor.getModel();
                     if (m) {
                         await ensureLangWired(langId);
@@ -2998,6 +3037,7 @@
                     // fetch grammar JSON / 註冊 tokens provider，避免 boot 拉一堆用不到
                     // 的 grammar。
                     for (const langId of Object.keys(TM_LANG_SCOPE)) {
+                        mylog('mounted', 'registering onLanguage for', langId);
                         monaco.languages.onLanguage(langId, () => ensureLangWired(langId));
                     }
 
