@@ -2912,7 +2912,23 @@
                         raw = await this.api('/static/themes/' + encodeURIComponent(id) + '.json');
                         themeCache.set(id, raw);
                     }
-                    tmRegistry.setTheme({ name: id, settings: raw.tokenColors || [] });
+                    // vscode-textmate 用 tokenColors[0]（無 scope、只設 fg/bg）當預設前景色；
+                    // 沒有這條時會 fallback 到硬編碼 #000000 → mtk1 變黑，dark theme 整片黑字。
+                    // 大部分 VS Code theme（dark-plus / dracula / github-dark / one-dark-pro /
+                    // tokyo-night …）第一條 tokenColors 都帶 scope，不是 defaults，所以這裡
+                    // 必須從 colors['editor.foreground'] 推導出 defaults 補在最前面。
+                    const tokenColors = raw.tokenColors || [];
+                    const first = tokenColors[0];
+                    const hasDefaults = first && !first.scope && first.settings && first.settings.foreground;
+                    const settings = hasDefaults ? tokenColors : [
+                        { settings: {
+                            foreground: (raw.colors && raw.colors['editor.foreground']) || '#000000',
+                            background: (raw.colors && raw.colors['editor.background']) || '#FFFFFF',
+                        } },
+                        ...tokenColors,
+                    ];
+                    // mylog('ensureTheme', 'setting theme:', id, { settings });
+                    tmRegistry.setTheme({ name: id, settings });
                     monaco.editor.defineTheme(id, vscodeThemeToMonaco(raw, tmRegistry.getColorMap()));
                     loadedThemes.add(id);
                 },
