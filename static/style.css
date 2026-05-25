@@ -1113,3 +1113,17 @@ body.login-page {
 .monaco-editor.vs .editor-eol-crlf::after,
 .monaco-editor.hc-light .editor-eol-lf::after,
 .monaco-editor.hc-light .editor-eol-crlf::after { color: #666; }
+
+/* 搜尋結果分頁中可 Ctrl+Click 跳轉的行 */
+.monaco-editor .search-link { cursor: pointer; }
+.monaco-editor .search-link:hover { text-decoration: underline; }
+/* 結果行中命中關鍵字的字串高亮 */
+.monaco-editor .search-match {
+    background: rgba(255, 200, 60, 0.35);
+    border-radius: 2px;
+    font-weight: bold;
+}
+.monaco-editor.vs .search-match,
+.monaco-editor.hc-light .search-match {
+    background: rgba(255, 200, 60, 0.55);
+}

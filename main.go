@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -404,12 +406,13 @@ type fileEntry struct {
 }
 
 type server struct {
-	config     *Config
-	jwtSecret  []byte
-	hub        *Hub
-	limiter    *rateLimiter
-	totpReplay *totpReplay
-	tmux       *tmuxManager
+	config         *Config
+	jwtSecret      []byte
+	hub            *Hub
+	limiter        *rateLimiter
+	totpReplay     *totpReplay
+	tmux           *tmuxManager
+	searchInFlight sync.Map // map[username]struct{}：每位使用者同時只能 1 個搜尋
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -513,6 +516,7 @@ func main() {
 	mux.HandleFunc("/api/mkdir",    s.sessionAndWorkspace(s.handleMkdir))
 	mux.HandleFunc("/api/rename",   s.sessionAndWorkspace(s.handleRename))
 	mux.HandleFunc("/api/copy",     s.sessionAndWorkspace(s.handleCopy))
+	mux.HandleFunc("/api/search",   s.sessionAndWorkspace(s.handleSearch))
 	mux.Handle("/static/",          http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	mux.HandleFunc("/favicon.ico",  func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, filepath.Join("static", "favicon.ico")) })
 	mux.HandleFunc("/",             s.checkSession(s.handleIndex))
@@ -1576,4 +1580,265 @@ func resolvePath(workspace, rel string) (string, error) {
 		return "", errors.New("path escapes workspace")
 	}
 	return absResolved, nil
+}
+
+// ─── Search ───────────────────────────────────────────────────────────────────
+
+const (
+	searchTimeout     = 30 * time.Second
+	searchMaxFileSize = 5 * 1024 * 1024
+	searchMaxLineLen  = 500
+	searchMaxPerFile  = 200
+	searchMaxTotal    = 1000
+	searchScanBufSize = 1024 * 1024
+)
+
+// 可搜尋的文字檔副檔名（不含前綴 "."，小寫比對）。
+var searchTextExts = []string{
+	"txt", "md", "markdown",
+	"html", "htm", "vue", "php", "phtml",
+	"js", "mjs", "cjs", "jsx", "ts", "tsx",
+	"css", "scss", "sass", "less",
+	"json", "json5", "yaml", "yml", "toml",
+	"xml", "ini", "conf", "cfg", "env",
+	"go", "py", "rb", "java", "kt", "swift",
+	"rs", "c", "h", "cpp", "hpp", "cs",
+	"sh", "bash", "zsh", "ps1", "bat", "cmd",
+	"sql", "log", "csv", "tsv",
+	"gitignore", "gitattributes", "dockerfile", "makefile",
+}
+
+// 無副檔名但檔名本身視為文字檔的特例。
+var searchTextBareNames = []string{"Dockerfile", "Makefile", "README"}
+
+func searchableFile(name string) bool {
+	if slices.Contains(searchTextBareNames, name) {
+		return true
+	}
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+	return ext != "" && slices.Contains(searchTextExts, ext)
+}
+
+type searchRequest struct {
+	Path          string `json:"path"`
+	Query         string `json:"q"`
+	CaseSensitive bool   `json:"case_sensitive"`
+}
+
+type searchMatch struct {
+	Line int    `json:"line"`
+	Text string `json:"text"`
+}
+
+// NDJSON 事件型別
+type searchFileEvent struct {
+	Type    string        `json:"type"` // "file"
+	Path    string        `json:"path"`
+	Matches []searchMatch `json:"matches"`
+}
+
+type searchDoneEvent struct {
+	Type         string `json:"type"` // "done"
+	FilesScanned int    `json:"files_scanned"`
+	TotalMatches int    `json:"total_matches"`
+	ElapsedMs    int64  `json:"elapsed_ms"`
+	Truncated    bool   `json:"truncated"`
+	Timeout      bool   `json:"timeout"`
+}
+
+func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	user := usernameFromCtx(r)
+	if _, busy := s.searchInFlight.LoadOrStore(user, struct{}{}); busy {
+		writeError(w, http.StatusTooManyRequests, "another search is in progress")
+		return
+	}
+	defer s.searchInFlight.Delete(user)
+
+	var req searchRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	keyword := strings.TrimSpace(req.Query)
+	if keyword == "" {
+		writeError(w, http.StatusBadRequest, "missing query")
+		return
+	}
+
+	ws := workspaceFromCtx(r)
+	dir, err := resolvePath(ws, req.Path)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "invalid path")
+		return
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !info.IsDir() {
+		writeError(w, http.StatusBadRequest, "not a directory")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), searchTimeout)
+	defer cancel()
+
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no") // 防止 nginx 等反向代理緩衝
+	w.WriteHeader(http.StatusOK)
+
+	root := filepath.ToSlash(strings.TrimPrefix(strings.TrimPrefix(dir, ws), string(os.PathSeparator)))
+	enc := json.NewEncoder(w)
+	emit := func(v any) bool {
+		if err := enc.Encode(v); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	needle := keyword
+	if !req.CaseSensitive {
+		needle = strings.ToLower(keyword)
+	}
+
+	start := time.Now()
+	totalMatches := 0
+	filesScanned := 0
+	truncated := false
+
+	err = filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
+		select {
+		case <-ctx.Done():
+			return filepath.SkipAll
+		default:
+		}
+		if walkErr != nil {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if path == dir {
+				return nil
+			}
+			if strings.HasPrefix(name, ".") || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() || !searchableFile(name) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.Size() > searchMaxFileSize {
+			return nil
+		}
+		filesScanned++
+
+		matches, hitCap := scanFileForKeyword(ctx, path, needle, req.CaseSensitive, searchMaxTotal-totalMatches)
+		if hitCap && len(matches) == 0 {
+			truncated = true
+			return filepath.SkipAll
+		}
+		if len(matches) > 0 {
+			rel, _ := filepath.Rel(ws, path)
+			if !emit(searchFileEvent{Type: "file", Path: filepath.ToSlash(rel), Matches: matches}) {
+				return filepath.SkipAll
+			}
+			totalMatches += len(matches)
+		}
+		if totalMatches >= searchMaxTotal {
+			truncated = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+
+	timedOut := ctx.Err() != nil
+	if timedOut {
+		truncated = true
+	}
+	if err != nil && !errors.Is(err, filepath.SkipAll) {
+		// walk 失敗：仍嘗試把 done 訊息送出去（讓 client 顯示部分結果 + 截斷標記）
+		truncated = true
+	}
+
+	emit(searchDoneEvent{
+		Type:         "done",
+		FilesScanned: filesScanned,
+		TotalMatches: totalMatches,
+		ElapsedMs:    time.Since(start).Milliseconds(),
+		Truncated:    truncated,
+		Timeout:      timedOut,
+	})
+
+	logf("[search] user=%s root=%s q=%q matches=%d files=%d elapsed=%dms truncated=%v\n",
+		user, root, keyword, totalMatches, filesScanned, time.Since(start).Milliseconds(), truncated)
+}
+
+// scanFileForKeyword 逐行掃描檔案，回傳命中的行（line+text）。
+// remaining 是還能再收幾筆 match（受 searchMaxTotal 控制）；
+// 若因 remaining<=0 而無法繼續，hitCap=true。
+func scanFileForKeyword(ctx context.Context, path, needle string, caseSensitive bool, remaining int) (matches []searchMatch, hitCap bool) {
+	if remaining <= 0 {
+		return nil, true
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), searchScanBufSize)
+
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		if lineNum%256 == 0 {
+			select {
+			case <-ctx.Done():
+				return matches, false
+			default:
+			}
+		}
+		line := scanner.Text()
+		hay := line
+		if !caseSensitive {
+			hay = strings.ToLower(line)
+		}
+		if !strings.Contains(hay, needle) {
+			continue
+		}
+		text := line
+		if len(text) > searchMaxLineLen {
+			text = text[:searchMaxLineLen]
+		}
+		matches = append(matches, searchMatch{Line: lineNum, Text: text})
+		if len(matches) >= searchMaxPerFile {
+			return matches, false
+		}
+		if len(matches) >= remaining {
+			return matches, false
+		}
+	}
+	return matches, false
 }

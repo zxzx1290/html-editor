@@ -188,10 +188,12 @@
                 @drop.prevent="onTabDrop($event, tab)"
                 @dragend="onTabDragEnd">
                 <span v-if="tab.isTerminal" class="tab-icon">⬛</span>
-                <span class="tab-title" :title="tab.isTerminal ? tab.termName : (tab.isAnonymous ? '' : tab.path)">{{
+                <span class="tab-title" :title="tab.isTerminal ? tab.termName : (tab.searchLabel || (tab.isAnonymous ? '' : tab.path))">{{
                     tab.isTerminal
                         ? '終端機 ' + (tab.termName ? tab.termName.split('-').slice(-1)[0] : 'term')
-                        : (tab.isAnonymous ? 'Untitled ' + tab.path.split(':')[1] : tab.path.split('/').pop())
+                        : (tab.searchLabel
+                            ? tab.searchLabel
+                            : (tab.isAnonymous ? 'Untitled ' + tab.path.split(':')[1] : tab.path.split('/').pop()))
                 }}</span>
                 <span v-if="tab.dirty" class="tab-dirty">●</span>
                 <button class="tab-close" draggable="false" @click.stop="closeTab(tab.path)" title="關閉">×</button>
@@ -1527,11 +1529,15 @@
                         return;
                     }
 
-                    const displayName = tab.isAnonymous ? 'Untitled ' + path.split(':')[1] : path.split('/').pop();
+                    const displayName = tab.searchLabel || (tab.isAnonymous ? 'Untitled ' + path.split(':')[1] : path.split('/').pop());
                     if (tab.dirty && !await this.dlgConfirm(`「${displayName}」有未儲存的變更，確定要關閉嗎？`)) return;
 
                     window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path } });
                     const data = tabsData.get(path);
+                    // 搜尋分頁在進行中關閉 → abort fetch，讓 server 提早結束、釋放 per-user 並發鎖
+                    if (data && data.searchAbort) {
+                        try { data.searchAbort.abort(); } catch {}
+                    }
                     if (data && data.model) data.model.dispose();
                     tabsData.delete(path);
                     this.tabsList.splice(idx, 1);
@@ -2389,7 +2395,11 @@
                             { label: '上傳檔案…', action: () => this.triggerUpload('') },
                         ];
                         if (hasCb) menuItems.push('-', { label: '貼上', action: () => this.clipboardPaste('') });
-                        menuItems.push('-', { label: '重新整理', action: () => this.loadTree() });
+                        menuItems.push(
+                            '-',
+                            { label: '搜尋', action: () => this.searchInFolder('') },
+                            { label: '重新整理', action: () => this.loadTree() },
+                        );
                         this.showCtxMenu(e.clientX, e.clientY, menuItems);
                     } else if (item.isDir) {
                         this.selectedPath = item.path;
@@ -2408,6 +2418,7 @@
                         menuItems.push(
                             '-',
                             { label: '重新命名', action: () => this.renameItem(item) },
+                            { label: '搜尋', action: () => this.searchInFolder(path) },
                             { label: '重新整理', action: () => this.forceRefreshDir(path) },
                             '-',
                             { label: '刪除目錄', danger: true, action: () => this.deleteFile(path, true) },
@@ -2457,6 +2468,249 @@
                 onCtxItemClick(item) {
                     this.hideCtxMenu();
                     item.action();
+                },
+
+                // ── Folder search ─────────────────────────────────────────────────────
+
+                async searchInFolder(dirPath) {
+                    const label = dirPath || '/';
+                    const q = await this.dlgPrompt(`在「${label}」搜尋：`, '', '輸入關鍵字');
+                    if (!q || !q.trim()) return;
+                    const keyword = q.trim();
+
+                    const ctl = new AbortController();
+                    const tabPath = this._createSearchTab(keyword, dirPath, ctl);
+
+                    const timer = setTimeout(() => {
+                        // 標記為逾時，避免被誤判為使用者主動關閉
+                        ctl._timedOut = true;
+                        ctl.abort();
+                    }, 32000);
+                    try {
+                        const res = await fetch('/api/search', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ path: dirPath, q: keyword }),
+                            signal: ctl.signal,
+                        });
+                        if (!res.ok) {
+                            if (res.status === 429) throw new Error('已有一個搜尋進行中，請稍候');
+                            throw new Error(await res.text() || res.statusText);
+                        }
+                        await this._consumeSearchStream(res, tabPath);
+                    } catch (e) {
+                        // 使用者已關閉分頁 → 靜默忽略，不要噴錯誤
+                        if (e.name === 'AbortError' && !ctl._timedOut) return;
+                        const msg = e.name === 'AbortError' ? '搜尋逾時' : ('搜尋失敗：' + e.message);
+                        this._searchSetError(tabPath, msg);
+                        this.showError(msg);
+                    } finally {
+                        clearTimeout(timer);
+                    }
+                },
+
+                _createSearchTab(keyword, dirPath, abortCtl) {
+                    let n = 1;
+                    while (this.tabsList.find(t => t.path === `search:${n}`)) n++;
+                    const path = `search:${n}`;
+                    const uri = monaco.Uri.parse(`inmemory://search/${n}`);
+                    const header = `搜尋「${keyword}」於 /${dirPath || ''}\n\n搜尋中…`;
+                    const model = monaco.editor.createModel(header, 'plaintext', uri);
+                    tabsData.set(path, {
+                        model,
+                        originalContent: header,
+                        viewState: null,
+                        searchMeta: { keyword, dirPath },
+                        searchAbort: abortCtl,
+                        searchState: {
+                            placeholderActive: true, // 第 3 行還是「搜尋中…」placeholder
+                            hadAnyResult: false,
+                        },
+                    });
+                    this.tabsList.push({
+                        path, dirty: false, isImage: false, isAnonymous: true,
+                        isSearchResult: true,
+                        searchLabel: `搜尋: ${keyword}`,
+                    });
+                    window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: header } } });
+                    this.activateTab(path);
+                    this.scheduleMetaSave();
+                    return path;
+                },
+
+                async _consumeSearchStream(res, tabPath) {
+                    const reader = res.body.getReader();
+                    const decoder = new TextDecoder('utf-8');
+                    let buffer = '';
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+                        let nl;
+                        while ((nl = buffer.indexOf('\n')) >= 0) {
+                            const line = buffer.slice(0, nl).trim();
+                            buffer = buffer.slice(nl + 1);
+                            if (!line) continue;
+                            let ev;
+                            try { ev = JSON.parse(line); } catch { continue; }
+                            this._handleSearchEvent(tabPath, ev);
+                        }
+                    }
+                    const tail = buffer.trim();
+                    if (tail) {
+                        try { this._handleSearchEvent(tabPath, JSON.parse(tail)); } catch {}
+                    }
+                },
+
+                _handleSearchEvent(tabPath, ev) {
+                    const d = tabsData.get(tabPath);
+                    if (!d || !d.model) return;
+                    if (ev.type === 'file') {
+                        this._searchAppendFile(d, ev);
+                    } else if (ev.type === 'done') {
+                        this._searchAppendDone(d, ev);
+                    }
+                    const tab = this.tabsList.find(t => t.path === tabPath);
+                    if (tab) tab.dirty = false;
+                    d.originalContent = d.model.getValue();
+                },
+
+                // 把「搜尋中…」placeholder 清掉，保留 "header\n\n"。
+                _searchClearPlaceholder(d) {
+                    if (!d.searchState.placeholderActive) return;
+                    const model = d.model;
+                    const lineCount = model.getLineCount();
+                    if (lineCount >= 3) {
+                        const endCol = model.getLineMaxColumn(lineCount);
+                        model.applyEdits([{
+                            range: new monaco.Range(3, 1, lineCount, endCol),
+                            text: '',
+                        }]);
+                    }
+                    d.searchState.placeholderActive = false;
+                },
+
+                _searchAppendText(d, text) {
+                    const model = d.model;
+                    const lineCount = model.getLineCount();
+                    const lastCol = model.getLineMaxColumn(lineCount);
+                    model.applyEdits([{
+                        range: new monaco.Range(lineCount, lastCol, lineCount, lastCol),
+                        text,
+                    }]);
+                },
+
+                _searchAppendFile(d, ev) {
+                    this._searchClearPlaceholder(d);
+                    d.searchState.hadAnyResult = true;
+                    let block = `/${ev.path}:\n`;
+                    for (const m of ev.matches) {
+                        block += `    ${m.line}:    ${m.text}\n`;
+                    }
+                    block += '\n';
+                    this._searchAppendText(d, block);
+                    this._applySearchDecorations(d);
+                },
+
+                _searchAppendDone(d, ev) {
+                    this._searchClearPlaceholder(d);
+                    let footer;
+                    if (!d.searchState.hadAnyResult) {
+                        footer = '（沒有符合的結果）';
+                    } else if (ev.truncated) {
+                        footer = `── 已截斷：${ev.total_matches} 筆，${ev.files_scanned} 個檔案，${ev.elapsed_ms}ms${ev.timeout ? '（逾時）' : ''} ──`;
+                    } else {
+                        footer = `── 完成：${ev.total_matches} 筆，${ev.files_scanned} 個檔案，${ev.elapsed_ms}ms ──`;
+                    }
+                    this._searchAppendText(d, footer + '\n');
+                },
+
+                _searchSetError(tabPath, msg) {
+                    const d = tabsData.get(tabPath);
+                    if (!d || !d.model) return;
+                    if (d.searchState.placeholderActive) {
+                        const model = d.model;
+                        const lineCount = model.getLineCount();
+                        const endCol = model.getLineMaxColumn(lineCount);
+                        model.applyEdits([{
+                            range: new monaco.Range(3, 1, lineCount, endCol),
+                            text: msg,
+                        }]);
+                        d.searchState.placeholderActive = false;
+                    } else {
+                        this._searchAppendText(d, `\n${msg}\n`);
+                    }
+                    d.originalContent = d.model.getValue();
+                    const tab = this.tabsList.find(t => t.path === tabPath);
+                    if (tab) tab.dirty = false;
+                },
+
+                _applySearchDecorations(d) {
+                    const model = d.model;
+                    if (!model) return;
+                    const keyword = (d.searchMeta && d.searchMeta.keyword) || '';
+                    const klen = keyword.length;
+                    const klow = keyword.toLowerCase();
+                    const decos = [];
+                    const total = model.getLineCount();
+                    for (let i = 1; i <= total; i++) {
+                        const t = model.getLineContent(i);
+                        const prefixMatch = t.match(/^    \d+:    /);
+                        if (prefixMatch) {
+                            // 整行加 link 樣式（Ctrl+Click 跳轉）
+                            decos.push({
+                                range: new monaco.Range(i, 1, i, model.getLineMaxColumn(i)),
+                                options: { inlineClassName: 'search-link', hoverMessage: { value: 'Ctrl+Click 開啟' } },
+                            });
+                            // 高亮 keyword 命中（限制在 content 區段，避免污染 prefix 的 line number）
+                            if (klen > 0) {
+                                const prefixLen = prefixMatch[0].length;
+                                const content = t.slice(prefixLen);
+                                const lc = content.toLowerCase();
+                                let pos = 0;
+                                while ((pos = lc.indexOf(klow, pos)) >= 0) {
+                                    const col = prefixLen + pos + 1;
+                                    decos.push({
+                                        range: new monaco.Range(i, col, i, col + klen),
+                                        options: { inlineClassName: 'search-match' },
+                                    });
+                                    pos += klen;
+                                }
+                            }
+                        } else if (/^\/(.+):$/.test(t)) {
+                            decos.push({
+                                range: new monaco.Range(i, 1, i, model.getLineMaxColumn(i)),
+                                options: { inlineClassName: 'search-link', hoverMessage: { value: 'Ctrl+Click 開啟' } },
+                            });
+                        }
+                    }
+                    d.searchDecorations = model.deltaDecorations(d.searchDecorations || [], decos);
+                },
+
+                _resolveSearchClick(model, lineNumber) {
+                    const text = model.getLineContent(lineNumber);
+                    const matchLine = text.match(/^    (\d+):/);
+                    if (matchLine) {
+                        const line = parseInt(matchLine[1], 10);
+                        for (let i = lineNumber - 1; i >= 1; i--) {
+                            const t = model.getLineContent(i);
+                            const h = t.match(/^\/(.+):$/);
+                            if (h) return { path: h[1], line };
+                        }
+                        return null;
+                    }
+                    const header = text.match(/^\/(.+):$/);
+                    if (header) return { path: header[1], line: 1 };
+                    return null;
+                },
+
+                async openFileAtLine(path, line) {
+                    await this.openFile(path);
+                    const m = monacoEditor.getModel();
+                    if (!m) return;
+                    monacoEditor.revealLineInCenter(line);
+                    monacoEditor.setPosition({ lineNumber: line, column: 1 });
+                    monacoEditor.focus();
                 },
 
                 // ── Drag and drop ─────────────────────────────────────────────────────
@@ -2964,6 +3218,7 @@
                     }
                     this.applyThemeColors(activeTheme);
 
+                    mylog('mounted', 'registering Vue language support');
                     // Vue 不在 Monaco basic-languages 內，必須先 register 才能讓
                     // setModelLanguage('vue') 與下方 onLanguage 監聽器生效。
                     monaco.languages.register({ id: 'vue', extensions: ['.vue'], aliases: ['Vue', 'vue'] });
@@ -3108,6 +3363,20 @@
                         }});
                     });
                     monacoEditor.onDidChangeModelLanguage(() => this.refreshCurrentLang());
+
+                    // Ctrl+Click（Mac 為 Cmd+Click）在搜尋結果分頁跳轉到對應檔案的某一行
+                    monacoEditor.onMouseDown((e) => {
+                        const be = e.event.browserEvent;
+                        if (!(be.ctrlKey || be.metaKey)) return;
+                        if (e.target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT) return;
+                        const model = monacoEditor.getModel();
+                        if (!model || !model.uri.toString().startsWith('inmemory://search/')) return;
+                        const target = this._resolveSearchClick(model, e.target.position.lineNumber);
+                        if (!target) return;
+                        be.preventDefault();
+                        be.stopPropagation();
+                        this.openFileAtLine(target.path, target.line);
+                    });
 
                     // 內容變動時刷新 EOL decorations。原本只在切 model / 切設定時跑，
                     // 貼大檔（行數暴增、或貼入點延長現有行）會造成原 decoration 卡在
