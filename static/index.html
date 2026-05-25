@@ -2474,7 +2474,18 @@
 
                 async searchInFolder(dirPath) {
                     const label = dirPath || '/';
-                    const q = await this.dlgPrompt(`在「${label}」搜尋：`, '', '輸入關鍵字');
+                    const title = [
+                        `在「${label}」搜尋（regex）`,
+                        '',
+                        '常用語法：',
+                        '• (?i)foo — 不分大小寫',
+                        '• \\bfoo\\b — 完整單字',
+                        '• foo|bar — foo 或 bar',
+                        '• foo.*bar — 同行 foo 後接 bar',
+                        '• ^foo / foo$ — 行首 / 行尾',
+                        '• . * + ? ( ) [ ] { } | \\ 等特殊字元需用 \\ 跳脫',
+                    ].join('\n');
+                    const q = await this.dlgPrompt(title, '', '輸入 regex');
                     if (!q || !q.trim()) return;
                     const keyword = q.trim();
 
@@ -2514,7 +2525,7 @@
                     while (this.tabsList.find(t => t.path === `search:${n}`)) n++;
                     const path = `search:${n}`;
                     const uri = monaco.Uri.parse(`inmemory://search/${n}`);
-                    const header = `搜尋「${keyword}」於 /${dirPath || ''}\n\n搜尋中…`;
+                    const header = `搜尋 regex「${keyword}」於 /${dirPath || ''}\n\n搜尋中…`;
                     const model = monaco.editor.createModel(header, 'plaintext', uri);
                     tabsData.set(path, {
                         model,
@@ -2530,7 +2541,7 @@
                     this.tabsList.push({
                         path, dirty: false, isImage: false, isAnonymous: true,
                         isSearchResult: true,
-                        searchLabel: `搜尋: ${keyword}`,
+                        searchLabel: `regex: ${keyword}`,
                     });
                     window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: header } } });
                     this.activateTab(path);
@@ -3323,6 +3334,7 @@
                         minimap: { enabled: false },
                         stickyScroll: { enabled: s.stickyScroll },
                         renderWhitespace: s.showInvisible ? 'all' : 'none',
+                        unicodeHighlight: { ambiguousCharacters: false },
                     });
 
                     // 註冊 HTML 配對標籤高亮（含 .php 檔）

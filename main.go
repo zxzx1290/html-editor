@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -1611,6 +1612,9 @@ var searchTextExts = []string{
 // 無副檔名但檔名本身視為文字檔的特例。
 var searchTextBareNames = []string{"Dockerfile", "Makefile", "README"}
 
+// 搜尋時要跳過、不遞迴進入的資料夾名稱（除了 "." 開頭的隱藏資料夾）。
+var searchSkipDirs = []string{"node_modules", "vendor", "dist"}
+
 func searchableFile(name string) bool {
 	if slices.Contains(searchTextBareNames, name) {
 		return true
@@ -1620,9 +1624,8 @@ func searchableFile(name string) bool {
 }
 
 type searchRequest struct {
-	Path          string `json:"path"`
-	Query         string `json:"q"`
-	CaseSensitive bool   `json:"case_sensitive"`
+	Path  string `json:"path"`
+	Query string `json:"q"`
 }
 
 type searchMatch struct {
@@ -1670,6 +1673,11 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing query")
 		return
 	}
+	re, err := regexp.Compile(keyword)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid regex: "+err.Error())
+		return
+	}
 
 	ws := workspaceFromCtx(r)
 	dir, err := resolvePath(ws, req.Path)
@@ -1715,68 +1723,40 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	needle := keyword
-	if !req.CaseSensitive {
-		needle = strings.ToLower(keyword)
-	}
-
 	start := time.Now()
 	totalMatches := 0
 	filesScanned := 0
 	truncated := false
 
-	err = filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
-		select {
-		case <-ctx.Done():
-			return filepath.SkipAll
-		default:
-		}
-		if walkErr != nil {
-			return nil
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if path == dir {
-				return nil
-			}
-			if strings.HasPrefix(name, ".") || name == "node_modules" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !d.Type().IsRegular() || !searchableFile(name) {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil || info.Size() > searchMaxFileSize {
-			return nil
-		}
+	onFile := func(path string) bool {
 		filesScanned++
-
-		matches, hitCap := scanFileForKeyword(ctx, path, needle, req.CaseSensitive, searchMaxTotal-totalMatches)
+		matches, hitCap := scanFileForKeyword(ctx, path, re, searchMaxTotal-totalMatches)
 		if hitCap && len(matches) == 0 {
 			truncated = true
-			return filepath.SkipAll
+			return true
 		}
 		if len(matches) > 0 {
 			rel, _ := filepath.Rel(ws, path)
 			if !emit(searchFileEvent{Type: "file", Path: filepath.ToSlash(rel), Matches: matches}) {
-				return filepath.SkipAll
+				return true
 			}
 			totalMatches += len(matches)
 		}
 		if totalMatches >= searchMaxTotal {
 			truncated = true
-			return filepath.SkipAll
+			return true
 		}
-		return nil
-	})
+		return false
+	}
+
+	visited := make(map[string]struct{})
+	walkErr := searchWalk(ctx, dir, visited, onFile)
 
 	timedOut := ctx.Err() != nil
 	if timedOut {
 		truncated = true
 	}
-	if err != nil && !errors.Is(err, filepath.SkipAll) {
+	if walkErr != nil && !errors.Is(walkErr, errSearchStop) {
 		// walk 失敗：仍嘗試把 done 訊息送出去（讓 client 顯示部分結果 + 截斷標記）
 		truncated = true
 	}
@@ -1794,10 +1774,10 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		user, root, keyword, totalMatches, filesScanned, time.Since(start).Milliseconds(), truncated)
 }
 
-// scanFileForKeyword 逐行掃描檔案，回傳命中的行（line+text）。
+// scanFileForKeyword 逐行掃描檔案，用 regex 比對，回傳命中的行（line+text）。
 // remaining 是還能再收幾筆 match（受 searchMaxTotal 控制）；
 // 若因 remaining<=0 而無法繼續，hitCap=true。
-func scanFileForKeyword(ctx context.Context, path, needle string, caseSensitive bool, remaining int) (matches []searchMatch, hitCap bool) {
+func scanFileForKeyword(ctx context.Context, path string, re *regexp.Regexp, remaining int) (matches []searchMatch, hitCap bool) {
 	if remaining <= 0 {
 		return nil, true
 	}
@@ -1821,11 +1801,7 @@ func scanFileForKeyword(ctx context.Context, path, needle string, caseSensitive 
 			}
 		}
 		line := scanner.Text()
-		hay := line
-		if !caseSensitive {
-			hay = strings.ToLower(line)
-		}
-		if !strings.Contains(hay, needle) {
+		if !re.MatchString(line) {
 			continue
 		}
 		text := line
@@ -1841,4 +1817,87 @@ func scanFileForKeyword(ctx context.Context, path, needle string, caseSensitive 
 		}
 	}
 	return matches, false
+}
+
+// errSearchStop 為 searchWalk 內部用來提前終止整個 walk 的 sentinel。
+var errSearchStop = errors.New("search stop")
+
+// searchWalk 是支援 symlink 追蹤的目錄遍歷。
+// 與 filepath.WalkDir 不同之處：
+//   - 會跟著資料夾 symlink 進去掃內部檔案；
+//   - 會把指向一般檔案的 symlink 當成可搜尋檔案；
+//   - 透過 filepath.EvalSymlinks 解出真實路徑做迴圈偵測，避免 symlink 互指造成無窮遞迴或重複掃描。
+//
+// onFile 對「通過 searchable + size 檢查」的檔案呼叫；回傳 true 代表要立刻停止整個 walk。
+func searchWalk(ctx context.Context, dir string, visited map[string]struct{}, onFile func(path string) bool) error {
+	select {
+	case <-ctx.Done():
+		return errSearchStop
+	default:
+	}
+
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil
+	}
+	if _, seen := visited[real]; seen {
+		return nil
+	}
+	visited[real] = struct{}{}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	for _, d := range entries {
+		select {
+		case <-ctx.Done():
+			return errSearchStop
+		default:
+		}
+		name := d.Name()
+		full := filepath.Join(dir, name)
+		typ := d.Type()
+
+		isDir := d.IsDir()
+		isRegular := typ.IsRegular()
+		var size int64 = -1
+
+		if typ&os.ModeSymlink != 0 {
+			info, err := os.Stat(full)
+			if err != nil {
+				continue
+			}
+			isDir = info.IsDir()
+			isRegular = info.Mode().IsRegular()
+			size = info.Size()
+		}
+
+		if isDir {
+			if strings.HasPrefix(name, ".") || slices.Contains(searchSkipDirs, name) {
+				continue
+			}
+			if err := searchWalk(ctx, full, visited, onFile); err != nil {
+				return err
+			}
+			continue
+		}
+		if !isRegular || !searchableFile(name) {
+			continue
+		}
+		if size < 0 {
+			info, err := d.Info()
+			if err != nil {
+				continue
+			}
+			size = info.Size()
+		}
+		if size > searchMaxFileSize {
+			continue
+		}
+		if onFile(full) {
+			return errSearchStop
+		}
+	}
+	return nil
 }
