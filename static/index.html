@@ -2629,9 +2629,9 @@
                     if (!d.searchState.hadAnyResult) {
                         footer = '（沒有符合的結果）';
                     } else if (ev.truncated) {
-                        footer = `── 已截斷：${ev.total_matches} 筆，${ev.files_scanned} 個檔案，${ev.elapsed_ms}ms${ev.timeout ? '（逾時）' : ''} ──`;
+                        footer = `── 已截斷：${ev.total_matches} 個結果在 ${ev.files_matched} 個檔案中（已掃 ${ev.files_scanned}）、${ev.elapsed_ms}ms${ev.timeout ? '、逾時' : ''} ──`;
                     } else {
-                        footer = `── 完成：${ev.total_matches} 筆，${ev.files_scanned} 個檔案，${ev.elapsed_ms}ms ──`;
+                        footer = `── 完成：${ev.total_matches} 個結果在 ${ev.files_matched} 個檔案中（已掃 ${ev.files_scanned}）、${ev.elapsed_ms}ms ──`;
                     }
                     this._searchAppendText(d, footer + '\n');
                 },

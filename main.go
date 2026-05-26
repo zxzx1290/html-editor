@@ -1643,6 +1643,7 @@ type searchFileEvent struct {
 type searchDoneEvent struct {
 	Type         string `json:"type"` // "done"
 	FilesScanned int    `json:"files_scanned"`
+	FilesMatched int    `json:"files_matched"`
 	TotalMatches int    `json:"total_matches"`
 	ElapsedMs    int64  `json:"elapsed_ms"`
 	Truncated    bool   `json:"truncated"`
@@ -1726,6 +1727,7 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	totalMatches := 0
 	filesScanned := 0
+	filesMatched := 0
 	truncated := false
 
 	onFile := func(path string) bool {
@@ -1741,6 +1743,7 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 				return true
 			}
 			totalMatches += len(matches)
+			filesMatched++
 		}
 		if totalMatches >= searchMaxTotal {
 			truncated = true
@@ -1764,14 +1767,15 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	emit(searchDoneEvent{
 		Type:         "done",
 		FilesScanned: filesScanned,
+		FilesMatched: filesMatched,
 		TotalMatches: totalMatches,
 		ElapsedMs:    time.Since(start).Milliseconds(),
 		Truncated:    truncated,
 		Timeout:      timedOut,
 	})
 
-	logf("[search] user=%s root=%s q=%q matches=%d files=%d elapsed=%dms truncated=%v\n",
-		user, root, keyword, totalMatches, filesScanned, time.Since(start).Milliseconds(), truncated)
+	logf("[search] user=%s root=%s q=%q matches=%d files_matched=%d files_scanned=%d elapsed=%dms truncated=%v\n",
+		user, root, keyword, totalMatches, filesMatched, filesScanned, time.Since(start).Milliseconds(), truncated)
 }
 
 // scanFileForKeyword 逐行掃描檔案，用 regex 比對，回傳命中的行（line+text）。
