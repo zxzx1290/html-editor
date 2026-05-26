@@ -2235,7 +2235,11 @@
                     this.showToast(items.length > 1 ? `已複製 ${items.length} 個` : '已複製：' + items[0].path.split('/').pop());
                 },
 
-                duplicateItem(item) {
+                async duplicateItem(item) {
+                    if (item.isDir) {
+                        const name = item.path.split('/').pop();
+                        if (!await this.dlgConfirm(`確定要對資料夾「${name}」建立副本嗎？\n資料夾較大時複製可能需要較久時間。`, { confirmText: '建立副本' })) return;
+                    }
                     this.clipboardPaste(this.parentOf(item.path), [{ path: item.path, isDir: item.isDir }]);
                 },
 
@@ -2629,9 +2633,9 @@
                     if (!d.searchState.hadAnyResult) {
                         footer = '（沒有符合的結果）';
                     } else if (ev.truncated) {
-                        footer = `── 已截斷：${ev.total_matches} 個結果在 ${ev.files_matched} 個檔案中（已掃 ${ev.files_scanned}）、${ev.elapsed_ms}ms${ev.timeout ? '、逾時' : ''} ──`;
+                        footer = `── 已截斷：${ev.total_matches} 個結果在 ${ev.files_matched} 個檔案中（已掃描 ${ev.files_scanned} 個檔案）、${ev.elapsed_ms}ms${ev.timeout ? '、逾時' : ''} ──`;
                     } else {
-                        footer = `── 完成：${ev.total_matches} 個結果在 ${ev.files_matched} 個檔案中（已掃 ${ev.files_scanned}）、${ev.elapsed_ms}ms ──`;
+                        footer = `── 完成：${ev.total_matches} 個結果在 ${ev.files_matched} 個檔案中（已掃描 ${ev.files_scanned} 個檔案）、${ev.elapsed_ms}ms ──`;
                     }
                     this._searchAppendText(d, footer + '\n');
                 },
