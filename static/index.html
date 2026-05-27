@@ -362,7 +362,8 @@
             }
         }
 
-        return { services, saveService, tabManagerSvc, bubbleSvc, dialogAlertSvc, loadPlugin };
+        // F12 調適用：實體於建立後由主程式注入
+        return { services, saveService, tabManagerSvc, bubbleSvc, dialogAlertSvc, loadPlugin, monacoEditor: null, termInstances: null };
     })();
 </script>
 
@@ -1413,11 +1414,15 @@
                 // ── Tabs ──────────────────────────────────────────────────────────────
 
                 async openFile(path) {
+                    mylog('openFile', path);
                     if (this.tabsList.find(t => t.path === path)) {
                         await this.activateTab(path);
                         return;
                     }
-                    if (openingPaths.has(path)) return;
+                    if (openingPaths.has(path)) {
+                        this.showInfo('正在開啟 ' + path + '，請稍候');
+                        return;
+                    };
                     openingPaths.add(path);
 
                     try {
@@ -1916,8 +1921,8 @@
                         cursorBlink: true,
                         fontFamily: this._termFontFamily(),
                         fontSize: this._termFontSize(),
+                        fontWeight: 'normal',
                         allowTransparency: true,
-                        allowProposedApi: true,
                         theme: termColorTheme(),
                         scrollback: 0,
                     });
@@ -3340,6 +3345,12 @@
                         renderWhitespace: s.showInvisible ? 'all' : 'none',
                         unicodeHighlight: { ambiguousCharacters: false },
                     });
+
+                    // F12 調適：把實體掛到 editorPlugin
+                    if (window.editorPlugin) {
+                        window.editorPlugin.monacoEditor = monacoEditor;
+                        window.editorPlugin.termInstances = termInstances;
+                    }
 
                     // 註冊 HTML 配對標籤高亮（含 .php 檔）
                     const htmlTagPairProvider = {

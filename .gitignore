@@ -8,7 +8,6 @@ static/plugins/
 static/favicon.ico
 html-editor
 html-editor.exe
-package-lock.json
 /.claude
 /config.json
 /.vscode/
