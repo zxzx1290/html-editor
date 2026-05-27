@@ -138,6 +138,13 @@
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
+                    <div class="settings-row">
+                        <span class="settings-label">HTML/PHP 自訂註解</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" v-model="settings.customPhpHtmlComment" @change="onCustomPhpHtmlCommentChange" />
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
                     <template v-if="canTerminal">
                         <div class="settings-sep"></div>
                         <div class="settings-row">
@@ -1124,6 +1131,7 @@
                         bracketColorization: s.bracketColorization === true,
                         showInvisible: s.showInvisible === true,
                         trimOnSave: s.trimOnSave !== false,
+                        customPhpHtmlComment: s.customPhpHtmlComment === true,
                         terminalFontFamily: s.terminalFontFamily || '',
                         terminalFontSize: s.terminalFontSize || 14,
                     },
@@ -3078,6 +3086,10 @@
                     persistSettings({ trimOnSave: this.settings.trimOnSave });
                 },
 
+                onCustomPhpHtmlCommentChange() {
+                    persistSettings({ customPhpHtmlComment: this.settings.customPhpHtmlComment });
+                },
+
                 // ── Logout ────────────────────────────────────────────────────────────
                 async doLogout() {
                     const hasDirty = this.tabsList.some(t => t.dirty);
@@ -3482,6 +3494,64 @@
                             () => insertions.map(({ line, col }) => new monaco.Selection(line, col, line, col))
                         );
                         _closingHtmlTag = false;
+                    });
+
+                    // 自訂 HTML/PHP 註解切換（settings.customPhpHtmlComment 開啟時生效）
+                    // open/close 不含空白；dedup=true 時跳過已註解行（HTML / PHP 內 HTML 區段用）
+                    const toggleLineComment = (model, editor, open, close = '', dedup = false) => {
+                        const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        const isCommented = close
+                            ? l => new RegExp(`^\\s*${esc(open)}[\\s\\S]*${esc(close)}\\s*$`).test(l)
+                            : l => new RegExp(`^\\s*${esc(open)}`).test(l);
+                        const sel = editor.getSelection();
+                        const startLine = sel.startLineNumber;
+                        const endLine = sel.isEmpty() ? startLine : sel.endLineNumber;
+                        const lines = [];
+                        for (let i = startLine; i <= endLine; i++) lines.push(model.getLineContent(i));
+                        const allCommented = lines.every(l => isCommented(l) || l.trim() === '');
+                        const edits = [];
+                        for (let i = 0; i < lines.length; i++) {
+                            const line = lines[i];
+                            const lineNum = startLine + i;
+                            if (allCommented) {
+                                let text = line.replace(new RegExp(`^(\\s*)${esc(open)}\\s?`), '$1');
+                                if (close) text = text.replace(new RegExp(`\\s?${esc(close)}\\s*$`), '');
+                                edits.push({ range: new monaco.Range(lineNum, 1, lineNum, line.length + 1), text });
+                            } else {
+                                if (dedup && (isCommented(line) || line.trim() === '')) continue;
+                                const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                                const content = line.trimStart();
+                                const text = close ? `${indent}${open} ${content} ${close}` : `${indent}${open} ${content}`;
+                                edits.push({ range: new monaco.Range(lineNum, 1, lineNum, line.length + 1), text });
+                            }
+                        }
+                        if (edits.length) model.pushEditOperations([], edits, () => null);
+                    };
+
+                    // 取游標前最後一個 context 標籤決定當前語境；<script src="..."> 完全排除
+                    const togglePhpComment = (model, editor) => {
+                        const pos = editor.getPosition();
+                        const textBefore = model.getValueInRange({
+                            startLineNumber: 1, startColumn: 1,
+                            endLineNumber: pos.lineNumber, endColumn: pos.column,
+                        });
+                        const tags = textBefore.match(/<\?(?!=)|\?>|<script(?![^>]*\bsrc\s*=)[^>]*>|<\/script>|<style[^>]*>|<\/style>/gi) || [];
+                        const last = tags[tags.length - 1] || '';
+                        if (/^<\?/i.test(last))     return toggleLineComment(model, editor, '//');
+                        if (/^<script/i.test(last)) return toggleLineComment(model, editor, '//');
+                        if (/^<style/i.test(last))  return editor.trigger('', 'editor.action.blockComment', null);
+                        toggleLineComment(model, editor, '<!--', '-->', true);
+                    };
+
+                    monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Slash, () => {
+                        const model = monacoEditor.getModel();
+                        if (!model) return;
+                        const lang = model.getLanguageId();
+                        if (this.settings.customPhpHtmlComment) {
+                            if (lang === 'php')  return togglePhpComment(model, monacoEditor);
+                            if (lang === 'html') return toggleLineComment(model, monacoEditor, '<!--', '-->', true);
+                        }
+                        monacoEditor.trigger('', 'editor.action.commentLine', null);
                     });
 
                     monacoEditor.onDidChangeModelContent(() => {

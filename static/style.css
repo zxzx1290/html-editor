@@ -49,7 +49,8 @@ body {
 
 #app {
     display: flex;
-    height: 100vh;
+    /* 100dvh：手機瀏覽器 UI chrome 動態高度，避免底部 statusbar 被網址列遮住 */
+    height: 100dvh;
     width: 100vw;
 }
 
