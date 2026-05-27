@@ -176,7 +176,8 @@ body {
 }
 
 .icon-folder,
-.icon-folder-open {
+.icon-folder-open,
+.icon-folder-symlink {
     color: #dcb67a;
 }
 
@@ -184,12 +185,9 @@ body {
     color: #b48ead;
 }
 
-.is-symlink {
-    color: var(--accent, #4ea1ff);
-}
-
 [data-theme="light"] .icon-folder,
-[data-theme="light"] .icon-folder-open {
+[data-theme="light"] .icon-folder-open,
+[data-theme="light"] .icon-folder-symlink {
     color: #c08a3e;
 }
 
@@ -197,21 +195,14 @@ body {
     color: #8e4585;
 }
 
-/* Monokai：accent 是暗 khaki，跟資料夾黃太近 */
-[data-theme-id="monokai"] .is-symlink {
-    color: #4ea1ff;
-}
-
 /* Solarized Light：用 Solarized 自家 palette。 */
 [data-theme-id="solarized-light"] .icon-folder,
-[data-theme-id="solarized-light"] .icon-folder-open {
+[data-theme-id="solarized-light"] .icon-folder-open,
+[data-theme-id="solarized-light"] .icon-folder-symlink {
     color: #b58900;
 }
 [data-theme-id="solarized-light"] .icon-image {
     color: #6c71c4;
-}
-[data-theme-id="solarized-light"] .is-symlink {
-    color: #268bd2;
 }
 
 .tree-arrow {

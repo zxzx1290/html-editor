@@ -45,7 +45,7 @@
                 :data-is-dir="item.isDir ? '1' : '0'" @click="onNodeClick(item, $event)"
                 @contextmenu.prevent.stop="onTreeContextMenu($event, item)">
                 <i class="tree-arrow" :class="item.isDir ? (item.expanded ? 'icon-chevron-down' : 'icon-chevron-right') : ''"></i>
-                <i class="tree-icon" :class="[item.isSymlink ? (item.isDir ? 'icon-folder-symlink' : 'icon-file-symlink') : (item.isDir ? (item.expanded ? 'icon-folder-open' : 'icon-folder') : (isImagePath(item.path) ? 'icon-image' : 'icon-file')), { 'is-symlink': item.isSymlink }]"></i>
+                <i class="tree-icon" :class="item.isSymlink ? (item.isDir ? 'icon-folder-symlink' : 'icon-file-symlink') : (item.isDir ? (item.expanded ? 'icon-folder-open' : 'icon-folder') : (isImagePath(item.path) ? 'icon-image' : 'icon-file'))"></i>
                 <span class="name" :title="item.isSymlink ? item.path + '\n→ ' + (item.linkTarget || '(unknown)') : item.path">{{ item.name }}</span>
             </div>
         </div>
@@ -260,7 +260,7 @@
                     :style="{ paddingLeft: (8 + (item.depth + 1) * 14) + 'px' }" @click="saveAsDlgClickNode(item)"
                     :title="item.isSymlink ? item.path + '\n→ ' + (item.linkTarget || '(unknown)') : item.path">
                     <i :class="item.isDir ? (item.expanded ? 'icon-chevron-down' : 'icon-chevron-right') : ''"></i>
-                    <i :class="[item.isSymlink ? (item.isDir ? 'icon-folder-symlink' : 'icon-file-symlink') : (item.isDir ? (item.expanded ? 'icon-folder-open' : 'icon-folder') : 'icon-file'), { 'is-symlink': item.isSymlink }]"></i>
+                    <i :class="item.isSymlink ? (item.isDir ? 'icon-folder-symlink' : 'icon-file-symlink') : (item.isDir ? (item.expanded ? 'icon-folder-open' : 'icon-folder') : 'icon-file')"></i>
                     <span>{{ item.name }}</span>
                 </div>
                 <div v-if="saveAsDlg.tree.length === 0" style="padding:16px;color:var(--fg-dim);font-size:12px">(空)
