@@ -428,7 +428,8 @@
         function termColorTheme() {
             const cs = getComputedStyle(document.documentElement);
             const fg = cs.getPropertyValue('--fg').trim() || '#cccccc';
-            return { background: 'rgba(0,0,0,0)', foreground: fg, cursor: fg };
+            const bg = cs.getPropertyValue('--bg').trim() || '#1e1e1e';
+            return { background: bg, foreground: fg, cursor: fg };
         }
 
         // ── IndexedDB session persistence ─────────────────────────────────────────
@@ -1917,10 +1918,12 @@
                         cursorBlink: true,
                         fontFamily: this._termFontFamily(),
                         fontSize: this._termFontSize(),
-                        allowTransparency: true,
                         allowProposedApi: true, // for Unicode11Addon
                         theme: termColorTheme(),
-                        scrollback: 0,
+                        scrollback: 0, // tmux 已經有 scrollback，xterm 不需要額外的
+                        minimumContrastRatio: 4.5, // WebGL 下保證文字對比可讀（VS Code 預設）
+                        rescaleOverlappingGlyphs: true, // CJK 與全形字字距修正
+                        letterSpacing: 1, // 字元間距（px），預設 0 看起來偏緊
                     });
                     const fitAddon = new FitAddon.FitAddon();
                     term.loadAddon(fitAddon);
@@ -1934,9 +1937,9 @@
                         const webglAddon = new WebglAddon.WebglAddon();
                         webglAddon.onContextLoss(() => webglAddon.dispose());
                         term.loadAddon(webglAddon);
-                        mylog('WebGL renderer enabled for terminal', name);
+                        mylog('_ensureTerminal', 'WebGL renderer enabled for terminal', name);
                     } catch (e) {
-                        mylog('WebGL renderer failed to load for terminal', name, e);
+                        mylog('_ensureTerminal', 'WebGL renderer failed to load for terminal', name, e);
                     }
 
                     // Ctrl+C 有反白→複製，否則放行送 SIGINT；Ctrl+V → 貼上；F12 → 放給瀏覽器開 DevTools
