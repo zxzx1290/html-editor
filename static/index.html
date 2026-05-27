@@ -5,9 +5,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{{APP_TITLE}}</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
     <link rel="stylesheet" href="/static/xterm/xterm.css">
 </head>
@@ -96,7 +93,6 @@
                             <option value="Consolas">Consolas</option>
                             <option value="Menlo">Menlo</option>
                             <option value="'Courier New'">Courier New</option>
-                            <option value="'Roboto Mono'">Roboto Mono</option>
                         </select>
                     </div>
                     <div class="settings-row">
@@ -147,10 +143,8 @@
                             <span class="settings-label">終端機字體</span>
                             <select v-model="settings.terminalFontFamily" class="settings-select" @change="onTerminalFontFamilyChange">
                                 <option value="">預設</option>
-                                <option value="Consolas">Consolas</option>
                                 <option value="Menlo">Menlo</option>
                                 <option value="'Courier New'">Courier New</option>
-                                <option value="'Roboto Mono'">Roboto Mono</option>
                             </select>
                         </div>
                         <div class="settings-row">
@@ -298,6 +292,7 @@
 <script src="/static/xterm/xterm.js"></script>
 <script src="/static/xterm/addon-fit.js"></script>
 <script src="/static/xterm/addon-unicode11.js"></script>
+<script src="/static/xterm/addon-webgl.js"></script>
 <script src="/static/textmate/textmate.js"></script>
 <script src="/static/monaco/vs/loader.js"></script>
 
@@ -1846,8 +1841,8 @@
                     const base = this.settings.terminalFontFamily;
                     const cjk = "'Microsoft JhengHei', 'PingFang TC', 'Noto Sans CJK TC'";
                     return base
-                        ? `${base}, 'Roboto Mono', ${cjk}, monospace`
-                        : `'Roboto Mono', ${cjk}, monospace`;
+                        ? `${base}, Consolas, ${cjk}, monospace`
+                        : `Consolas, ${cjk}, monospace`;
                 },
                 _termFontSize() {
                     const n = parseInt(this.settings.terminalFontSize, 10);
@@ -1895,6 +1890,7 @@
                             entry.fitAddon.fit();
                         } catch (e) { mylog('term', 'style apply failed', e); }
                     }
+                    mylog('_applyTerminalStyle', 'applying terminal style', { fontFamily, fontSize });
                 },
 
                 requestNewTerminal() {
@@ -1921,7 +1917,6 @@
                         cursorBlink: true,
                         fontFamily: this._termFontFamily(),
                         fontSize: this._termFontSize(),
-                        fontWeight: 'normal',
                         allowTransparency: true,
                         allowProposedApi: true, // for Unicode11Addon
                         theme: termColorTheme(),
@@ -1932,6 +1927,17 @@
                     term.loadAddon(new Unicode11Addon.Unicode11Addon());
                     term.unicode.activeVersion = '11';
                     term.open(paneEl);
+
+                    // WebGL renderer：GPU 加速、字距精準（VSCode terminal 同款）
+                    // 環境不支援時 context loss 會 fire，自動 fallback 到預設 DOM renderer
+                    try {
+                        const webglAddon = new WebglAddon.WebglAddon();
+                        webglAddon.onContextLoss(() => webglAddon.dispose());
+                        term.loadAddon(webglAddon);
+                        mylog('WebGL renderer enabled for terminal', name);
+                    } catch (e) {
+                        mylog('WebGL renderer failed to load for terminal', name, e);
+                    }
 
                     // Ctrl+C 有反白→複製，否則放行送 SIGINT；Ctrl+V → 貼上；F12 → 放給瀏覽器開 DevTools
                     term.attachCustomKeyEventHandler((ev) => {

@@ -42,7 +42,7 @@
 - 快取衝突偵測：session 還原時若檔案已被他人修改，提示選擇保留草稿或使用伺服器版本
 - 編輯器設定（儲存於 localStorage）：
   - **主題**：Dark+、Light+（VS Code 預設）；Monokai、Dracula、Nord、Solarized Dark、Tokyo Night、One Dark Pro、GitHub Dark（深色）；Solarized Light（淺色）。全部來自 `tm-themes`，經 vscode-textmate 引擎以 VS Code 原版 scope selector 算色,預設 Dark+
-  - **字體**：預設、Consolas、Menlo、Courier New、Roboto Mono
+  - **字體**：預設、Consolas、Menlo、Courier New
   - **字體大小**：10–32 px
   - **自動換行**：開（預設）／關切換
   - **Sticky Scroll**：開（預設）／關切換；捲動時把目前 scope 的父層宣告固定在編輯器頂部
@@ -62,7 +62,7 @@
 - tmux 終端機（僅 Linux/macOS）：
   - 啟動時建立共享 socket（寫死 `html-editor`）；伺服器重啟不會殺掉現有 session
   - 設定 `users.<name>.terminal: true` 才開放此功能；`+` 按鈕點擊時改為下拉選單（新增空白檔案 / 新增終端機）
-  - 終端機混入既有 tab-bar，可同時多開；以 xterm.js 呈現，啟用標準 Unicode 11 寬字元
+  - 終端機混入既有 tab-bar，可同時多開；以 xterm.js + WebGL renderer（GPU 加速）呈現，啟用標準 Unicode 11 寬字元
   - 終端機 tab 標題加上「終端機」前綴，並顯示 tmux session 名末段以利辨識
   - 終端機 tab 可拖曳排序，順序持久化於 localStorage
   - WebSocket 斷線重連時自動列出該使用者所有 tmux session 並全部還原為 tab
