@@ -5,6 +5,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{{APP_TITLE}}</title>
+    <link rel="stylesheet" href="/static/lucide/lucide.css">
     <link rel="stylesheet" href="/static/style.css">
     <link rel="stylesheet" href="/static/xterm/xterm.css">
 </head>
@@ -27,7 +28,7 @@
             <span>WORKSPACE
                 <template v-if="currentUser"> · <span style="font-weight:normal;text-transform:none;letter-spacing:0;color:var(--fg);">{{ currentUser }}</span></template>
             </span>
-            <button class="btn" @click="loadTree" title="重新整理" style="padding:2px 6px;">⟳</button>
+            <button class="btn" @click="loadTree" title="重新整理" style="padding:2px 6px;"><i class="icon-refresh-cw"></i></button>
         </div>
         <div id="file-tree"
             :class="{ 'drag-active': treeDragActive, 'drop-over-root': treeDragActive && dropOverDir === '' }"
@@ -43,9 +44,9 @@
                 :style="{ paddingLeft: (8 + item.depth * 14) + 'px' }" :data-path="item.path"
                 :data-is-dir="item.isDir ? '1' : '0'" @click="onNodeClick(item, $event)"
                 @contextmenu.prevent.stop="onTreeContextMenu($event, item)">
-                <span class="tree-arrow">{{ item.isDir ? (item.expanded ? '▼' : '▶') : '' }}</span>
-                <span class="tree-icon">{{ item.isDir ? (item.expanded ? '📂' : '📁') : (isImagePath(item.path) ? '🖼' : '📄') }}</span>
-                <span class="name" :title="item.path">{{ item.name }}</span>
+                <i class="tree-arrow" :class="item.isDir ? (item.expanded ? 'icon-chevron-down' : 'icon-chevron-right') : ''"></i>
+                <i class="tree-icon" :class="[item.isSymlink ? (item.isDir ? 'icon-folder-symlink' : 'icon-file-symlink') : (item.isDir ? (item.expanded ? 'icon-folder-open' : 'icon-folder') : (isImagePath(item.path) ? 'icon-image' : 'icon-file')), { 'is-symlink': item.isSymlink }]"></i>
+                <span class="name" :title="item.isSymlink ? item.path + '\n→ ' + (item.linkTarget || '(unknown)') : item.path">{{ item.name }}</span>
             </div>
         </div>
         <div id="upload-panel" v-if="uploads.length > 0">
@@ -62,12 +63,12 @@
 
     <div id="main">
         <div id="toolbar">
-            <button id="toggle-sidebar" @click="sidebarCollapsed = !sidebarCollapsed" title="切換側邊欄">☰</button>
+            <button id="toggle-sidebar" @click="sidebarCollapsed = !sidebarCollapsed" title="切換側邊欄"><i class="icon-menu"></i></button>
             <span id="top-status">
                 <!-- 預留：工具列狀態文字 -->
             </span>
             <div id="settings-wrap" @click.stop>
-                <button class="btn" @click="settingsOpen = !settingsOpen">⚙ 設定</button>
+                <button class="btn" @click="settingsOpen = !settingsOpen"><i class="icon-settings"></i> 設定</button>
                 <div id="settings-panel" v-show="settingsOpen">
                     <div class="settings-row">
                         <span class="settings-label">主題</span>
@@ -181,7 +182,7 @@
                 @dragleave="onTabDragLeave($event, tab)"
                 @drop.prevent="onTabDrop($event, tab)"
                 @dragend="onTabDragEnd">
-                <span v-if="tab.isTerminal" class="tab-icon">⬛</span>
+                <i v-if="tab.isTerminal" class="tab-icon icon-terminal"></i>
                 <span class="tab-title" :title="tab.isTerminal ? tab.termName : (tab.searchLabel || (tab.isAnonymous ? '' : tab.path))">{{
                     tab.isTerminal
                         ? '終端機 ' + (tab.termName ? tab.termName.split('-').slice(-1)[0] : 'term')
@@ -189,14 +190,14 @@
                             ? tab.searchLabel
                             : (tab.isAnonymous ? 'Untitled ' + tab.path.split(':')[1] : tab.path.split('/').pop()))
                 }}</span>
-                <span v-if="tab.dirty" class="tab-dirty">●</span>
-                <button class="tab-close" draggable="false" @click.stop="closeTab(tab.path)" title="關閉">×</button>
+                <i v-if="tab.dirty" class="tab-dirty icon-dot"></i>
+                <button class="tab-close" draggable="false" @click.stop="closeTab(tab.path)" title="關閉"><i class="icon-x"></i></button>
             </div>
             <div id="tab-new-wrap" @click.stop>
-                <button ref="tabNewBtn" class="tab-new-btn" @click="onNewBtnClick" :title="canTerminal ? '新增…' : '新增空白檔案'">+</button>
+                <button ref="tabNewBtn" class="tab-new-btn" @click="onNewBtnClick" :title="canTerminal ? '新增…' : '新增空白檔案'"><i class="icon-plus"></i></button>
                 <div id="tab-new-menu" v-show="newTabMenuOpen" :style="newTabMenuStyle">
-                    <div class="item" @click="onMenuPickFile"><span class="item-icon">📄</span>新增空白檔案</div>
-                    <div class="item" @click="onMenuPickTerminal"><span class="item-icon">⬛</span>新增終端機</div>
+                    <div class="item" @click="onMenuPickFile"><i class="item-icon icon-file"></i>新增空白檔案</div>
+                    <div class="item" @click="onMenuPickTerminal"><i class="item-icon icon-terminal"></i>新增終端機</div>
                 </div>
             </div>
         </div>
@@ -252,13 +253,14 @@
             <div id="saveas-tree">
                 <div class="saveas-node is-dir" :class="{ 'dir-selected': saveAsDlg.selectedDir === '' }"
                     @click="saveAsDlg.selectedDir = ''">
-                    <span>📁</span><span>（根目錄）</span>
+                    <i class="icon-folder"></i><span>（根目錄）</span>
                 </div>
                 <div v-for="item in saveAsDlg.tree" :key="item.path" class="saveas-node"
                     :class="{ 'is-dir': item.isDir, 'is-file': !item.isDir, 'dir-selected': item.isDir && item.path === saveAsDlg.selectedDir }"
-                    :style="{ paddingLeft: (8 + (item.depth + 1) * 14) + 'px' }" @click="saveAsDlgClickNode(item)">
-                    <span>{{ item.isDir ? (item.expanded ? '▼' : '▶') : '' }}</span>
-                    <span>{{ item.isDir ? (item.expanded ? '📂' : '📁') : '📄' }}</span>
+                    :style="{ paddingLeft: (8 + (item.depth + 1) * 14) + 'px' }" @click="saveAsDlgClickNode(item)"
+                    :title="item.isSymlink ? item.path + '\n→ ' + (item.linkTarget || '(unknown)') : item.path">
+                    <i :class="item.isDir ? (item.expanded ? 'icon-chevron-down' : 'icon-chevron-right') : ''"></i>
+                    <i :class="[item.isSymlink ? (item.isDir ? 'icon-folder-symlink' : 'icon-file-symlink') : (item.isDir ? (item.expanded ? 'icon-folder-open' : 'icon-folder') : 'icon-file'), { 'is-symlink': item.isSymlink }]"></i>
                     <span>{{ item.name }}</span>
                 </div>
                 <div v-if="saveAsDlg.tree.length === 0" style="padding:16px;color:var(--fg-dim);font-size:12px">(空)
@@ -920,9 +922,7 @@
         // 我們把它算好的 colorMap 直接以 encodedTokensColors 餵給 Monaco，這樣
         // tokenizeLine2 的 Uint32Array 索引就能對齊 Monaco 的色票。
         function vscodeThemeToMonaco(vt, colorMap) {
-            const base = vt.type === 'light' ? 'vs'
-                       : vt.type === 'hc'    ? 'hc-black'
-                       : 'vs-dark';
+            const base = vt.type === 'light' ? 'vs' : 'vs-dark';
             // vscode-textmate 的 colorMap[0] 是 sparse hole（保留給 "no color"），但
             // Monaco 的 ColorMap.getId() 只認 `null`：`if (g===null) return 0; g.match(...)`
             // 對 undefined 會直接炸。Theia 多年生產採用的修法就是 colorMap[0] = null。
@@ -1324,6 +1324,7 @@
                         const files = await this.fetchDir('');
                         this.treeItems = files.map(f => ({
                             path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false,
+                            isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '',
                         }));
                     } catch (e) {
                         this.showError('載入檔案列表失敗：' + e.message);
@@ -1338,6 +1339,7 @@
                         const files = await this.fetchDir(item.path);
                         const children = files.map(f => ({
                             path: f.path, name: f.name, isDir: f.isDir, depth: item.depth + 1, expanded: false,
+                            isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '',
                         }));
                         this.treeItems.splice(idx + 1, 0, ...children);
                     } catch (e) {
@@ -1692,7 +1694,7 @@
                     let rootItems = [];
                     try {
                         const files = await this.fetchDir('');
-                        rootItems = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false }));
+                        rootItems = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false, isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '' }));
                     } catch { }
                     return new Promise(resolve => {
                         this.saveAsDlg = { visible: true, tree: rootItems, selectedDir: '', filename: '', _resolve: resolve };
@@ -1734,7 +1736,7 @@
                     item.expanded = true;
                     try {
                         const files = await this.fetchDir(item.path);
-                        const children = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: item.depth + 1, expanded: false }));
+                        const children = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: item.depth + 1, expanded: false, isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '' }));
                         tree.splice(idx + 1, 0, ...children);
                     } catch { item.expanded = false; }
                 },
@@ -2994,6 +2996,8 @@
                         '--border':       get('editorGroup.border', 'tab.border', 'panel.border') || mixColor(bg, fg, 0.13),
                         '--border-popup': get('menu.border', 'editorWidget.border')               || mixColor(bg, fg, 0.25),
                     };
+                    document.documentElement.setAttribute('data-theme', isLight ? 'light' : 'dark');
+                    document.documentElement.setAttribute('data-theme-id', id);
                     const root = document.documentElement.style;
                     for (const k in vars) root.setProperty(k, vars[k]);
                     // 終端機背景透明 → 自動沿用 --bg；前景／游標跟著主題更新

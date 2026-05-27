@@ -5,6 +5,7 @@ static/themes/
 static/textmate/
 static/xterm/
 static/plugins/
+static/lucide/
 static/favicon.ico
 html-editor
 html-editor.exe

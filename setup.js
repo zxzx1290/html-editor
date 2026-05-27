@@ -65,6 +65,23 @@ fs.copyFileSync('node_modules/vscode-oniguruma/release/onig.wasm', `${tmDst}/oni
 console.log(`Copied onig.wasm → ${tmDst}/onig.wasm`);
 
 
+// Lucide icon font：複製 woff2 並產生精簡版 CSS（只引用 woff2，剔除 eot/ttf/woff/svg）。
+const lucideDst = 'static/lucide';
+fs.rmSync(lucideDst, { recursive: true, force: true });
+fs.mkdirSync(lucideDst, { recursive: true });
+fs.copyFileSync('node_modules/lucide-static/font/lucide.woff2', `${lucideDst}/lucide.woff2`);
+const lucideCssRaw = fs.readFileSync('node_modules/lucide-static/font/lucide.css', 'utf8');
+const lucideCssTrim = lucideCssRaw.replace(/@font-face\s*\{[\s\S]*?\}/, [
+  '@font-face {',
+  '  font-family: "lucide";',
+  '  src: url("lucide.woff2") format("woff2");',
+  '  font-display: swap;',
+  '}',
+].join('\n'));
+fs.writeFileSync(`${lucideDst}/lucide.css`, lucideCssTrim);
+console.log(`Copied lucide font → ${lucideDst}`);
+
+
 // tm-grammars 的 php.json 是 source.php（純 PHP，僅給 <?php ... ?> 內部用），
 // 缺了 .php 檔需要的入口 grammar text.html.php（HTML 為主、嵌入 source.php）。
 // 那份 grammar 從 vscode 官方 PHP 套件 vendored 到 php-html.tmLanguage.json，

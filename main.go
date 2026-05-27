@@ -400,10 +400,12 @@ func (s *server) serveWithTitle(w http.ResponseWriter, r *http.Request, file str
 }
 
 type fileEntry struct {
-	Path  string `json:"path"`
-	Name  string `json:"name"`
-	IsDir bool   `json:"isDir"`
-	Size  int64  `json:"size"`
+	Path       string `json:"path"`
+	Name       string `json:"name"`
+	IsDir      bool   `json:"isDir"`
+	Size       int64  `json:"size"`
+	IsSymlink  bool   `json:"isSymlink,omitempty"`
+	LinkTarget string `json:"linkTarget,omitempty"`
 }
 
 type server struct {
@@ -1161,11 +1163,25 @@ func (s *server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
+		// 偵測 symlink；Windows 的 directory junction 在 Go 中會被回報為
+		// ModeIrregular，所以兩種 reparse point 都用 os.Readlink 探測。
+		var (
+			isSymlink  bool
+			linkTarget string
+		)
+		if de.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			if t, err := os.Readlink(fullPath); err == nil {
+				isSymlink = true
+				linkTarget = filepath.ToSlash(t)
+			}
+		}
 		entries = append(entries, fileEntry{
-			Path:  filepath.ToSlash(entRel),
-			Name:  de.Name(),
-			IsDir: info.IsDir(),
-			Size:  info.Size(),
+			Path:       filepath.ToSlash(entRel),
+			Name:       de.Name(),
+			IsDir:      info.IsDir(),
+			Size:       info.Size(),
+			IsSymlink:  isSymlink,
+			LinkTarget: linkTarget,
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool {

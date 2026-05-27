@@ -21,7 +21,9 @@
 
 - TextMate 語法引擎：以 `vscode-textmate` + `vscode-oniguruma` 取代 Monaco 內建的 Monarch 分詞器（HTML / CSS / JavaScript / JSON / PHP / Python / Go / Rust / Ruby / Shell / Markdown / C++ / Java / Dockerfile / YAML / SQL / TypeScript / Vue），各語言以 `monaco.languages.onLanguage` 在首次開檔時 lazy 載入對應 grammar，分詞粒度與 VS Code 一致，搭配 VS Code 原版主題顏色／斜體完全對齊
 
-- 多 tab 開檔，支援同時編輯多個檔案；tab 標題顯示 ● 代表有未儲存變更
+- 多 tab 開檔，支援同時編輯多個檔案；tab 標題顯示圓點代表有未儲存變更
+- UI icon 採用 Lucide icon font；資料夾、檔案、圖片、symlink 各有差異色，可依 theme 自動切換（如 Monokai、Solarized Light 有專屬色票）
+- 符號連結顯示：偵測 Unix symlink 與 Windows directory junction，於樹狀目錄使用 `folder-symlink` / `file-symlink` 圖示並以 accent 色強調，hover 該節點可看到 `→ 目標路徑`（另存對話框同樣支援）
 - Tab bar 右側 `+` 按鈕可新增空白匿名檔案（Untitled），儲存時自動彈出「另存為」對話框選擇目錄與檔名
 - 儲存按鈕：有未儲存變更時才可點擊；儲存中顯示「儲存中…」並阻擋重複觸發
 - 圖片預覽（`.png` `.jpg` `.jpeg` `.gif` `.webp` `.ico`）
@@ -91,6 +93,7 @@ npm install
 - 將 VS Code 原版語法高亮主題（`tm-themes`）複製到 `static/themes/`
 - 將 xterm.js（含 fit addon、unicode11 addon）複製到 `static/xterm/`
 - 以 esbuild 將 `vscode-textmate` + `vscode-oniguruma` 打包為 IIFE，連同 `onig.wasm` 與 TextMate grammar（HTML、HTML derivative、CSS、JavaScript、JSON、PHP `source.php`、Python、Go、Rust、Ruby、Shell（`shellscript`）、Markdown、C++、Java、Dockerfile（`docker`）、YAML、SQL、TypeScript、Vue 來自 `tm-grammars`；`.php` 檔的入口 grammar `text.html.php` vendored 自 vscode `extensions/php/syntaxes/html.tmLanguage.json`）一起輸出到 `static/textmate/`
+- 將 Lucide icon font（`lucide-static`）的 `lucide.woff2` 與精簡版 CSS（只引用 woff2）複製到 `static/lucide/`
 
 ### 2. 建立 config.json
 
@@ -198,6 +201,7 @@ html-editor/
 │   ├── themes/           # 語法高亮主題 JSON（由 npm install 產生，不進 git）
 │   ├── textmate/         # TextMate 引擎、grammar、onig.wasm（由 npm install 產生，不進 git）
 │   ├── xterm/            # xterm.js 與 addon（由 npm install 產生，不進 git）
+│   ├── lucide/           # Lucide icon font（由 npm install 產生，不進 git）
 │   └── plugins/          # Plugin 目錄（不進 git，依環境各自部署）
 │       ├── plugins.json  # Plugin 載入清單
 │       └── *.js          # 各 plugin 檔案
@@ -288,6 +292,7 @@ static/
   monaco/
   themes/
   textmate/
+  lucide/
   xterm/      ← 若有開放終端機則一併部署
   plugins/    ← 若有 plugin 則一併部署
 ```
@@ -300,7 +305,7 @@ static/
 
 | 方法 | 路徑 | 說明 |
 |------|------|------|
-| `GET` | `/api/files?path=` | 列出目錄內容；回傳 `{ files: [{ path, name, isDir, size }] }`，目錄排在前，同層按名稱排序 |
+| `GET` | `/api/files?path=` | 列出目錄內容；回傳 `{ files: [{ path, name, isDir, size, isSymlink?, linkTarget? }] }`，目錄排在前，同層按名稱排序；`isSymlink` 涵蓋 Unix symlink 與 Windows directory junction，`linkTarget` 為 `os.Readlink` 結果（以 `/` 分隔） |
 | `GET` | `/api/file?path=` | 讀取檔案 |
 | `PUT` | `/api/file?path=` | 寫入檔案（body 為純文字） |
 | `DELETE` | `/api/file?path=` | 刪除檔案或目錄 |
