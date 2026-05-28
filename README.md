@@ -22,9 +22,10 @@
 - TextMate 語法引擎：以 `vscode-textmate` + `vscode-oniguruma` 取代 Monaco 內建的 Monarch 分詞器（HTML / CSS / JavaScript / JSON / PHP / Python / Go / Rust / Ruby / Shell / Markdown / C++ / Java / Dockerfile / YAML / SQL / TypeScript / Vue），各語言以 `monaco.languages.onLanguage` 在首次開檔時 lazy 載入對應 grammar，分詞粒度與 VS Code 一致，搭配 VS Code 原版主題顏色／斜體完全對齊
 
 - 多 tab 開檔，支援同時編輯多個檔案；tab 標題顯示圓點代表有未儲存變更
-- UI icon 採用 Lucide icon font；資料夾、檔案、圖片、symlink 各有差異色，可依 theme 自動切換（如 Monokai、Solarized Light 有專屬色票）
-- 符號連結顯示：偵測 Unix symlink 與 Windows directory junction，於樹狀目錄使用 `folder-symlink` / `file-symlink` 圖示並以 accent 色強調，hover 該節點可看到 `→ 目標路徑`（另存對話框同樣支援）
+- UI icon 採用 Lucide icon font；資料夾、檔案、圖片於樹狀目錄分色顯示，會依目前主題切換
+- 符號連結顯示：偵測 Unix symlink 與 Windows directory junction，於樹狀目錄使用 `folder-symlink` / `file-symlink` 圖示，hover 該節點可看到 `→ 目標路徑`（另存對話框同樣支援）
 - Tab bar 右側 `+` 按鈕可新增空白匿名檔案（Untitled），儲存時自動彈出「另存為」對話框選擇目錄與檔名
+- 底部狀態列右側顯示目前 tab 的語言（取自 Monaco aliases），點擊可彈出語言選擇器手動指定語法高亮
 - 儲存按鈕：有未儲存變更時才可點擊；儲存中顯示「儲存中…」並阻擋重複觸發
 - 圖片預覽（`.png` `.jpg` `.jpeg` `.gif` `.webp` `.ico`）
 - 懶載入樹狀目錄，點擊展開子目錄；建立新目錄後自動展開並捲動到位
@@ -33,23 +34,28 @@
 - 多選支援：
   - Ctrl+Click 逐一選取 / 取消
   - Shift+Click 範圍選取
-  - 多選後可統一刪除、剪下、複製；選取的子項目若已被選取的父目錄涵蓋，自動過濾不重複操作
+  - 多選後可統一剪下、複製、刪除；選取的子項目若已被選取的父目錄涵蓋，自動過濾不重複操作
 - 右鍵選單：
-  - 空白處：新增檔案、新增目錄、上傳、貼上（有剪貼板內容時）、重新整理
-  - 目錄：新增檔案、新增目錄、上傳到此處、剪下、複製、貼上（有剪貼板內容時）、重新命名、重新整理、刪除目錄
-  - 檔案：開啟、下載、剪下、複製、貼上（有剪貼板內容時，貼至父目錄）、重新命名、刪除
-- 鍵盤快捷鍵：Ctrl+S 儲存（匿名檔案則彈出另存為）、Delete 刪除選取的檔案或目錄
+  - 空白處：新增檔案、新增目錄、上傳檔案、貼上（有剪貼板內容時）、搜尋、重新整理
+  - 目錄：新增檔案、新增目錄、上傳到此處、剪下、複製、建立副本、貼上（有剪貼板內容時）、重新命名、搜尋、重新整理、刪除目錄
+  - 檔案：新增檔案（同層）、開啟、下載、剪下、複製、建立副本、貼上（有剪貼板內容時，貼至父目錄）、重新命名、刪除
+  - 多選：剪下 N 個、複製 N 個、刪除 N 個
+- 鍵盤快捷鍵：Ctrl+S 儲存（匿名檔案則彈出另存為）、Delete 刪除選取的檔案或目錄；Ctrl+/ 切換註解（HTML/PHP 自訂註解開啟時走特製邏輯）
+- 「建立副本」：對檔案或資料夾自動產生 `name copy`、`name copy 2`… 序號副本；資料夾較大時會先詢問確認
+- 資料夾搜尋（regex）：右鍵目錄或空白處選「搜尋」，輸入 regex（如 `(?i)foo`、`\bbar\b`），結果以新分頁串流呈現；對命中行 Ctrl+Click 可跳到該檔該行；後端為 NDJSON streaming，逾時 30 秒、單檔上限 5 MB、單檔最多 200 筆、總筆數上限 1000；自動略過隱藏目錄與 `node_modules` / `vendor` / `dist`；同一使用者一次只允許一個搜尋進行中
 - 重新命名對話框自動反白主檔名（不含副檔名），方便直接輸入新名稱
 - IndexedDB session 還原：重新整理後自動恢復上次開啟的 tab 與未儲存草稿；session 還原後自動展開樹狀目錄至 active 檔案所在位置
 - 快取衝突偵測：session 還原時若檔案已被他人修改，提示選擇保留草稿或使用伺服器版本
 - 編輯器設定（儲存於 localStorage）：
-  - **主題**：Dark+、Light+（VS Code 預設）；Monokai、Dracula、Nord、Solarized Dark、Tokyo Night、One Dark Pro、GitHub Dark（深色）；Solarized Light（淺色）。全部來自 `tm-themes`，經 vscode-textmate 引擎以 VS Code 原版 scope selector 算色,預設 Dark+
+  - **主題**：Dark+、Light+（VS Code 預設）；Monokai、Dracula、Nord、Tokyo Night、One Dark Pro、Solarized Dark、GitHub Dark（深色）；Solarized Light（淺色）。全部來自 `tm-themes`，經 vscode-textmate 引擎以 VS Code 原版 scope selector 算色，預設 Dark+
   - **字體**：預設、Consolas、Menlo、Courier New
   - **字體大小**：10–32 px
   - **自動換行**：開（預設）／關切換
   - **Sticky Scroll**：開（預設）／關切換；捲動時把目前 scope 的父層宣告固定在編輯器頂部
-  - **顯示隱形字元（Whitespace）**：開／關切換；同時顯示行尾 LF / CRLF 符號與控制字元
-  - **儲存時移除尾端空白**：開（預設）／關切換
+  - **括號配對上色**：開／關切換（預設關）
+  - **顯示隱形字元**：開／關切換；同時顯示行尾 LF / CRLF 符號與控制字元
+  - **儲存移除空白**：開（預設）／關切換；儲存時移除每行行尾空白
+  - **HTML/PHP 自訂註解**：開／關切換（預設關）。開啟時 Ctrl+/ 走自訂邏輯：HTML 用 `<!-- -->` 行註解（跳過已註解行）；PHP 依游標位置自動判斷 —— 在 `<?php`/`<script>` 區段內走 `//`、`<style>` 區段走 block comment、其他則用 `<!-- -->`
   - **終端機字體 / 字體大小**：僅在帳號有開放終端機時顯示
 - HTML / PHP / Vue 模式自動補全閉合標籤（輸入 `>` 後自動插入對應的 `</tag>`，void element 除外）
 - TOTP 二步驟登入：以 `config.json` 設定帳號，每位使用者擁有獨立 workspace
@@ -91,7 +97,7 @@ npm install
 
 - 將 Monaco 靜態檔案複製到 `static/monaco/vs/`
 - 將 VS Code 原版語法高亮主題（`tm-themes`）複製到 `static/themes/`
-- 將 xterm.js（含 fit addon、unicode11 addon）複製到 `static/xterm/`
+- 將 xterm.js（含 fit addon、unicode11 addon、WebGL addon）複製到 `static/xterm/`
 - 以 esbuild 將 `vscode-textmate` + `vscode-oniguruma` 打包為 IIFE，連同 `onig.wasm` 與 TextMate grammar（HTML、HTML derivative、CSS、JavaScript、JSON、PHP `source.php`、Python、Go、Rust、Ruby、Shell（`shellscript`）、Markdown、C++、Java、Dockerfile（`docker`）、YAML、SQL、TypeScript、Vue 來自 `tm-grammars`；`.php` 檔的入口 grammar `text.html.php` vendored 自 vscode `extensions/php/syntaxes/html.tmLanguage.json`）一起輸出到 `static/textmate/`
 - 將 Lucide icon font（`lucide-static`）的 `lucide.woff2` 與精簡版 CSS（只引用 woff2）複製到 `static/lucide/`
 
@@ -314,6 +320,7 @@ static/
 | `POST` | `/api/mkdir?path=` | 建立目錄（含巢狀） |
 | `POST` | `/api/rename?from=&to=` | 重新命名或移動；目的地已存在回傳 409（`?auto=1` 時自動加序號） |
 | `POST` | `/api/copy?from=&to=` | 複製檔案或目錄（遞迴）；目的地已存在自動加序號 |
+| `POST` | `/api/search` | 資料夾遞迴 regex 搜尋；body `{ "path": "<dir>", "q": "<regex>" }`，以 `application/x-ndjson` 串流回傳 `{type:"file",path,matches:[{line,text}]}` 與最後一筆 `{type:"done",files_scanned,files_matched,total_matches,elapsed_ms,truncated,timeout}`；超過 30 秒會逾時、單檔大於 5 MB 直接跳過、每位使用者同時只允許一個搜尋（並發時回 429） |
 | `GET` | `/api/config` | 回傳 `{ sessionCheck: true, username?, terminal? }`；session 有效時附上 `username`（目前登入帳號）與 `terminal`（該帳號是否可用終端機） |
 | `POST` | `/login` | 登入（form: username, code） |
 | `GET` | `/logout` | 登出並清除 `editorToken` cookie |

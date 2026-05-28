@@ -79,6 +79,11 @@
                             </optgroup>
                             <optgroup label="深色">
                                 <option value="monokai">Monokai</option>
+                                <option value="dracula">Dracula</option>
+                                <option value="nord">Nord</option>
+                                <option value="tokyo-night">Tokyo Night</option>
+                                <option value="one-dark-pro">One Dark Pro</option>
+                                <option value="solarized-dark">Solarized Dark</option>
                                 <option value="github-dark">GitHub Dark</option>
                             </optgroup>
                             <optgroup label="淺色">
@@ -433,7 +438,61 @@
                 b: x.b + (y.b - x.b) * t,
             });
         }
-        // 依目前 CSS 變數產生 xterm 主題（背景透明 → 沿用 #terminal-host 的 --bg）
+        // VS Code workbench 內建預設色（對應 microsoft/vscode main 分支）：
+        //   workbench/common/theme.ts                       — tab.* / sideBar.* / titleBar.* / editorGroup.* / panel.*
+        //   platform/theme/common/colors/baseColors.ts      — foreground / focusBorder / descriptionForeground
+        //   platform/theme/common/colors/editorColors.ts    — editor.background / editor.foreground / editorWidget.*
+        //   platform/theme/common/colors/listColors.ts      — list.hoverBackground / list.activeSelectionBackground
+        //   platform/theme/common/colors/inputColors.ts     — button.*
+        // VS Code 在主題沒定義對應 key 時會用這份表 + transparent() / 衍生色補。
+        // 我們的 hex 已先把 transparent() 展開
+        const WORKBENCH_DEFAULTS = {
+            dark: {
+                'foreground':                       '#CCCCCC',
+                'editor.background':                '#1E1E1E',
+                'focusBorder':                      '#007FD4',
+                'sideBar.background':               '#252526',
+                'sideBarSectionHeader.background':  '#80808033',
+                'editorGroupHeader.tabsBackground': '#252526',
+                'tab.inactiveBackground':           '#2D2D2D',
+                'titleBar.activeBackground':        '#3C3C3C',
+                'list.hoverBackground':             '#2A2D2E',
+                'list.activeSelectionBackground':   '#04395E',
+                'descriptionForeground':            '#CCCCCCB3',
+                'editorGroup.border':               '#444444',
+                'tab.border':                       '#252526',
+                'panel.border':                     '#80808059',
+                'editorWidget.border':              '#CCCCCC33',
+                'button.background':                '#0E639C',
+                'button.foreground':                '#FFFFFF',
+                'statusBar.background':             '#007ACC',
+                'statusBar.foreground':             '#FFFFFF',
+                'statusBarItem.hoverBackground':    '#FFFFFF1F',  // transparent(white, 0.12)
+            },
+            light: {
+                'foreground':                       '#616161',
+                'editor.background':                '#FFFFFF',
+                'focusBorder':                      '#0090F1',
+                'sideBar.background':               '#F3F3F3',
+                'sideBarSectionHeader.background':  '#80808033',
+                'editorGroupHeader.tabsBackground': '#F3F3F3',
+                'tab.inactiveBackground':           '#ECECEC',
+                'titleBar.activeBackground':        '#DDDDDD',
+                'list.hoverBackground':             '#F0F0F0',
+                'list.activeSelectionBackground':   '#0060C0',
+                'descriptionForeground':            '#717171',
+                'editorGroup.border':               '#E7E7E7',
+                'tab.border':                       '#F3F3F3',
+                'panel.border':                     '#80808059',
+                'editorWidget.border':              '#61616133',
+                'button.background':                '#007ACC',
+                'button.foreground':                '#FFFFFF',
+                'statusBar.background':             '#007ACC',
+                'statusBar.foreground':             '#FFFFFF',
+                'statusBarItem.hoverBackground':    '#FFFFFF1F',  // transparent(white, 0.12)
+            },
+        };
+        // 依目前 CSS 變數產生 xterm 主題（背景／前景／游標都直接套用 --bg / --fg）
         function termColorTheme() {
             const cs = getComputedStyle(document.documentElement);
             const fg = cs.getPropertyValue('--fg').trim() || '#cccccc';
@@ -2967,51 +3026,88 @@
                         } },
                         ...tokenColors,
                     ];
-                    // mylog('ensureTheme', 'setting theme:', id, { settings });
                     tmRegistry.setTheme({ name: id, settings });
                     monaco.editor.defineTheme(id, vscodeThemeToMonaco(raw, tmRegistry.getColorMap()));
                     loadedThemes.add(id);
+                    mylog('ensureTheme', 'monaco theme defined:', id);
                 },
 
                 // 把 VS Code theme 的 colors 套到整個 UI（分頁、側欄、終端機…），
-                // 讓 chrome 與編輯器同主題。theme 沒提供的色票就由 editor.background
-                // 與固定前景色推導，確保淺色主題的分頁不會配到深色預設值。
+                // 讓 chrome 與編輯器同主題。優先讀主題提供的 key，主題沒給就退到 VS Code
+                // 內建 workbench 預設色（WORKBENCH_DEFAULTS），最後才用 mixColor 兜底。
                 applyThemeColors(id) {
                     const raw = themeCache.get(id);
                     if (!raw || !raw.colors) return;
                     const c = raw.colors;
-                    const get = (...keys) => { for (const k of keys) if (c[k]) return c[k]; return null; };
-                    const bg = get('editor.background') || '#1e1e1e';
-                    const accent = get('focusBorder') || '#007acc';
-                    // --fg 不取主題的 editor.foreground（各主題深淺不一、當 UI 文字易偏淡），
-                    // 改依亮/暗色系固定兩種值，確保 chrome 文字對比一致。
-                    const bgc = hexToRgb(bg);
+                    const bgc = hexToRgb(c['editor.background'] || '#1e1e1e');
                     const lum = bgc.r * 0.299 + bgc.g * 0.587 + bgc.b * 0.114;
                     const isLight = raw.type === 'light' || (raw.type == null && lum > 140);
-                    const fg = isLight ? '#3b3b3b' : '#cccccc';
+                    const D = WORKBENCH_DEFAULTS[isLight ? 'light' : 'dark'];
+                    // 主題 → workbench 預設 → 第一個 key 的 workbench 預設（fallback chain
+                    // 用於 alias，例如 editorGroup.border / tab.border / panel.border）
+                    const pick = (...keys) => {
+                        for (const k of keys) if (c[k]) return c[k];
+                        for (const k of keys) if (D[k]) return D[k];
+                        return null;
+                    };
+                    const bg = pick('editor.background');
+                    // --fg 用 workbench 的 foreground key（vscode UI chrome 文字色），
+                    // 而不是 editor.foreground（編輯區文字色）。多數主題不會定義
+                    // foreground，會落到 WORKBENCH_DEFAULTS 的 #CCCCCC / #616161。
+                    const fg = pick('foreground');
+                    const accent = pick('focusBorder');
+                    const tabInactive = pick('tab.inactiveBackground');
+                    const widgetBorder = pick('editorWidget.border');
+                    // vscode 的 lighten/darken 走 HSL 調整，這裡用「往白／黑混 t 比例」近似
+                    const lighten = (col, t) => mixColor(col, '#FFFFFF', t);
+                    const darken  = (col, t) => mixColor(col, '#000000', t);
+                    // button.hoverBackground = lighten(button.background, 0.2) [dark] / darken(...) [light]
+                    const btnBg = pick('button.background');
+                    const btnHover = c['button.hoverBackground'] || (isLight ? darken(btnBg, 0.2) : lighten(btnBg, 0.2));
+                    // button.secondaryBackground 預設 = listHoverBackground；secondaryHover = lighten(secondary, 0.2)
+                    const listHover = pick('list.hoverBackground');
+                    const btnSecondary = c['button.secondaryBackground'] || listHover;
+                    const btnSecondaryHover = c['button.secondaryHoverBackground'] || lighten(btnSecondary, 0.2);
                     const vars = {
                         '--bg': bg,
                         '--fg': fg,
                         '--accent': accent,
-                        '--bg-side':      get('editorGroupHeader.tabsBackground', 'sideBar.background') || mixColor(bg, fg, 0.05),
-                        '--bg-tab':       get('tab.inactiveBackground')         || mixColor(bg, fg, 0.09),
-                        '--bg-tab-hover': get('tab.hoverBackground')            || mixColor(bg, fg, 0.16),
-                        '--bg-bar':       get('activityBar.background')         || bg,
-                        '--bg-toolbar':   get('titleBar.activeBackground')      || bg,
-                        '--bg-hover':     get('list.hoverBackground')           || mixColor(bg, fg, 0.10),
-                        '--bg-active':    get('list.activeSelectionBackground') || mixColor(bg, accent, 0.55),
-                        '--fg-dim':       get('descriptionForeground')          || mixColor(fg, bg, 0.45),
-                        '--border':       get('editorGroup.border', 'tab.border', 'panel.border') || mixColor(bg, fg, 0.13),
-                        '--border-popup': get('menu.border', 'editorWidget.border')               || mixColor(bg, fg, 0.25),
+                        '--bg-side':      pick('editorGroupHeader.tabsBackground', 'sideBar.background'),
+                        '--bg-tab':       tabInactive,
+                        // tab.hoverBackground 在 VS Code 沒預設值（null），自行從 inactive 往 fg 拉一點
+                        '--bg-tab-hover': c['tab.hoverBackground'] || mixColor(tabInactive, fg, isLight ? 0.06 : 0.10),
+                        // 側欄 section header（vscode 預設是 transparent #808080 0.2，疊在 sideBar 上）
+                        '--bg-section-header': pick('sideBarSectionHeader.background'),
+                        '--bg-toolbar':   pick('titleBar.activeBackground'),
+                        '--bg-hover':     listHover,
+                        '--bg-active':    pick('list.activeSelectionBackground'),
+                        '--fg-dim':       pick('descriptionForeground'),
+                        '--border':       pick('editorGroup.border', 'tab.border', 'panel.border'),
+                        // menu.border 在標準（非 high-contrast）主題沒預設，退到 editorWidget.border
+                        '--border-popup': c['menu.border'] || widgetBorder,
+                        // Button：vscode primary = button.background（藍）；secondary = listHoverBackground
+                        '--bg-button':                 btnBg,
+                        '--bg-button-hover':           btnHover,
+                        '--fg-button':                 pick('button.foreground'),
+                        '--bg-button-secondary':       btnSecondary,
+                        '--bg-button-secondary-hover': btnSecondaryHover,
+                        // Status bar：vscode statusBar.* — 多數主題會自己定義
+                        '--bg-statusbar':       pick('statusBar.background'),
+                        '--fg-statusbar':       pick('statusBar.foreground'),
+                        '--bg-statusbar-hover': pick('statusBarItem.hoverBackground'),
                     };
+
+                    // 設 data-theme-id 以便 CSS 針對特定主題微調
                     document.documentElement.setAttribute('data-theme', isLight ? 'light' : 'dark');
                     document.documentElement.setAttribute('data-theme-id', id);
                     const root = document.documentElement.style;
                     for (const k in vars) root.setProperty(k, vars[k]);
-                    // 終端機背景透明 → 自動沿用 --bg；前景／游標跟著主題更新
+
+                    // 同步終端機背景／前景／游標到新主題色
                     const tt = termColorTheme();
                     for (const entry of termInstances.values()) entry.term.options.theme = tt;
-                    mylog('theme', 'applied theme colors:', vars);
+
+                    mylog('applyThemeColors', 'applied theme colors:', vars);
                 },
 
                 async onThemeChange() {
@@ -3024,7 +3120,7 @@
                         retokenizeTextMate();
                         persistSettings({ theme });
                     } catch (err) {
-                        mylog('theme', 'Failed to load theme:', theme, err);
+                        mylog('onThemeChange', 'Failed to load theme:', theme, err);
                         this.showError('載入主題失敗');
                         this.settings.theme = prev;
                     }

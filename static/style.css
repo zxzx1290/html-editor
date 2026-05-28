@@ -1,28 +1,42 @@
 :root {
-    /* 結構層（由淺到深）— 對應 VS Code Dark+ 配色 */
-    --bg-toolbar:   #1E1E1E;   /* titleBar.activeBackground; 最上層 toolbar */
-    --bg-bar:       #1E1E1E;   /* activityBar.background; sidebar header / resize handle / 按鈕 */
-    --bg-tab-hover: #37373d;   /* tab.hoverBackground */
-    --bg-tab:       #2d2d2d;   /* tab.inactiveBackground */
+    /* 結構層（由淺到深）— 對應 VS Code Dark+ workbench 預設色 */
+    --bg-toolbar:   #3C3C3C;   /* titleBar.activeBackground */
+    --bg-tab-hover: #37373D;   /* tab.hoverBackground（vscode 無預設） */
+    --bg-tab:       #2D2D2D;   /* tab.inactiveBackground */
     --bg-side:      #252526;   /* sideBar.background; editorGroupHeader.tabsBackground */
-    --bg:           #1e1e1e;   /* editor.background; tab.activeBackground */
+    --bg:           #1E1E1E;   /* editor.background; tab.activeBackground */
 
     /* 互動狀態 */
-    --bg-hover:     #2a2d2e;   /* list.hoverBackground */
-    --bg-active:    #094771;   /* list.activeSelectionBackground */
+    --bg-hover:     #2A2D2E;   /* list.hoverBackground */
+    --bg-active:    #04395E;   /* list.activeSelectionBackground */
+
+    /* 側欄 section header（vscode：sideBarSectionHeader.background = transparent(#808080, 0.2)） */
+    --bg-section-header: #80808033;
+
+    /* Button（vscode：button.*） */
+    --bg-button:                  #0E639C;   /* button.background dark */
+    --bg-button-hover:            #1177BE;   /* lighten(button.background, 0.2) */
+    --fg-button:                  #FFFFFF;   /* button.foreground */
+    --bg-button-secondary:        #2A2D2E;   /* button.secondaryBackground = listHoverBackground */
+    --bg-button-secondary-hover:  #3E4244;   /* lighten(secondary, 0.2) */
+
+    /* Status bar（vscode：statusBar.*） */
+    --bg-statusbar:       #007ACC;           /* statusBar.background */
+    --fg-statusbar:       #FFFFFF;           /* statusBar.foreground */
+    --bg-statusbar-hover: rgba(255,255,255,0.12); /* statusBarItem.hoverBackground */
 
     /* 前景 */
-    --fg:           #cccccc;   /* foreground */
-    --fg-dim:       #858585;   /* descriptionForeground */
+    --fg:           #CCCCCC;   /* foreground */
+    --fg-dim:       #858585;   /* descriptionForeground（≈ transparent(#CCCCCC, 0.7) 在 #1E1E1E 上的視覺值） */
 
-    /* 邊框（與 --bg-bar 同色但語義不同，分開以便日後調整） */
-    --border:       #333333;
-    --border-popup: #454545;   /* 彈出層（選單／面板／對話框）邊框，較主邊框亮 */
+    /* 邊框 */
+    --border:       #444444;   /* editorGroup.border */
+    --border-popup: #454545;   /* 彈出層（選單／面板／對話框）邊框 */
 
     /* 強調色與警示 */
-    --accent:       #007acc;   /* focusBorder, statusBar.background */
-    --danger:       #c84040;
-    --danger-fg:    #f48771;
+    --accent:       #007ACC;   /* focusBorder / statusBar.background；用於 sash hover、focus ring */
+    --danger:       #C84040;
+    --danger-fg:    #F48771;
 }
 
 * {
@@ -72,7 +86,7 @@ body {
     width: 2px;
     flex-shrink: 0;
     cursor: col-resize;
-    background: var(--bg-bar);
+    background: transparent;   /* vscode 的 sash 平時透明，hover 才顯示 focusBorder */
     position: relative;
     z-index: 1;
     transition: background 0.15s;
@@ -86,7 +100,7 @@ body {
 #sidebar-header {
     padding: 8px 10px;
     height: 38px;
-    background: var(--bg-bar);
+    background: var(--bg-section-header);
     font-weight: bold;
     font-size: 11px;
     text-transform: uppercase;
@@ -196,16 +210,6 @@ body {
     color: #8e4585;
 }
 
-/* Solarized Light：用 Solarized 自家 palette。 */
-[data-theme-id="solarized-light"] .icon-folder,
-[data-theme-id="solarized-light"] .icon-folder-open,
-[data-theme-id="solarized-light"] .icon-folder-symlink {
-    color: #b58900;
-}
-[data-theme-id="solarized-light"] .icon-image {
-    color: #6c71c4;
-}
-
 .tree-arrow {
     display: inline-block;
     width: 14px;
@@ -275,7 +279,7 @@ body {
 }
 
 button.btn {
-    background: var(--bg-bar);
+    background: var(--bg-button-secondary);
     color: var(--fg);
     border: 1px solid var(--border);
     padding: 5px 10px;
@@ -285,17 +289,17 @@ button.btn {
 }
 
 button.btn:hover {
-    background: var(--bg-tab-hover);
+    background: var(--bg-button-secondary-hover);
 }
 
 button.btn.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
+    background: var(--bg-button);
+    border-color: var(--bg-button);
+    color: var(--fg-button);
 }
 
 button.btn.primary:hover {
-    background: color-mix(in srgb, var(--accent) 85%, #fff);
+    background: var(--bg-button-hover);
 }
 
 button.btn.danger {
@@ -701,8 +705,8 @@ button.btn:disabled {
     display: flex;
     align-items: center;
     padding: 0 0 0 12px;
-    background: var(--accent);
-    color: #fff;
+    background: var(--bg-statusbar);
+    color: var(--fg-statusbar);
     font-size: 11px;
     min-height: 22px;
     flex-shrink: 0;
@@ -727,7 +731,7 @@ button.btn:disabled {
 }
 
 #status .status-lang:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: var(--bg-statusbar-hover);
 }
 
 #lang-picker {
