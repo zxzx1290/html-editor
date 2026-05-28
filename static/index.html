@@ -96,9 +96,10 @@
                         <span class="settings-label">字體</span>
                         <select v-model="settings.fontFamily" class="settings-select" @change="onFontFamilyChange">
                             <option value="">預設</option>
-                            <option value="Consolas">Consolas</option>
-                            <option value="Menlo">Menlo</option>
                             <option value="'Courier New'">Courier New</option>
+                            <option value="Monaco">Monaco</option>
+                            <option value="Menlo">Menlo</option>
+                            <option value="'Droid Sans Mono'">Droid Sans Mono</option>
                         </select>
                     </div>
                     <div class="settings-row">
@@ -156,8 +157,10 @@
                             <span class="settings-label">終端機字體</span>
                             <select v-model="settings.terminalFontFamily" class="settings-select" @change="onTerminalFontFamilyChange">
                                 <option value="">預設</option>
-                                <option value="Menlo">Menlo</option>
                                 <option value="'Courier New'">Courier New</option>
+                                <option value="Monaco">Monaco</option>
+                                <option value="Menlo">Menlo</option>
+                                <option value="'Droid Sans Mono'">Droid Sans Mono</option>
                             </select>
                         </div>
                         <div class="settings-row">
@@ -611,10 +614,12 @@
         }
 
         function loadSettings() {
+            mylog('loadSettings', 'loading settings');
             try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
         }
 
         function persistSettings(patch) {
+            mylog('persistSettings', 'persisting settings');
             localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
         }
 
@@ -3128,7 +3133,7 @@
 
                 onFontFamilyChange() {
                     const base = this.settings.fontFamily;
-                    const family = base ? `${base}, 'Microsoft JhengHei', sans-serif` : undefined;
+                    const family = `${base ? base + ', ' : ''}Consolas, 'Microsoft JhengHei', monospace`;
                     monacoEditor.updateOptions({ fontFamily: family });
                     persistSettings({ fontFamily: base });
                 },
@@ -3461,7 +3466,7 @@
                         wordWrap: s.wordWrap ? 'on' : 'off',
                         automaticLayout: true,
                         fontSize: s.fontSize,
-                        fontFamily: s.fontFamily ? `${s.fontFamily}, 'Microsoft JhengHei', sans-serif` : undefined,
+                        fontFamily: `${s.fontFamily ? s.fontFamily + ', ' : ''}Consolas, 'Microsoft JhengHei', monospace`, // 注意連動 onFontFamilyChange
                         minimap: { enabled: false },
                         stickyScroll: { enabled: s.stickyScroll },
                         renderWhitespace: s.showInvisible ? 'all' : 'none',
