@@ -562,7 +562,7 @@ func main() {
 	mux.HandleFunc("/",             s.checkSession(s.handleIndex))
 
 	addr := fmt.Sprintf("%s:%d", host, port)
-	logf("html-editor listening on http://%s\n", addr)
+	logf("[server] starting on %s\n", addr)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -777,6 +777,9 @@ func (s *server) isSecureRequest(r *http.Request) bool {
 	return false
 }
 
+// 帳號只允許 A-Za-z0-9，長度 1-16，避免惡意字元流入通知信件與 log
+var validUsernameRe = regexp.MustCompile(`^[A-Za-z0-9]{1,16}$`)
+
 func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
 	if s.limiter.isBlocked(ip) {
@@ -792,6 +795,14 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	username := r.FormValue("username")
 	code := r.FormValue("code")
+	if !validUsernameRe.MatchString(username) {
+		// 格式不合的帳號不可能是合法使用者，直接擋下並計入速率限制，
+		// 避免惡意字元（換行、標頭注入等）流入通知信件與 log
+		s.limiter.record(ip)
+		logf("[login] invalid username format ip=%s\n", ip)
+		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
+		return
+	}
 	userCfg, ok := s.config.Users[username]
 	// 不論 username 是否存在都跑一次 totp.Validate，避免從回應時間枚舉合法帳號
 	secret := dummyTotpSecret
