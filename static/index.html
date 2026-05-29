@@ -3269,6 +3269,9 @@
                 document.addEventListener('mousemove', (e) => {
                     if (!isResizing) return;
                     this.sidebarWidth = Math.max(120, Math.min(600, rsStartW + e.clientX - rsStartX));
+                    // sidebar 寬度改變 → 編輯/終端區寬度跟著變，需重新 fit 讓 xterm 重算 cols/rows
+                    // （window resize 不會在這裡觸發，故拖動 handle 時必須自己 fit）。
+                    this._fitActiveTerminal();
                 });
                 document.addEventListener('mouseup', () => {
                     if (!isResizing) return;
@@ -3277,6 +3280,17 @@
                     document.body.style.cursor = '';
                     document.body.style.userSelect = '';
                     persistSettings({ sidebarWidth: this.sidebarWidth });
+                });
+
+                // PC 版收合/展開 sidebar 會用 margin-left(0.2s) 擠壓編輯區寬度，
+                // 等動畫結束(transitionend)寬度到位後才 fit，終端機才會對到最終 cols/rows。
+                // 手機版 sidebar 是 overlay(position:absolute)，不影響編輯區寬度故略過——
+                // 也避免收合 overlay 後 term.focus() 誤彈出虛擬鍵盤。
+                const sidebarEl = document.getElementById('sidebar');
+                sidebarEl.addEventListener('transitionend', (e) => {
+                    if (e.target !== sidebarEl || e.propertyName !== 'margin-left') return;
+                    if (window.matchMedia('(max-width: 700px)').matches) return;
+                    this._fitActiveTerminal();
                 });
 
                 document.addEventListener('keydown', (e) => {
