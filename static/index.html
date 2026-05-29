@@ -500,6 +500,7 @@
             const cs = getComputedStyle(document.documentElement);
             const fg = cs.getPropertyValue('--fg').trim() || '#cccccc';
             const bg = cs.getPropertyValue('--bg').trim() || '#1e1e1e';
+            mylog('termColorTheme', { fg, bg });
             return { background: bg, foreground: fg, cursor: fg };
         }
 
@@ -1995,7 +1996,7 @@
                         allowProposedApi: true, // for Unicode11Addon
                         theme: termColorTheme(),
                         scrollback: 0, // tmux 已經有 scrollback，xterm 不需要額外的
-                        minimumContrastRatio: 4.5, // WebGL 下保證文字對比可讀（VS Code 預設）
+                        minimumContrastRatio: 1, // 1=不調整、忠實呈現 ANSI 原色（4.5 會把深紅等低對比色自動調亮，導致與亮紅無法區分）
                         rescaleOverlappingGlyphs: true, // CJK 與全形字字距修正
                         letterSpacing: 1, // 字元間距（px），預設 0 看起來偏緊
                     });

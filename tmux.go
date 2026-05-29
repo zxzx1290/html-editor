@@ -137,12 +137,23 @@ func (m *tmuxManager) createSession(user string, cols, rows uint16) (string, err
 	// tmux session name
 	name := user + "-" + strings.ToLower(rand.Text())[:6]
 
-	// 一條 tmux invocation 內串：new-session ; set-option（關狀態列）; 這樣 session 就不會閃一下狀態列然後消失了。
+	// 一條 tmux invocation 內串：set-option ... ; set-environment ; new-session ; set-option(關狀態列)。
+	// 這些設定都要在 new-session 生出 bash「之前」跑，bash 才會繼承到。
+	// 1) default-terminal=xterm-256color：本 app 外層終端永遠是 xterm.js(忠實 xterm)，讓 tmux 內的程式看到
+	//    xterm-256color 才相符；否則 monero-wallet-cli 等吃 GNU readline 的程式，會因 terminfo 與真實行終端
+	//    在行尾 auto-margin 的游標算術對不上而跑版、backspace 擦錯位置。
+	// 2) terminal-overrides ,*:Tc：告訴 tmux 對外的終端支援 direct/true color，收到 RGB 就原樣轉發、不降成 256。
+	// 3) COLORTERM=truecolor：讓 tmux 內的程式願意輸出 24-bit 色。
+	//    (用 set-environment -g 而非 new-session -e，相容舊版 tmux；TERM 不能這樣設，會被 default-terminal 蓋掉。)
 	// -d(detached) 後給 attach 用，-x -y 指定初始大小避免 attach 後閃一下 resize。
-	c := m.cmd("new-session", "-d", "-s", name,
-		"-x", fmt.Sprintf("%d", cols), "-y", fmt.Sprintf("%d", rows),
-		"/bin/bash",
-		";", "set-option", "-t", name, "status", "off")
+	c := m.cmd(
+		"set-option", "-g", "default-terminal", "xterm-256color", ";",
+		"set-option", "-ga", "terminal-overrides", ",*:Tc", ";",
+		"set-environment", "-g", "COLORTERM", "truecolor", ";",
+		"new-session", "-d", "-s", name,
+		"-x", fmt.Sprintf("%d", cols), "-y", fmt.Sprintf("%d", rows), "/bin/bash", ";",
+		"set-option", "-t", name, "status", "off",
+	)
 	if out, err := c.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("tmux new-session: %v: %s", err, string(out))
 	}
