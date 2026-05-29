@@ -61,6 +61,29 @@ type Config struct {
 	JwtSecret            string                `json:"jwtSecret"`            // JWT signing secret; random if empty
 	TrustProxy           bool                  `json:"trustProxy"`           // trust X-Forwarded-* headers; only enable when behind a trusted reverse proxy
 	Users                map[string]UserConfig `json:"users"`
+	LoginNotify          *LoginNotifyConfig    `json:"loginNotify"` // optional outbound HTTP notification on login success/failure
+}
+
+// LoginNotifyConfig describes an outbound HTTP request fired on login events.
+// Empty URL disables notifications entirely.
+//
+// Template variables usable in Form values: {username} {ip} {event} {reason} {time}
+//   - {event}:  "success" | "failure"
+//   - {reason}: "" | "invalid" | "replay" | "blocked"
+//
+// Body selection:
+//   - Form set            → application/x-www-form-urlencoded (e.g. Mailgun)
+//   - Form empty + POST    → JSON body {event,username,ip,reason,time}
+//   - Form empty + GET     → same fields appended as query string
+type LoginNotifyConfig struct {
+	URL            string            `json:"url"`
+	Method         string            `json:"method"`         // "POST" (default) | "GET"
+	NotifySuccess  bool              `json:"notifySuccess"`  // send on successful login
+	NotifyFailure  bool              `json:"notifyFailure"`  // send on failed login
+	TimeoutSeconds int               `json:"timeoutSeconds"` // request timeout; 0 → 5
+	BasicAuth      string            `json:"basicAuth"`      // "user:pass" → Authorization: Basic
+	Headers        map[string]string `json:"headers"`        // extra request headers
+	Form           map[string]string `json:"form"`           // urlencoded form fields (template-expanded)
 }
 
 // ─── JWT claims ───────────────────────────────────────────────────────────────
@@ -112,10 +135,17 @@ func (rl *rateLimiter) isBlocked(ip string) bool {
 	return len(recent) >= rl.maxAttempts
 }
 
-func (rl *rateLimiter) record(ip string) {
+// record logs a failed attempt and returns true only when this attempt is the
+// one that newly triggers a ban (the transition into the blocked state), so
+// callers can notify exactly once rather than on every subsequent blocked hit.
+func (rl *rateLimiter) record(ip string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	now := time.Now()
+	alreadyBanned := false
+	if expiry, ok := rl.bans[ip]; ok && now.Before(expiry) {
+		alreadyBanned = true
+	}
 	rl.attempts[ip] = append(rl.attempts[ip], now)
 	var recent int
 	for _, t := range rl.attempts[ip] {
@@ -125,7 +155,9 @@ func (rl *rateLimiter) record(ip string) {
 	}
 	if recent >= rl.maxAttempts {
 		rl.bans[ip] = now.Add(rl.banDuration)
+		return !alreadyBanned
 	}
+	return false
 }
 
 // gc removes expired bans and stale attempts so the maps do not grow unbounded
@@ -490,6 +522,11 @@ func main() {
 	}
 	logf("[config] %d user(s) loaded\n", len(cfg.Users))
 
+	// if notification is enabled, log it on startup
+	if cfg.LoginNotify != nil && cfg.LoginNotify.URL != "" {
+		logf("[config] login notifications enabled\n")
+	}
+
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
@@ -763,14 +800,24 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	valid := totp.Validate(code, secret)
 	if !ok || !valid {
-		s.limiter.record(ip)
+		justBanned := s.limiter.record(ip)
 		logf("[login] invalid credentials ip=%s\n", ip)
+		if justBanned {
+			s.notifyLogin("failure", username, ip, "blocked")
+		} else {
+			s.notifyLogin("failure", username, ip, "invalid")
+		}
 		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
 		return
 	}
 	if !s.totpReplay.checkAndRecord(username, code) {
-		s.limiter.record(ip)
+		justBanned := s.limiter.record(ip)
 		logf("[login] totp replay user=%s ip=%s\n", username, ip)
+		if justBanned {
+			s.notifyLogin("failure", username, ip, "blocked")
+		} else {
+			s.notifyLogin("failure", username, ip, "replay")
+		}
 		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
 		return
 	}
@@ -780,7 +827,111 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.isSecureRequest(r),
 	})
 	logf("[login] user=%s ip=%s\n", username, ip)
+	s.notifyLogin("success", username, ip, "")
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// notifyLogin fires an outbound HTTP notification for a login event, if enabled.
+// It returns immediately; the request runs in a background goroutine so a slow
+// or failing endpoint never blocks or breaks the login flow.
+func (s *server) notifyLogin(event, username, ip, reason string) {
+	cfg := s.config.LoginNotify
+	if cfg == nil || cfg.URL == "" {
+		return
+	}
+	if event == "success" && !cfg.NotifySuccess {
+		return
+	}
+	if event == "failure" && !cfg.NotifyFailure {
+		return
+	}
+	go s.sendLoginNotify(cfg, event, username, ip, reason)
+}
+
+func notifyExpand(tmpl string, vars map[string]string) string {
+	for k, v := range vars {
+		tmpl = strings.ReplaceAll(tmpl, "{"+k+"}", v)
+	}
+	return tmpl
+}
+
+func (s *server) sendLoginNotify(cfg *LoginNotifyConfig, event, username, ip, reason string) {
+	vars := map[string]string{
+		"event":    event,
+		"username": username,
+		"ip":       ip,
+		"reason":   reason,
+		"time":     time.Now().Format(time.RFC3339),
+	}
+	method := strings.ToUpper(strings.TrimSpace(cfg.Method))
+	if method == "" {
+		method = http.MethodPost
+	}
+	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+
+	var (
+		req *http.Request
+		err error
+	)
+	switch {
+	case len(cfg.Form) > 0:
+		form := url.Values{}
+		for k, v := range cfg.Form {
+			form.Set(k, notifyExpand(v, vars))
+		}
+		req, err = http.NewRequest(method, cfg.URL, strings.NewReader(form.Encode()))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+	case method == http.MethodGet:
+		u, perr := url.Parse(cfg.URL)
+		if perr != nil {
+			logf("[notify] bad url: %v\n", perr)
+			return
+		}
+		q := u.Query()
+		for k, v := range vars {
+			q.Set(k, v)
+		}
+		u.RawQuery = q.Encode()
+		req, err = http.NewRequest(method, u.String(), nil)
+	default:
+		body, _ := json.Marshal(vars)
+		req, err = http.NewRequest(method, cfg.URL, strings.NewReader(string(body)))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+	}
+	if err != nil {
+		logf("[notify] build request failed: %v\n", err)
+		return
+	}
+
+	for k, v := range cfg.Headers {
+		req.Header.Set(k, v)
+	}
+	if cfg.BasicAuth != "" {
+		if i := strings.IndexByte(cfg.BasicAuth, ':'); i >= 0 {
+			req.SetBasicAuth(cfg.BasicAuth[:i], cfg.BasicAuth[i+1:])
+		}
+	}
+
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		logf("[notify] send failed event=%s user=%s: %v\n", event, username, err)
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 400 {
+		logf("[notify] non-2xx event=%s user=%s status=%d\n", event, username, resp.StatusCode)
+		return
+	}
+	logf("[notify] sent event=%s user=%s status=%d\n", event, username, resp.StatusCode)
 }
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {

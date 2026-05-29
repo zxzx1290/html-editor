@@ -179,11 +179,62 @@ Windows：
 | `rateLimitBanDuration` | 觸發封鎖後的封鎖時長（秒）；預設同 `rateLimitWindow` |
 | `jwtSecret` | JWT 簽署金鑰（**必填**）；長度須至少 32 字元，否則程式拒絕啟動 |
 | `trustProxy` | 是否信任 `X-Forwarded-For` / `X-Forwarded-Proto`（預設 `false`）；僅在已知信任的 reverse proxy 後方開啟 |
+| `loginNotify` | 登入成功／失敗時發送的對外 HTTP 通知（選填，預設不啟用）；詳見下方 [登入通知](#登入通知-loginnotify) |
 | `users.<name>.totpSecret` | TOTP 金鑰（Base32），可用 Google Authenticator 等 App 掃碼 |
 | `users.<name>.workspace` | 該使用者的 workspace 目錄 |
 | `users.<name>.terminal` | 是否開放此使用者使用 tmux 終端機；預設 `false`。需 Linux/macOS 環境且系統已安裝 `tmux` 才會生效 |
 
 登入頁面（`/login`）要求輸入帳號與 TOTP 驗證碼。同一 IP 在 `rateLimitWindow` 秒內登入失敗達 `rateLimitMaxAttempts` 次，將被封鎖 `rateLimitBanDuration` 秒。
+
+### 登入通知 (loginNotify)
+
+設定 `loginNotify` 後，登入成功或失敗時會在背景發送一個對外 HTTP 請求（goroutine 非同步送出，**通知失敗或逾時不會影響登入**）。`url` 留空即停用。
+
+```json
+"loginNotify": {
+  "url": "https://api.mailgun.net/v3/YOUR_DOMAIN/messages",
+  "method": "POST",
+  "notifySuccess": true,
+  "notifyFailure": true,
+  "timeoutSeconds": 3,
+  "basicAuth": "api:key-xxxxxxxxxxxxxxxx",
+  "form": {
+    "from": "notify@YOUR_DOMAIN",
+    "to": "you@example.com",
+    "subject": "[html-editor] {username} {event} login from {ip}",
+    "text": "user={username} event={event} ip={ip} reason={reason} time={time}"
+  }
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| `url` | 通知目標網址；留空表示停用 |
+| `method` | `POST`（預設）或 `GET` |
+| `notifySuccess` | 登入成功時是否通知 |
+| `notifyFailure` | 登入失敗時是否通知（含帳密錯誤、TOTP 重放、IP 封鎖） |
+| `timeoutSeconds` | 請求逾時秒數；預設 5 |
+| `basicAuth` | `"使用者:密碼"`，會轉成 `Authorization: Basic` 標頭（Mailgun 用 `api:金鑰`） |
+| `headers` | 額外的請求標頭（例如 `Authorization: Bearer ...`） |
+| `form` | urlencoded 表單欄位；填了就以 `application/x-www-form-urlencoded` 送出（對接 Mailgun 等郵件服務） |
+
+**送出格式依設定自動切換：**
+
+| 情況 | 送出內容 |
+|------|---------|
+| 有填 `form` | `application/x-www-form-urlencoded` 表單，欄位值會做變數代換 |
+| 無 `form`，`method: POST` | JSON body：`{"event","username","ip","reason","time"}` |
+| 無 `form`，`method: GET` | 上述欄位接成 query string：`?event=success&username=...&ip=...` |
+
+**可用變數**（會在送出前代換 `form` 的值）：
+
+| 變數 | 內容 |
+|------|------|
+| `{username}` | 登入帳號（IP 封鎖時為空字串） |
+| `{ip}` | 來源 IP |
+| `{event}` | `success` 或 `failure` |
+| `{reason}` | 失敗原因：`invalid`（帳密錯誤）、`replay`（TOTP 重放）、`blocked`（該次失敗剛好觸發 IP 封鎖時送出，每次封鎖僅通知一次，避免被暴力嘗試灌爆）；成功時為空 |
+| `{time}` | RFC3339 時間戳記 |
 
 ## 目錄結構
 
