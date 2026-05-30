@@ -420,6 +420,18 @@
         // 還原中（由 term_sessions 觸發）的 session name；用來避免重連時搶走 focus
         const restoringTerms = new Set();
 
+        // window resize 100ms debounce 後對所有 terminal fit（避免拖視窗時每 frame reflow + 送 WS）
+        let _fitAllTimer = null;
+        function debouncedFitAll() {
+            if (_fitAllTimer) clearTimeout(_fitAllTimer);
+            _fitAllTimer = setTimeout(() => {
+                _fitAllTimer = null;
+                for (const e of termInstances.values()) {
+                    try { e.fitAddon.fit(); } catch {}
+                }
+            }, 100);
+        }
+
         // ── 主題色彩工具：VS Code theme colors → UI ───────────────────────────────
         function hexToRgb(h) {
             h = String(h).trim().replace(/^#/, '');
@@ -3248,9 +3260,7 @@
 
                 window.addEventListener('resize', () => {
                     this.hideCtxMenu();
-                    for (const e of termInstances.values()) {
-                        try { e.fitAddon.fit(); } catch {}
-                    }
+                    debouncedFitAll();
                 });
 
                 // Sidebar resize handle
@@ -3280,6 +3290,7 @@
                     document.body.style.cursor = '';
                     document.body.style.userSelect = '';
                     persistSettings({ sidebarWidth: this.sidebarWidth });
+                    this._fitActiveTerminal();
                 });
 
                 // PC 版收合/展開 sidebar 會用 margin-left(0.2s) 擠壓編輯區寬度，
