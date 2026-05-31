@@ -550,13 +550,6 @@ button.btn:disabled {
     min-width: 0;
 }
 
-.tab-dirty {
-    color: #e2c08d;
-    font-size: 18px;
-    flex-shrink: 0;
-    line-height: 1;
-}
-
 .tab-close {
     flex-shrink: 0;
     background: transparent;
@@ -574,15 +567,16 @@ button.btn:disabled {
     justify-content: center;
 }
 
-.tab:hover .tab-close,
-.tab.active .tab-close {
-    color: var(--fg-dim);
-}
+/* 補償 lucide 字型整體 baseline 偏移（X、dot 都受影響） */
+.tab-close > i { transform: translateY(2px); }
+.tab-close .tab-close-dot { display: none; font-size: 18px; }
+.tab-close.dirty:not(:hover) .tab-close-x  { display: none; }
+.tab-close.dirty:not(:hover) .tab-close-dot { display: inline; }
 
-.tab-close:hover {
-    background: rgba(255, 255, 255, 0.15);
-    color: var(--fg) !important;
-}
+.tab:hover .tab-close,
+.tab.active .tab-close { color: var(--fg-dim); }
+.tab-close.dirty { color: #e2c08d; }   /* dirty 時 button 永遠可見 */
+.tab-close:hover { background: rgba(255, 255, 255, 0.15); color: var(--fg) !important; }
 
 .tab-new-btn {
     flex-shrink: 0;

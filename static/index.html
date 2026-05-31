@@ -205,8 +205,10 @@
                             ? tab.searchLabel
                             : (tab.isAnonymous ? 'Untitled ' + tab.path.split(':')[1] : tab.path.split('/').pop()))
                 }}</span>
-                <i v-if="tab.dirty" class="tab-dirty icon-dot"></i>
-                <button class="tab-close" draggable="false" @click.stop="closeTab(tab.path)" title="關閉"><i class="icon-x"></i></button>
+                <button class="tab-close" :class="{ dirty: tab.dirty }" draggable="false" @click.stop="closeTab(tab.path)" :title="tab.dirty ? '未儲存 · 點擊關閉' : '關閉'">
+                    <i class="tab-close-x icon-x"></i>
+                    <i class="tab-close-dot icon-dot"></i>
+                </button>
             </div>
             <div id="tab-new-wrap" @click.stop>
                 <button ref="tabNewBtn" class="tab-new-btn" @click="onNewBtnClick" :title="canTerminal ? '新增…' : '新增空白檔案'"><i class="icon-plus"></i></button>
