@@ -1224,19 +1224,6 @@ func (c *WsClient) readPump(s *server) {
 				logf("[ws] term_resize err user=%s name=%s err=%v\n", c.username, p.Name, err)
 			}
 
-		case "term_detach":
-			if !s.checkTermPermission(c) {
-				continue
-			}
-			var p struct {
-				Name string `json:"name"`
-			}
-			if err := json.Unmarshal(msg.Payload, &p); err != nil {
-				continue
-			}
-			s.tmux.detach(p.Name)
-			logf("[ws] term_detach user=%s name=%s\n", c.username, p.Name)
-
 		case "term_kill":
 			if !s.checkTermPermission(c) {
 				continue

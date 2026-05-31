@@ -254,8 +254,6 @@
                 ref="dlgInput" @keydown.enter="dlgOk" @keydown.esc="dlgCancel" />
             <div class="modal-actions">
                 <button v-if="dlg.cancelText" class="btn" @click="dlgCancel">{{ dlg.cancelText }}</button>
-                <button v-if="dlg.altText" class="btn" :class="{ danger: dlg.altDanger }" @click="dlgAlt">{{ dlg.altText
-                    }}</button>
                 <button class="btn" :class="dlg.danger ? 'danger' : 'primary'" @click="dlgOk">{{ dlg.confirmText
                     }}</button>
             </div>
@@ -1228,7 +1226,7 @@
                     imagePreviewSrc: '',
                     editorReady: false,
                     uploads: [],
-                    dlg: { visible: false, title: '', inputMode: false, inputValue: '', placeholder: '', danger: false, confirmText: '確定', cancelText: '取消', altText: '', altDanger: false, _resolve: null },
+                    dlg: { visible: false, title: '', inputMode: false, inputValue: '', placeholder: '', danger: false, confirmText: '確定', cancelText: '取消', _resolve: null },
                     clipboard: { items: [], mode: null },
                     isPasting: false,
                     selectedPaths: [],
@@ -1262,9 +1260,7 @@
             methods: {
                 isImagePath,
 
-                // 回傳值規則：
-                //   2 按鈕模式（未設 altText）：ok → true、cancel → false（input 模式：輸入值 / null）
-                //   3 按鈕模式（有 altText）：ok → 'ok'、alt → 'alt'、cancel → 'cancel'
+                // 回傳值規則：ok → true、cancel → false（input 模式：輸入值 / null）
                 _dlgShow(opts) {
                     return new Promise(resolve => {
                         Object.assign(this.dlg, {
@@ -1272,7 +1268,6 @@
                             inputMode: !!opts.inputMode, inputValue: opts.defaultValue || '',
                             placeholder: opts.placeholder || '', danger: !!opts.danger,
                             confirmText: opts.confirmText || '確定', cancelText: 'cancelText' in opts ? opts.cancelText : '取消',
-                            altText: opts.altText || '', altDanger: !!opts.altDanger,
                             _resolve: resolve,
                         });
                         this.$nextTick(() => {
@@ -1287,22 +1282,15 @@
                 },
                 dlgOk() {
                     const r = this.dlg._resolve;
-                    const hasAlt = !!this.dlg.altText;
-                    const val = this.dlg.inputMode ? this.dlg.inputValue : (hasAlt ? 'ok' : true);
+                    const val = this.dlg.inputMode ? this.dlg.inputValue : true;
                     this.dlg.visible = false; this.dlg._resolve = null;
                     if (r) r(val);
                 },
                 dlgCancel() {
                     const r = this.dlg._resolve;
-                    const hasAlt = !!this.dlg.altText;
-                    const val = this.dlg.inputMode ? null : (hasAlt ? 'cancel' : false);
+                    const val = this.dlg.inputMode ? null : false;
                     this.dlg.visible = false; this.dlg._resolve = null;
                     if (r) r(val);
-                },
-                dlgAlt() {
-                    const r = this.dlg._resolve;
-                    this.dlg.visible = false; this.dlg._resolve = null;
-                    if (r) r('alt');
                 },
                 dlgConfirm(title, opts) {
                     return this._dlgShow({ title, ...(opts || {}) });
@@ -1587,33 +1575,10 @@
                     const tab = this.tabsList[idx];
 
                     if (tab.isTerminal) {
-                        const choice = await this._dlgShow({
-                            title: `終端機「${tab.termName}」`,
-                            confirmText: '放到背景',
-                            altText: '關閉',
-                            altDanger: true,
-                            cancelText: '取消',
-                        });
-                        if (choice === 'cancel') return;
-                        if (choice === 'alt') {
-                            // kill — wait for server-side term_closed to clean up UI
-                            this.killTerminal(tab.termName);
-                            return;
-                        }
-                        // 'ok' = detach, keep tmux session alive
-                        window.editorPlugin.wsSend({ type: 'term_detach', payload: { name: tab.termName } });
-                        const entry = termInstances.get(tab.termName);
-                        if (entry) {
-                            try { entry.term.dispose(); } catch {}
-                            if (entry.paneEl && entry.paneEl.parentNode) entry.paneEl.parentNode.removeChild(entry.paneEl);
-                            termInstances.delete(tab.termName);
-                        }
-                        this.tabsList.splice(idx, 1);
-                        if (this.activeTabPath === path) {
-                            this.activeTabPath = null;
-                            if (this.tabsList.length > 0) await this.activateTab(this.tabsList[Math.min(idx, this.tabsList.length - 1)].path);
-                            else { this.setStatus(''); this.scheduleMetaSave(); }
-                        }
+                        const ok = await this.dlgConfirm(`關閉終端機「${tab.termName}」？`, { confirmText: '關閉', danger: true });
+                        if (!ok) return;
+                        // wait for server-side term_closed to clean up UI
+                        this.killTerminal(tab.termName);
                         return;
                     }
 
