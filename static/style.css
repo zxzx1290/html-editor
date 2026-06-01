@@ -567,8 +567,10 @@ button.btn:disabled {
     justify-content: center;
 }
 
-/* 補償 lucide 字型整體 baseline 偏移（X、dot 都受影響） */
-.tab-close > i { transform: translateY(2px); }
+/* Firefox 與 Chrome 對 icon font ascender/descender 解讀不同，FF 會偏上 → 只在 FF 補償 */
+@-moz-document url-prefix() {
+    .tab-close > i { transform: translateY(2px); }
+}
 .tab-close .tab-close-dot { display: none; font-size: 18px; }
 .tab-close.dirty:not(:hover) .tab-close-x  { display: none; }
 .tab-close.dirty:not(:hover) .tab-close-dot { display: inline; }
