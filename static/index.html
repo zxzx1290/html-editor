@@ -2015,13 +2015,13 @@
                         return true;
                     });
 
-                    // capture phase 先攔截 paste：用 term.input() 跳過 bracketed paste 包覆，shell 不會反白
+                    // capture phase 先攔截 paste：走 xterm 標準路徑 (CRLF→CR 正規化 + bracketed paste 包覆)，避免多行字串被 shell 逐行解析
                     paneEl.addEventListener('paste', (e) => {
                         const text = e.clipboardData && e.clipboardData.getData('text');
                         if (!text) return;
                         e.preventDefault();
                         e.stopPropagation();
-                        term.input(text);
+                        term.paste(text);
                     }, true);
 
                     term.onData(d => {
