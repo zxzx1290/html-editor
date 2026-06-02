@@ -46,7 +46,7 @@
                 @contextmenu.prevent.stop="onTreeContextMenu($event, item)">
                 <i class="tree-arrow" :class="item.isDir ? (item.expanded ? 'icon-chevron-down' : 'icon-chevron-right') : ''"></i>
                 <i class="tree-icon" :class="item.isSymlink ? (item.isDir ? 'icon-folder-symlink' : 'icon-file-symlink') : (item.isDir ? (item.expanded ? 'icon-folder-open' : 'icon-folder') : (isImagePath(item.path) ? 'icon-image' : 'icon-file'))"></i>
-                <span class="name" :title="item.isSymlink ? item.path + '\n→ ' + (item.linkTarget || '(unknown)') : item.path">{{ item.name }}</span>
+                <span class="name" :title="(item.isSymlink ? item.path + '\n→ ' + (item.linkTarget || '(unknown)') : item.path) + (!item.isDir ? '\n' + formatSize(item.size) : '')">{{ item.name }}</span>
             </div>
         </div>
         <div id="upload-panel" v-if="uploads.length > 0">
@@ -616,6 +616,16 @@
 
         function isImagePath(path) {
             return IMG_EXT.includes(extOf(path));
+        }
+
+        // 把 bytes 轉成人類易讀的 KB/MB/GB；小於 1KB 直接顯示 bytes
+        function formatSize(bytes) {
+            if (bytes == null || bytes < 0) return '';
+            if (bytes < 1024) return bytes + ' B';
+            const units = ['KB', 'MB', 'GB', 'TB'];
+            let n = bytes / 1024, i = 0;
+            while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+            return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.round(n)) + ' ' + units[i];
         }
 
         // 把檔案路徑映射到 Monaco 的 langId（先副檔名、再純檔名、最後 fallback plaintext）
@@ -1261,6 +1271,7 @@
 
             methods: {
                 isImagePath,
+                formatSize,
 
                 // 回傳值規則：ok → true、cancel → false（input 模式：輸入值 / null）
                 _dlgShow(opts) {
@@ -1399,7 +1410,7 @@
                         const files = await this.fetchDir('');
                         this.treeItems = files.map(f => ({
                             path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false,
-                            isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '',
+                            isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '', size: f.size,
                         }));
                     } catch (e) {
                         this.showError('載入檔案列表失敗：' + e.message);
@@ -1414,7 +1425,7 @@
                         const files = await this.fetchDir(item.path);
                         const children = files.map(f => ({
                             path: f.path, name: f.name, isDir: f.isDir, depth: item.depth + 1, expanded: false,
-                            isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '',
+                            isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '', size: f.size,
                         }));
                         this.treeItems.splice(idx + 1, 0, ...children);
                     } catch (e) {
