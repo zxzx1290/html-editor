@@ -2494,14 +2494,17 @@
                             { label: '新增目錄', action: () => this.mkdir(path) },
                             { label: '上傳到此處…', action: () => this.triggerUpload(path) },
                             '-',
+                            { label: '下載 (zip)', action: () => this.downloadFile(path) },
+                            '-',
                             { label: '剪下', action: () => this.clipboardCutItems([item]) },
                             { label: '複製', action: () => this.clipboardCopyItems([item]) },
-                            { label: '建立副本', action: () => this.duplicateItem(item) },
                         ];
                         if (hasCb) menuItems.push({ label: '貼上', action: () => this.clipboardPaste(path) });
                         menuItems.push(
                             '-',
+                            { label: '建立副本', action: () => this.duplicateItem(item) },
                             { label: '重新命名', action: () => this.renameItem(item) },
+                            '-',
                             { label: '搜尋', action: () => this.searchInFolder(path) },
                             { label: '重新整理', action: () => this.forceRefreshDir(path) },
                             '-',
@@ -2521,11 +2524,11 @@
                             '-',
                             { label: '剪下', action: () => this.clipboardCutItems([item]) },
                             { label: '複製', action: () => this.clipboardCopyItems([item]) },
-                            { label: '建立副本', action: () => this.duplicateItem(item) },
                         ];
                         if (hasCb) fileMenuItems.push({ label: '貼上', action: () => this.clipboardPaste(parentDir) });
                         fileMenuItems.push(
                             '-',
+                            { label: '建立副本', action: () => this.duplicateItem(item) },
                             { label: '重新命名', action: () => this.renameItem(item) },
                             '-',
                             { label: '刪除', danger: true, action: () => this.deleteFile(path, false) },

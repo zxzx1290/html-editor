@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bufio"
 	"context"
 	"encoding/base64"
@@ -1577,11 +1578,151 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if info.IsDir() {
-		writeError(w, http.StatusBadRequest, "is a directory")
+		s.downloadDirAsZip(w, r, abs)
 		return
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(abs)))
 	http.ServeFile(w, r, abs)
+}
+
+// 目錄 zip 下載的硬上限：避免不小心點到超大目錄把 server CPU/頻寬吃滿。
+// 超過任一條件就在送出 header 前以 413 拒絕，不會留下半個壞掉的 zip 給 client。
+const (
+	zipMaxTotalSize = 500 * 1024 * 1024 // 500MB 未壓縮總和
+	zipMaxFileCount = 10000
+)
+
+// 預掃時用的 sentinel error，讓 WalkDir 中斷後上層能對應到正確的 413 訊息。
+var (
+	errZipTooManyFiles = errors.New("zip: too many files")
+	errZipTooLarge     = errors.New("zip: total size too large")
+)
+
+// downloadDirAsZip 把目錄串流壓成 zip 回給 client。
+//
+// 流程：先 WalkDir 預掃一次計算檔案數與未壓縮總和，任一超過硬上限就回 413；
+// 通過後才寫 header、開 zip.Writer 邊壓邊送。Symlink / Windows junction 一律
+// 跳過，避免跑出 workspace 外、避免循環連結造成無限走訪。
+//
+// 不額外套 runWithTimeout：大目錄壓縮本來就慢，逾時應由 client 取消連線
+// （r.Context() 會被 net/http 在 client 關閉時 cancel）驅動，而不是 server
+// 端硬截斷。
+func (s *server) downloadDirAsZip(w http.ResponseWriter, r *http.Request, dir string) {
+	ctx := r.Context()
+	var totalSize int64
+	var fileCount int
+	walkErr := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if d.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, ferr := d.Info()
+		if ferr != nil {
+			return ferr
+		}
+		fileCount++
+		if fileCount > zipMaxFileCount {
+			return errZipTooManyFiles
+		}
+		totalSize += info.Size()
+		if totalSize > zipMaxTotalSize {
+			return errZipTooLarge
+		}
+		return nil
+	})
+	switch {
+	case errors.Is(walkErr, errZipTooManyFiles):
+		logf("[zip] reject user=%s path=%s reason=too_many_files\n", usernameFromCtx(r), filepath.Base(dir))
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("too many files (limit %d)", zipMaxFileCount))
+		return
+	case errors.Is(walkErr, errZipTooLarge):
+		logf("[zip] reject user=%s path=%s reason=too_large\n", usernameFromCtx(r), filepath.Base(dir))
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("total size exceeds limit %d bytes", zipMaxTotalSize))
+		return
+	case errors.Is(walkErr, context.Canceled), errors.Is(walkErr, context.DeadlineExceeded):
+		return
+	case walkErr != nil:
+		writeError(w, http.StatusInternalServerError, walkErr.Error())
+		return
+	}
+
+	name := filepath.Base(dir) + ".zip"
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+
+	zw := zip.NewWriter(w)
+	// 算 zip 相對路徑時用 dir 的父層當基準，這樣 zip 內最外層就是目錄本身
+	// （例如下載 foo/bar 時 zip 解出來會得到 bar/...）。
+	baseParent := filepath.Dir(dir)
+	writeErr := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if d.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		relPath, rerr := filepath.Rel(baseParent, p)
+		if rerr != nil {
+			return rerr
+		}
+		zipName := filepath.ToSlash(relPath)
+		info, ferr := d.Info()
+		if ferr != nil {
+			return ferr
+		}
+		if d.IsDir() {
+			_, werr := zw.CreateHeader(&zip.FileHeader{
+				Name:     zipName + "/",
+				Method:   zip.Store,
+				Modified: info.ModTime(),
+			})
+			return werr
+		}
+		fh, ferr := zip.FileInfoHeader(info)
+		if ferr != nil {
+			return ferr
+		}
+		fh.Name = zipName
+		fh.Method = zip.Deflate
+		writer, werr := zw.CreateHeader(fh)
+		if werr != nil {
+			return werr
+		}
+		src, oerr := os.Open(p)
+		if oerr != nil {
+			return oerr
+		}
+		_, cerr := io.Copy(writer, src)
+		src.Close()
+		return cerr
+	})
+	// header 已送出，中途失敗只能中斷連線；client 端會拿到一個壞掉的 zip。
+	if writeErr != nil {
+		logf("[zip] err user=%s path=%s err=%v\n", usernameFromCtx(r), filepath.Base(dir), writeErr)
+		return
+	}
+	if err := zw.Close(); err != nil {
+		logf("[zip] err user=%s path=%s err=%v\n", usernameFromCtx(r), filepath.Base(dir), err)
+		return
+	}
+	logf("[zip] ok user=%s path=%s files=%d size=%d\n", usernameFromCtx(r), filepath.Base(dir), fileCount, totalSize)
 }
 
 func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
