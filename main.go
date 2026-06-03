@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -531,7 +532,10 @@ func main() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for range t.C {
-			logf("[status] ws_clients=%d\n", s.hub.clientCount())
+			// goroutines 數量可協助觀察 syscall 卡住時的洩漏狀況：
+			// runWithTimeout 超時後，卡在 syscall 的 goroutine 不會被回收，
+			// 若這個數字長期上升、即使閒置也下不來，代表底層 FS 有問題。
+			logf("[status] ws_clients=%d goroutines=%d\n", s.hub.clientCount(), runtime.NumGoroutine())
 		}
 	}()
 
@@ -1291,47 +1295,60 @@ func (s *server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := r.URL.Query().Get("path")
-	dir, err := resolvePath(workspaceFromCtx(r), rel)
+	ws := workspaceFromCtx(r)
+	dir, err := resolvePath(ws, rel)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
-	des, err := os.ReadDir(dir)
+	// ReadDir 與整個 Stat 迴圈一起包 timeout：底層 FS 卡住時任何一次
+	// Stat 都可能 hang 住，逐個包反而失去保險意義。
+	var entries []fileEntry
+	err = runWithTimeout(r.Context(), fileOpQuickTimeout, func() error {
+		des, ferr := os.ReadDir(dir)
+		if ferr != nil {
+			return ferr
+		}
+		for _, de := range des {
+			fullPath := filepath.Join(dir, de.Name())
+			info, ferr := os.Stat(fullPath)
+			if ferr != nil {
+				continue
+			}
+			entRel, ferr := filepath.Rel(ws, fullPath)
+			if ferr != nil {
+				continue
+			}
+			// 偵測 symlink；Windows 的 directory junction 在 Go 中會被回報為
+			// ModeIrregular，所以兩種 reparse point 都用 os.Readlink 探測。
+			var (
+				isSymlink  bool
+				linkTarget string
+			)
+			if de.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+				if t, ferr := os.Readlink(fullPath); ferr == nil {
+					isSymlink = true
+					linkTarget = filepath.ToSlash(t)
+				}
+			}
+			entries = append(entries, fileEntry{
+				Path:       filepath.ToSlash(entRel),
+				Name:       de.Name(),
+				IsDir:      info.IsDir(),
+				Size:       info.Size(),
+				IsSymlink:  isSymlink,
+				LinkTarget: linkTarget,
+			})
+		}
+		return nil
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeTimeoutError(w, "list files")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	var entries []fileEntry
-	for _, de := range des {
-		fullPath := filepath.Join(dir, de.Name())
-		info, err := os.Stat(fullPath)
-		if err != nil {
-			continue
-		}
-		entRel, err := filepath.Rel(workspaceFromCtx(r), fullPath)
-		if err != nil {
-			continue
-		}
-		// 偵測 symlink；Windows 的 directory junction 在 Go 中會被回報為
-		// ModeIrregular，所以兩種 reparse point 都用 os.Readlink 探測。
-		var (
-			isSymlink  bool
-			linkTarget string
-		)
-		if de.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
-			if t, err := os.Readlink(fullPath); err == nil {
-				isSymlink = true
-				linkTarget = filepath.ToSlash(t)
-			}
-		}
-		entries = append(entries, fileEntry{
-			Path:       filepath.ToSlash(entRel),
-			Name:       de.Name(),
-			IsDir:      info.IsDir(),
-			Size:       info.Size(),
-			IsSymlink:  isSymlink,
-			LinkTarget: linkTarget,
-		})
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].IsDir != entries[j].IsDir {
@@ -1366,7 +1383,29 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
-	info, err := os.Stat(abs)
+	// Stat 與 ReadFile 都可能卡在 I/O，一起包 timeout。
+	// 編輯器情境下檔案預期都不大，20 秒對正常磁碟 / 網路綽綽有餘；
+	// 真正卡死時也會在這裡被截掉。
+	var (
+		info os.FileInfo
+		data []byte
+	)
+	err = runWithTimeout(r.Context(), fileOpIOTimeout, func() error {
+		var ferr error
+		info, ferr = os.Stat(abs)
+		if ferr != nil {
+			return ferr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		data, ferr = os.ReadFile(abs)
+		return ferr
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeTimeoutError(w, "read file")
+		return
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			writeError(w, http.StatusNotFound, "not found")
@@ -1380,11 +1419,6 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logf("[file-open] user=%s %s\n", usernameFromCtx(r), rel)
-	data, err := os.ReadFile(abs)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
@@ -1407,11 +1441,18 @@ func (s *server) writeFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	// body 已收完再開始落盤；MkdirAll + WriteFile 都可能因底層 FS 卡住，一起包 timeout。
+	err = runWithTimeout(r.Context(), fileOpIOTimeout, func() error {
+		if ferr := os.MkdirAll(filepath.Dir(abs), 0o755); ferr != nil {
+			return ferr
+		}
+		return os.WriteFile(abs, body, 0o644)
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeTimeoutError(w, "write file")
 		return
 	}
-	if err := os.WriteFile(abs, body, 0o644); err != nil {
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1431,7 +1472,22 @@ func (s *server) deleteFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
-	info, err := os.Stat(abs)
+	// Stat + Remove/RemoveAll 都包 timeout：RemoveAll 會遍歷整棵樹，
+	// 在不穩的 FS 上很容易卡住，這是最該保險的操作之一。
+	err = runWithTimeout(r.Context(), fileOpDeleteTimeout, func() error {
+		info, ferr := os.Stat(abs)
+		if ferr != nil {
+			return ferr
+		}
+		if info.IsDir() {
+			return os.RemoveAll(abs)
+		}
+		return os.Remove(abs)
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeTimeoutError(w, "delete")
+		return
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			writeError(w, http.StatusNotFound, "not found")
@@ -1439,17 +1495,6 @@ func (s *server) deleteFile(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	if info.IsDir() {
-		if err := os.RemoveAll(abs); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	} else {
-		if err := os.Remove(abs); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
 	}
 	logf("[file-del] user=%s %s\n", usernameFromCtx(r), rel)
 	writeOK(w)
@@ -1561,13 +1606,28 @@ func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid to path")
 		return
 	}
-	if r.URL.Query().Get("auto") == "1" {
-		absTo = availableDest(absTo)
-	} else if _, err := os.Stat(absTo); err == nil {
+	auto := r.URL.Query().Get("auto") == "1"
+	// availableDest 內部會跑多次 Stat、Rename 也是 metadata-only，
+	// 一起包 quick timeout；底層 FS 卡死時不會留下半完成狀態的請求。
+	var conflict bool
+	err = runWithTimeout(r.Context(), fileOpQuickTimeout, func() error {
+		if auto {
+			absTo = availableDest(absTo)
+		} else if _, ferr := os.Stat(absTo); ferr == nil {
+			conflict = true
+			return nil
+		}
+		return os.Rename(absFrom, absTo)
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeTimeoutError(w, "rename")
+		return
+	}
+	if conflict {
 		writeError(w, http.StatusConflict, "destination already exists")
 		return
 	}
-	if err := os.Rename(absFrom, absTo); err != nil {
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1592,7 +1652,15 @@ func (s *server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid path")
 		return
 	}
-	if err := os.MkdirAll(abs, 0o755); err != nil {
+	// MkdirAll 在不穩的 FS 上同樣會卡，包個 quick timeout 兜底。
+	err = runWithTimeout(r.Context(), fileOpQuickTimeout, func() error {
+		return os.MkdirAll(abs, 0o755)
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeTimeoutError(w, "mkdir")
+		return
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1746,6 +1814,44 @@ func resolvePath(workspace, rel string) (string, error) {
 		return "", errors.New("path escapes workspace")
 	}
 	return absResolved, nil
+}
+
+// ─── 檔案操作 timeout 保險 ────────────────────────────────────────────────────
+//
+// 底層 FS 異常時（SFTP/網路掛載斷線、磁碟壞軌、外接碟拔除、防毒軟體掃描
+// 中、kernel I/O 卡住等），os.Stat、os.ReadDir 等 syscall 可能永遠不回來。
+// 為避免 handler goroutine 與 HTTP 請求一起卡死，所有「預期很快完成」的
+// metadata 操作都用 runWithTimeout 包起來，超時就回 504。
+//
+// 限制：Go 沒辦法中斷正在執行 syscall 的 goroutine，因此真正卡住的
+// goroutine（與其占用的 OS thread）會殘留到 syscall 自然回傳為止。
+// 我們換取的是 HTTP 請求立即釋放、client 不會一起被卡住，server 連線
+// 池也不會被吃完。
+const (
+	fileOpQuickTimeout  = 8 * time.Second  // list / mkdir / rename：純 metadata，健康狀況下秒回
+	fileOpIOTimeout     = 20 * time.Second // read / write：編輯器存取文字檔的場景，預期都是小檔
+	fileOpDeleteTimeout = 30 * time.Second // delete：RemoveAll 大資料夾要逐檔，給寬一點
+)
+
+// runWithTimeout 在 d 時間內執行 fn；逾時時回傳 ctx.Err()（DeadlineExceeded）。
+// fn 內若卡在 blocking syscall，goroutine 會洩漏到 syscall 自然回來為止，
+// 但呼叫端會立即返回，不會把 HTTP 請求一起拖住。
+func runWithTimeout(ctx context.Context, d time.Duration, fn func() error) error {
+	ctx, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// writeTimeoutError 統一回 504，並標示是哪個操作逾時，方便前端與 log 追蹤。
+func writeTimeoutError(w http.ResponseWriter, op string) {
+	writeError(w, http.StatusGatewayTimeout, fmt.Sprintf("file operation timed out: %s", op))
 }
 
 // ─── Search ───────────────────────────────────────────────────────────────────
