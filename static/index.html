@@ -1873,6 +1873,14 @@
                     window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
                     this.activateTab(path);
                     this.scheduleMetaSave();
+                    // 自動focus新檔案的編輯器
+                    this.$nextTick(() => {
+                        if (this.activeTabPath === path && monacoEditor) {
+                            monacoEditor.layout();
+                            monacoEditor.setPosition({ lineNumber: 1, column: 1 });
+                            monacoEditor.focus();
+                        }
+                    });
                 },
 
                 onNewBtnClick() {
@@ -2298,6 +2306,14 @@
                         });
                         await this.refreshDir(parentDir || '');
                         await this.openFile(path);
+                        // 自動focus新檔案的編輯器
+                        this.$nextTick(() => {
+                            if (this.activeTabPath === path && monacoEditor && !this.activeTabIsImage) {
+                                monacoEditor.layout();
+                                monacoEditor.setPosition({ lineNumber: 1, column: 1 });
+                                monacoEditor.focus();
+                            }
+                        });
                     } catch (e) {
                         this.showError('建立失敗：' + e.message);
                     }
