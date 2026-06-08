@@ -319,7 +319,7 @@
 <script src="/static/monaco/vs/loader.js"></script>
 
 <script>
-    // ── Logger ────────────────────────────────────────────────────────────────────
+    // ──── Logger
     function mylog(src, ...args) {
         const t = new Date();
         const p = (n, w = 2) => String(n).padStart(w, '0');
@@ -327,7 +327,7 @@
         console.log(`[${ts}]`, `[${src}]`, ...args);
     }
 
-    // ── Plugin System ─────────────────────────────────────────────────────────────
+    // ──── Plugin System
     window.editorPlugin = (function () {
         class EventEmitter {
             constructor() { this._l = {}; }
@@ -386,6 +386,7 @@
 
 <script>
     (function () {
+        // ──── Constants & shared state
         // 圖片副檔名清單
         const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico'];
         // 副檔名 → Monaco 語言 id 映射
@@ -439,7 +440,7 @@
             }, 100);
         }
 
-        // ── 主題色彩工具：VS Code theme colors → UI ───────────────────────────────
+        // ──── 主題色彩工具：VS Code theme colors → UI
         function hexToRgb(h) {
             h = String(h).trim().replace(/^#/, '');
             if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
@@ -523,7 +524,7 @@
             return { background: bg, foreground: fg, cursor: fg };
         }
 
-        // ── IndexedDB session persistence ─────────────────────────────────────────
+        // ──── IndexedDB session persistence
         // meta  store: key='tabs' → { tabs:[...paths], activeTab:'...' }
         // dirty store: key=filePath → file content (string)
         const IDB_NAME = 'html-editor-db';
@@ -610,6 +611,7 @@
             idbOp(STORE_HASH, 'readwrite', s => s.delete(path)).catch(() => { });
         }
 
+        // ──── Editor state & 雜項 helpers
         let monacoEditor = null;
         let updateEolDecorations = () => {};
         const loadedThemes = new Set();
@@ -653,7 +655,7 @@
             localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...patch }));
         }
 
-        // ── TextMate (vscode-textmate + vscode-oniguruma) ─────────────────────────
+        // ──── TextMate (vscode-textmate + vscode-oniguruma)
         // 對 Monaco 套用 VS Code 等級的 TextMate 分詞，讓 Monokai 等主題的顏色 / 斜體
         // 與 VS Code 一致（Monaco 內建的 Monarch token 粒度太粗，主題規則命中率低）。
         // .php 檔以 text.html.php 為入口（HTML 為主、嵌入 PHP），它會遞迴 include
@@ -900,7 +902,7 @@
             return p;
         }
 
-        // ── HTML 配對標籤高亮 ────────────────────────────────────────────────────
+        // ──── HTML 配對標籤高亮
         // Monaco 的 min build 雖然把 vs/language/html/htmlMode bundle 進來，但實際
         // 的 DocumentHighlightProvider 依賴 worker 拉 vscode-html-languageservice
         // 才會回傳「點 <div> 高亮 </div>」這種行為；與 TextMate token 路徑混用時
@@ -1039,7 +1041,7 @@
             };
         }
 
-        // ── Built-in: Session check & WS collaboration ────────────────────────────
+        // ──── Built-in: Session check & WS collaboration
 
         function initSessionCheck(app) {
             mylog('initSessionCheck', 'init session check timer');
@@ -1197,7 +1199,7 @@
             initWs(app);
         }
 
-        // ─────────────────────────────────────────────────────────────────────────────
+        // ──── Vue app (createApp)
 
         const { createApp } = Vue;
 
@@ -1280,7 +1282,9 @@
                 isImagePath,
                 formatSize,
 
-                // 回傳值規則：ok → true、cancel → false（input 模式：輸入值 / null）
+                // ──── Dialog / Toast / Status
+                // 所有對話框（confirm / alert / prompt）的共用底層，回傳 Promise：
+                // 確定 → true；取消 → false；input 模式（prompt）→ 輸入字串，取消 → null
                 _dlgShow(opts) {
                     return new Promise(resolve => {
                         Object.assign(this.dlg, {
@@ -1338,7 +1342,8 @@
                     this.statusMsg = msg || '';
                 },
 
-                // 從目前 Monaco model 讀回語言 id 並同步到 currentLangId（供狀態列顯示）
+                // ──── Language picker
+                // 從目前 Monaco model 讀回語言 id，同步到 currentLangId 供狀態列顯示
                 refreshCurrentLang() {
                     const m = monacoEditor && monacoEditor.getModel();
                     this.currentLangId = m ? m.getLanguageId() : 'plaintext';
@@ -1403,7 +1408,7 @@
                     return await res.text();
                 },
 
-                // ── File tree ─────────────────────────────────────────────────────────
+                // ──── File tree
 
                 async fetchDir(path) {
                     const url = path ? '/api/files?path=' + encodeURIComponent(path) : '/api/files';
@@ -1502,7 +1507,7 @@
                     }
                 },
 
-                // ── Tabs ──────────────────────────────────────────────────────────────
+                // ──── Tabs
 
                 async openFile(path) {
                     mylog('openFile', path);
@@ -1631,7 +1636,7 @@
                     }
                 },
 
-                // ── Tab drag-and-drop reorder ─────────────────────────────────────────
+                // ──── Tab drag-and-drop reorder
                 onTabDragStart(ev, tab) {
                     this.dragSourceTab = tab.path;
                     try {
@@ -1703,7 +1708,7 @@
                     return this.tabsList.length;
                 },
 
-                // ── File operations ───────────────────────────────────────────────────
+                // ──── File operations
 
                 async saveCurrent() {
                     if (!this.activeTabPath || this.activeTabIsImage || this.isSaving || !this.activeTabDirty) return;
@@ -1918,6 +1923,7 @@
                     this.requestNewTerminal();
                 },
 
+                // ──── Terminal
                 _termFontFamily() {
                     const base = this.settings.terminalFontFamily;
                     const cjk = "'Microsoft JhengHei', 'PingFang TC', 'Noto Sans CJK TC'";
@@ -2121,6 +2127,7 @@
                     });
                 },
 
+                // ──── Upload / 下載
                 downloadFile(path) {
                     const a = document.createElement('a');
                     a.href = '/api/download?path=' + encodeURIComponent(path);
@@ -2379,7 +2386,7 @@
                     }
                 },
 
-                // ── Clipboard (cut / copy / paste) ───────────────────────────────────
+                // ──── Clipboard (cut / copy / paste)
 
                 clipboardCutItems(items) {
                     this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'cut' };
@@ -2530,7 +2537,7 @@
                     }
                 },
 
-                // ── Context menu ──────────────────────────────────────────────────────
+                // ──── Context menu
 
                 onTreeContextMenu(e, item) {
                     this.treeFocused = true;
@@ -2633,7 +2640,7 @@
                     item.action();
                 },
 
-                // ── Folder search ─────────────────────────────────────────────────────
+                // ──── Folder search
 
                 async searchInFolder(dirPath) {
                     const label = dirPath || '/';
@@ -2887,7 +2894,7 @@
                     monacoEditor.focus();
                 },
 
-                // ── Drag and drop ─────────────────────────────────────────────────────
+                // ──── Drag and drop
 
                 hasFiles(dt) {
                     return dt && Array.from(dt.types || []).includes('Files');
@@ -2943,7 +2950,7 @@
                     if (files.length) await this.uploadFiles(files, targetDir);
                 },
 
-                // ── Session ───────────────────────────────────────────────────────────
+                // ──── Session
 
                 scheduleMetaSave() {
                     clearTimeout(this._metaTimer);
@@ -3073,7 +3080,7 @@
                     }
                 },
 
-                // ── Settings ──────────────────────────────────────────────────────────
+                // ──── Settings
 
                 async ensureTheme(id) {
                     // 每次切換主題都必須重做 setTheme + defineTheme：vscode-textmate 的
@@ -3261,7 +3268,7 @@
                     persistSettings({ customPhpHtmlComment: this.settings.customPhpHtmlComment });
                 },
 
-                // ── Logout ────────────────────────────────────────────────────────────
+                // ──── Logout
                 async doLogout() {
                     const hasDirty = this.tabsList.some(t => t.dirty);
                     if (hasDirty) {
@@ -3291,6 +3298,7 @@
                 },
             },
 
+            // ──── mounted: Monaco init & editor wiring
             mounted() {
                 window._editorApp = this;
 
