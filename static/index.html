@@ -420,6 +420,7 @@
         // Monaco models and view states stored outside Vue reactivity
         const tabsData = new Map(); // path → { model, originalContent, viewState, baseHash }
         const openingPaths = new Set(); // paths currently being fetched (race-condition guard)
+        const expandingPaths = new Set(); // 目錄正在展開中（避免快速重複點擊造成 state 不一致／重複 request）
         const uploadXhrs = new Map(); // upload id → XMLHttpRequest（供取消用，存在 Vue 響應式之外）
         const UPLOAD_CONCURRENCY = 3; // 上傳併行上限
         // xterm instances stored outside Vue reactivity. name → { term, fitAddon, paneEl, name }
@@ -1432,6 +1433,8 @@
                 async expandDir(item) {
                     const idx = this.treeItems.indexOf(item);
                     if (idx < 0) return;
+                    if (expandingPaths.has(item.path)) return;
+                    expandingPaths.add(item.path);
                     item.expanded = true;
                     try {
                         const files = await this.fetchDir(item.path);
@@ -1443,6 +1446,8 @@
                     } catch (e) {
                         item.expanded = false;
                         this.showError('載入目錄失敗：' + e.message);
+                    } finally {
+                        expandingPaths.delete(item.path);
                     }
                 },
 
@@ -1475,6 +1480,7 @@
                         this.selectedPaths = [item.path];
                         this.anchorPath = item.path;
                         if (item.isDir) {
+                            if (expandingPaths.has(item.path)) return; // 展開中，忽略重複點擊
                             if (item.expanded) this.collapseDir(item);
                             else await this.expandDir(item);
                         } else {
@@ -1516,7 +1522,7 @@
                         return;
                     }
                     if (openingPaths.has(path)) {
-                        this.showInfo('正在開啟 ' + path + '，請稍候');
+                        this.showToast('正在開啟 ' + path + '，請稍候');
                         return;
                     };
                     openingPaths.add(path);
