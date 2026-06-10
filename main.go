@@ -1747,6 +1747,16 @@ func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "invalid to path")
 		return
 	}
+	// 防止把目錄移動到自身的子目錄（os.Rename 在此情境會回難懂的 OS 錯誤）。
+	// 只擋嚴格子孫路徑：dst==src 的 no-op（如剪下檔案貼回原資料夾）交給後續邏輯處理。
+	srcClean := filepath.Clean(absFrom)
+	dstClean := filepath.Clean(absTo)
+	if dstClean != srcClean && strings.HasPrefix(dstClean+string(filepath.Separator), srcClean+string(filepath.Separator)) {
+		writeError(w, http.StatusBadRequest, "無法將目錄移動到自身的子目錄")
+		return
+	}
+	// auto=1：目的地已存在時不報衝突，改自動加 .1/.2… 後綴取得可用名稱（用於剪下/貼上的搬移）。
+	// auto=0（預設）：目的地已存在則回 409 衝突（用於重新命名，避免覆蓋既有檔案）。
 	auto := r.URL.Query().Get("auto") == "1"
 	// availableDest 內部會跑多次 Stat、Rename 也是 metadata-only，
 	// 一起包 quick timeout；底層 FS 卡死時不會留下半完成狀態的請求。

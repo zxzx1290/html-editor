@@ -2470,7 +2470,13 @@
                             const destParents = new Set(actualTos.map(p => this.parentOf(p)));
                             for (const p of destParents) await this.refreshDir(p);
                         }
-                        if (ok > 0) this.scrollToTreeNode(actualTos[0]);
+                        if (ok > 0) {
+                            this.selectedPaths = [...actualTos];
+                            this.selectedPath = actualTos[0];
+                            this.anchorPath = actualTos[0];
+                            this.treeFocused = true;
+                            this.scrollToTreeNode(actualTos[0]);
+                        }
                         this.scheduleMetaSave();
                         if (ok > 0) this.showToast(overrideItems ? `已建立副本：${actualTos[0].split('/').pop()}` : `${verb}成功：${ok} 個`);
                         if (errors.length) this.showError(`${verb}失敗：` + errors.join('、'));
