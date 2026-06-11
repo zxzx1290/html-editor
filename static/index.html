@@ -197,6 +197,7 @@
                 }"
                 draggable="true"
                 @click="activateTab(tab.path)"
+                @contextmenu.prevent.stop="onTabContextMenu($event, tab)"
                 @dragstart="onTabDragStart($event, tab)"
                 @dragover.prevent="onTabDragOver($event, tab)"
                 @dragleave="onTabDragLeave($event, tab)"
@@ -1639,6 +1640,21 @@
                         }
                     } else {
                         this.scheduleMetaSave();
+                    }
+                },
+
+                onTabContextMenu(e, tab) {
+                    this.showCtxMenu(e.clientX, e.clientY, [
+                        { label: '關閉', action: () => this.closeTab(tab.path) },
+                        { label: '關閉全部', action: () => this.closeAllTabs() },
+                    ]);
+                },
+
+                // 關閉所有非終端機分頁；逐一走 closeTab，未儲存的逐檔確認（取消則保留該分頁、繼續下一個）
+                async closeAllTabs() {
+                    const targets = this.tabsList.filter(t => !t.isTerminal).map(t => t.path);
+                    for (const path of targets) {
+                        await this.closeTab(path);
                     }
                 },
 
@@ -3330,7 +3346,7 @@
                 });
 
                 document.addEventListener('contextmenu', (e) => {
-                    if (!e.target.closest('#file-tree')) this.hideCtxMenu();
+                    if (!e.target.closest('#file-tree') && !e.target.closest('#tab-bar')) this.hideCtxMenu();
                 });
 
                 window.addEventListener('blur', () => { this.hideCtxMenu(); this.settingsOpen = false; this.newTabMenuOpen = false; });
