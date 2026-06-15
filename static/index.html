@@ -417,7 +417,6 @@
             'dockerfile': 'dockerfile',
         };
         const SETTINGS_KEY = 'html-editor-settings';
-        const TAB_ORDER_KEY = 'html-editor-tab-order';
         // Monaco models and view states stored outside Vue reactivity
         const tabsData = new Map(); // path → { model, originalContent, viewState, baseHash }
         const openingPaths = new Set(); // paths currently being fetched (race-condition guard)
@@ -1069,6 +1068,10 @@
             const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             let socket = null;
             let dupCount = 0;
+            // 斷線重連的遞增間隔（秒）：3 → 5 → 10 → 20 → 30，之後維持 30 上限。
+            // 連線成功後 reconnectAttempt 歸零，下次斷線重新從 3 秒起算。
+            const RECONNECT_DELAYS = [3, 5, 10, 20, 30];
+            let reconnectAttempt = 0;
 
             function wsSend(data) {
                 if (!socket || socket.readyState !== WebSocket.OPEN) return;
@@ -1099,6 +1102,7 @@
                 socket = new WebSocket(wsUrl);
 
                 socket.onopen = function () {
+                    reconnectAttempt = 0;
                     app.showToast('已上線');
                     window.editorPlugin.tabManagerSvc.getTabs().forEach(t => fileOnOpen(t.path));
                     if (app.canTerminal) wsSend({ type: 'term_list' });
@@ -1179,9 +1183,13 @@
 
                 socket.onclose = function () {
                     socket = null;
-                    app.showError('已離線，將自動重新連線');
-                    mylog('ws-collab', 'connection closed, retrying');
-                    setTimeout(connect, 30000);
+                    const base = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)];
+                    reconnectAttempt++;
+                    // 加上 ±20% jitter，錯開多客戶端在伺服器恢復瞬間同時重連（避免驚群效應）
+                    const delay = base * (0.8 + Math.random() * 0.4);
+                    app.showError('已離線，約 ' + Math.round(delay) + ' 秒後自動重新連線');
+                    mylog('ws-collab', 'connection closed, retrying in', delay.toFixed(1), 's');
+                    setTimeout(connect, delay * 1000);
                 };
             }
 
@@ -1241,6 +1249,7 @@
                     dragOverTab: null,
                     dragInsertBefore: false,
                     _pendingActiveTab: null,
+                    _restoreTabOrder: null,
                     settingsOpen: false,
                     statusMsg: '',
                     isSaving: false,
@@ -1688,7 +1697,6 @@
                     if (fromIdx < toIdx) toIdx--;
                     if (!this.dragInsertBefore) toIdx++;
                     this.tabsList.splice(toIdx, 0, moved);
-                    this._saveTabOrder();
                     this.scheduleMetaSave();
                 },
                 onTabDragEnd() {
@@ -1696,31 +1704,12 @@
                     this.dragOverTab = null;
                 },
 
-                // 紀錄使用者手動排好的 tab 路徑順序；保留已關閉的路徑，這樣下次同名 path
-                // （例如重連後還原的 terminal、或重新打開的檔案）會回到原位
-                _saveTabOrder() {
-                    const present = this.tabsList.map(t => t.path);
-                    let prev = [];
-                    try { prev = JSON.parse(localStorage.getItem(TAB_ORDER_KEY) || '[]'); } catch {}
-                    const presentSet = new Set(present);
-                    // 把已不存在的歷史 path 依原相對位置塞回 present
-                    const merged = present.slice();
-                    for (let i = 0; i < prev.length; i++) {
-                        const p = prev[i];
-                        if (presentSet.has(p)) continue;
-                        // 找出 prev 中下一個仍在 present 的路徑，當作錨點插在它前面
-                        let anchorPos = merged.length;
-                        for (let j = i + 1; j < prev.length; j++) {
-                            const idx = merged.indexOf(prev[j]);
-                            if (idx >= 0) { anchorPos = idx; break; }
-                        }
-                        merged.splice(anchorPos, 0, p);
-                    }
-                    try { localStorage.setItem(TAB_ORDER_KEY, JSON.stringify(merged)); } catch {}
-                },
                 _findInsertPos(path) {
-                    let order = [];
-                    try { order = JSON.parse(localStorage.getItem(TAB_ORDER_KEY) || '[]'); } catch {}
+                    // 只有還原階段才需要算插入位置：依上次存檔的完整 tab 順序（含終端機，
+                    // 來自 session.tabs），把非同步回來的終端機 tab 插回原本相對位置。
+                    // 平時新建的終端機名稱唯一、不在此順序中 → 一律接在最後。
+                    const order = this._restoreTabOrder;
+                    if (!order) return this.tabsList.length;
                     const target = order.indexOf(path);
                     if (target < 0) return this.tabsList.length;
                     for (let i = 0; i < this.tabsList.length; i++) {
@@ -2100,6 +2089,8 @@
                     }
                     this._ensureTerminal(name);
                     const isRestoring = restoringTerms.delete(name);
+                    // 還原中的終端機全部插回後，清掉暫存順序，讓之後新建的終端機回到「附加在最後」的行為。
+                    if (isRestoring && restoringTerms.size === 0) this._restoreTabOrder = null;
                     if (!isRestoring) {
                         // 使用者剛建的新終端機 → 切過去
                         this.activateTab(path);
@@ -3012,6 +3003,10 @@
                     if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) return;
                     const dirtyContents = session.dirtyContents || {};
                     const anonTabs = new Set(session.anonTabs || []);
+                    // 記下上次完整順序，供終端機 tab 還原時（onTerminalOpened → _findInsertPos）插回原位。
+                    // 若這次沒有終端機 tab 要還原，直接清掉避免影響之後新建的終端機。
+                    this._restoreTabOrder = session.tabs.slice();
+                    if (!session.tabs.some(p => p.startsWith(termPathPrefix))) this._restoreTabOrder = null;
                     for (const path of session.tabs) {
                         if (this.tabsList.find(t => t.path === path)) continue;
                         // 終端機 tab 由 WS term_sessions 回應後另外還原
