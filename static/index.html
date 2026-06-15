@@ -586,16 +586,6 @@
             } catch { return null; }
         }
 
-        function saveMeta(tabsList, activeTabPath) {
-            idbOp(STORE_META, 'readwrite', s => s.put(
-                {
-                    tabs: tabsList.map(t => t.path),
-                    activeTab: activeTabPath,
-                    anonTabs: tabsList.filter(t => t.isAnonymous).map(t => t.path),
-                }, 'tabs'
-            )).catch(() => { });
-        }
-
         function saveDirtyFile(path, content) {
             idbOp(STORE_DIRTY, 'readwrite', s => s.put(content, path)).catch(() => { });
         }
@@ -2971,9 +2961,36 @@
 
                 // ──── Session
 
+                // 收集各分頁的 Monaco viewState（含游標位置與捲動），供持久化還原用。
+                // 作用中分頁的 viewState 平時不會寫回 tabsData，這裡先即時補抓。
+                collectViewStates() {
+                    if (this.activeTabPath && monacoEditor && !this.activeTabIsImage && !this.activeTabIsTerminal) {
+                        const cur = tabsData.get(this.activeTabPath);
+                        if (cur) cur.viewState = monacoEditor.saveViewState();
+                    }
+                    const viewStates = {};
+                    for (const t of this.tabsList) {
+                        const d = tabsData.get(t.path);
+                        if (d && d.viewState) viewStates[t.path] = d.viewState;
+                    }
+                    return viewStates;
+                },
+
+                // 把目前分頁狀態（順序、作用中分頁、匿名分頁、viewState）寫入 IndexedDB meta
+                saveMeta() {
+                    idbOp(STORE_META, 'readwrite', s => s.put(
+                        {
+                            tabs: this.tabsList.map(t => t.path),
+                            activeTab: this.activeTabPath,
+                            anonTabs: this.tabsList.filter(t => t.isAnonymous).map(t => t.path),
+                            viewStates: this.collectViewStates(),
+                        }, 'tabs'
+                    )).catch(() => { });
+                },
+
                 scheduleMetaSave() {
                     clearTimeout(this._metaTimer);
-                    this._metaTimer = setTimeout(() => saveMeta(this.tabsList, this.activeTabPath), 300);
+                    this._metaTimer = setTimeout(() => this.saveMeta(), 300);
                 },
 
                 clearDirtyEntry(path) {
@@ -3003,6 +3020,7 @@
                     if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) return;
                     const dirtyContents = session.dirtyContents || {};
                     const anonTabs = new Set(session.anonTabs || []);
+                    const viewStates = session.viewStates || {};
                     // 記下上次完整順序，供終端機 tab 還原時（onTerminalOpened → _findInsertPos）插回原位。
                     // 若這次沒有終端機 tab 要還原，直接清掉避免影響之後新建的終端機。
                     this._restoreTabOrder = session.tabs.slice();
@@ -3016,7 +3034,7 @@
                                 const saved = dirtyContents[path];
                                 const content = saved !== undefined ? saved : '';
                                 const model = monaco.editor.createModel(content, 'plaintext');
-                                tabsData.set(path, { model, originalContent: '', viewState: null });
+                                tabsData.set(path, { model, originalContent: '', viewState: viewStates[path] || null });
                                 this.tabsList.push({ path, dirty: content !== '', isImage: false, isAnonymous: true });
                                 window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: content } } });
                                 continue;
@@ -3033,7 +3051,7 @@
                                 const model = monaco.editor.createModel(text, langId);
                                 const saved = dirtyContents[path];
                                 let isDirty = saved !== undefined && saved !== text;
-                                tabsData.set(path, { model, originalContent: text, viewState: null, baseHash: simpleHash(text) });
+                                tabsData.set(path, { model, originalContent: text, viewState: viewStates[path] || null, baseHash: simpleHash(text) });
                                 this.tabsList.push({ path, dirty: false, isImage: false });
                                 window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
                                 if (isDirty) {
@@ -3064,7 +3082,7 @@
                                     const langId = detectLang(path);
                                     await ensureLangWired(langId);
                                     const model = monaco.editor.createModel(saved, langId);
-                                    tabsData.set(path, { model, originalContent: '', viewState: null });
+                                    tabsData.set(path, { model, originalContent: '', viewState: viewStates[path] || null });
                                     this.tabsList.push({ path, dirty: true, isImage: false, isAnonymous: true });
                                     window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: saved } } });
                                 } else {
@@ -3446,7 +3464,7 @@
                 const flushSession = () => {
                     if (this._loggingOut) return;
                     clearTimeout(this._metaTimer);
-                    saveMeta(this.tabsList, this.activeTabPath);
+                    this.saveMeta();
                     if (this._dirtyTimers) {
                         for (const [path, timer] of Object.entries(this._dirtyTimers)) {
                             clearTimeout(timer);
@@ -3671,6 +3689,17 @@
                         if (!this.settings.showInvisible) return;
                         clearTimeout(_eolRefreshTimer);
                         _eolRefreshTimer = setTimeout(updateEolDecorations, 100);
+                    });
+
+                    // 游標移動／捲動時持久化 viewState（debounce 走 scheduleMetaSave），
+                    // 這樣即使沒有切換分頁，重開網頁也能回到最後的游標位置與捲動。
+                    monacoEditor.onDidChangeCursorPosition(() => {
+                        if (!this.activeTabPath || this.activeTabIsImage || this.activeTabIsTerminal) return;
+                        this.scheduleMetaSave();
+                    });
+                    monacoEditor.onDidScrollChange(() => {
+                        if (!this.activeTabPath || this.activeTabIsImage || this.activeTabIsTerminal) return;
+                        this.scheduleMetaSave();
                     });
 
                     // 自動補齊 HTML 閉合標籤（html / php / vue 模式，輸入 > 時觸發）
