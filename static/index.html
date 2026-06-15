@@ -587,19 +587,23 @@
         }
 
         function saveDirtyFile(path, content) {
-            idbOp(STORE_DIRTY, 'readwrite', s => s.put(content, path)).catch(() => { });
+            idbOp(STORE_DIRTY, 'readwrite', s => s.put(content, path))
+                .catch(err => mylog('saveDirtyFile', 'failed to persist dirty file:', path, err));
         }
 
         function deleteDirtyFile(path) {
-            idbOp(STORE_DIRTY, 'readwrite', s => s.delete(path)).catch(() => { });
+            idbOp(STORE_DIRTY, 'readwrite', s => s.delete(path))
+                .catch(err => mylog('deleteDirtyFile', 'failed to delete dirty file:', path, err));
         }
 
         function saveBaseHash(path, hash) {
-            idbOp(STORE_HASH, 'readwrite', s => s.put(hash, path)).catch(() => { });
+            idbOp(STORE_HASH, 'readwrite', s => s.put(hash, path))
+                .catch(err => mylog('saveBaseHash', 'failed to persist base hash:', path, err));
         }
 
         function deleteBaseHash(path) {
-            idbOp(STORE_HASH, 'readwrite', s => s.delete(path)).catch(() => { });
+            idbOp(STORE_HASH, 'readwrite', s => s.delete(path))
+                .catch(err => mylog('deleteBaseHash', 'failed to delete base hash:', path, err));
         }
 
         // ──── Editor state & 雜項 helpers
@@ -2985,7 +2989,7 @@
                             anonTabs: this.tabsList.filter(t => t.isAnonymous).map(t => t.path),
                             viewStates: this.collectViewStates(),
                         }, 'tabs'
-                    )).catch(() => { });
+                    )).catch(err => mylog('saveMeta', 'failed to persist meta:', err));
                 },
 
                 scheduleMetaSave() {
