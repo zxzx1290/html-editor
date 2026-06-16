@@ -2982,6 +2982,10 @@
 
                 // 把目前分頁狀態（順序、作用中分頁、匿名分頁、viewState）寫入 IndexedDB meta
                 saveMeta() {
+                    // 任一次實際寫入都涵蓋完整 meta（含 viewState），所以把兩個 debounce
+                    // 計時器一起清掉，避免結構性寫入後又被 viewState 計時器重複寫一次。
+                    clearTimeout(this._metaTimer);
+                    clearTimeout(this._viewTimer);
                     idbOp(STORE_META, 'readwrite', s => s.put(
                         {
                             tabs: this.tabsList.map(t => t.path),
@@ -2989,12 +2993,25 @@
                             anonTabs: this.tabsList.filter(t => t.isAnonymous).map(t => t.path),
                             viewStates: this.collectViewStates(),
                         }, 'tabs'
-                    )).catch(err => mylog('saveMeta', 'failed to persist meta:', err));
+                    ))
+                    .then(() => mylog('saveMeta', 'meta saved'))
+                    .catch(err => mylog('saveMeta', 'failed to persist meta:', err));
                 },
 
+                // 還原階段不寫：restoreSession 的 await 抓檔常超過 debounce，
+                // 否則會在半還原狀態下反覆寫入無謂的 meta，全部還原完再寫一次即可。
                 scheduleMetaSave() {
+                    if (this._restoring) return;
                     clearTimeout(this._metaTimer);
                     this._metaTimer = setTimeout(() => this.saveMeta(), 300);
+                },
+
+                // 游標移動／捲動只更新 viewState，不需要即時持久化，用較長的 debounce
+                // 大幅降低高頻寫入；結構性變更（開關／移動分頁）仍走 scheduleMetaSave。
+                scheduleViewStateSave() {
+                    if (this._restoring) return;
+                    clearTimeout(this._viewTimer);
+                    this._viewTimer = setTimeout(() => this.saveMeta(), 1500);
                 },
 
                 clearDirtyEntry(path) {
@@ -3022,6 +3039,19 @@
                     mylog('restoreSession', 'restoring session');
                     const session = await loadSession();
                     if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) return;
+                    this._restoring = true;
+                    try {
+                        await this._restoreSessionInner(session);
+                    } finally {
+                        this._restoring = false;
+                        // 還原期間的 scheduleMetaSave 全被略過，這裡明確補寫一次最終狀態。
+                        clearTimeout(this._metaTimer);
+                        this.saveMeta();
+                        mylog('restoreSession', 'session restored');
+                    }
+                },
+
+                async _restoreSessionInner(session) {
                     const dirtyContents = session.dirtyContents || {};
                     const anonTabs = new Set(session.anonTabs || []);
                     const viewStates = session.viewStates || {};
@@ -3061,7 +3091,7 @@
                                 if (isDirty) {
                                     const storedHash = (session.baseHashes || {})[path];
                                     if (storedHash !== undefined && storedHash !== simpleHash(text)) {
-                                        mylog('session', 'hash mismatch:', path, '| stored:', storedHash, '| current:', simpleHash(text));
+                                        mylog('_restoreSessionInner', 'hash mismatch:', path, '| stored:', storedHash, '| current:', simpleHash(text));
                                         const fname = path.split('/').pop();
                                         const keep = await this.dlgConfirm(
                                             `「${fname}」在您離開後已被他人修改。\n是否仍要載入您的未儲存草稿？（儲存時將覆蓋他人的修改）`,
@@ -3093,22 +3123,22 @@
                                     this.clearDirtyEntry(path);
                                 }
                             } else {
-                                mylog('session', 'failed to restore tab:', path, err);
+                                mylog('_restoreSessionInner', 'failed to restore tab:', path, err);
                             }
                         }
                     }
                     // 若上次 focus 的是 terminal tab，先記下來，等 term_sessions 還原該 tab 時再切過去
                     if (typeof session.activeTab === 'string' && session.activeTab.startsWith(termPathPrefix)) {
-                        mylog('restoreSession', 'active tab is terminal, defer activating:', session.activeTab);
+                        mylog('_restoreSessionInner', 'active tab is terminal, defer activating:', session.activeTab);
                         this._pendingActiveTab = session.activeTab;
                     }
                     if (this.tabsList.length > 0) {
                         const target = this.tabsList.find(t => t.path === session.activeTab) || this.tabsList[0];
-                        mylog('restoreSession', 'activating tab:', target.path);
+                        mylog('_restoreSessionInner', 'activating tab:', target.path);
                         await this.activateTab(target.path);
                         await this.revealInTree(target.path);
                     } else if (this._pendingActiveTab === null) {
-                        mylog('restoreSession', 'no tabs to restore');
+                        mylog('_restoreSessionInner', 'no tabs to restore');
                     }
                 },
 
@@ -3467,7 +3497,7 @@
 
                 const flushSession = () => {
                     if (this._loggingOut) return;
-                    clearTimeout(this._metaTimer);
+                    // saveMeta 內部會清掉 _metaTimer / _viewTimer，這裡直接 flush 即可。
                     this.saveMeta();
                     if (this._dirtyTimers) {
                         for (const [path, timer] of Object.entries(this._dirtyTimers)) {
@@ -3699,11 +3729,11 @@
                     // 這樣即使沒有切換分頁，重開網頁也能回到最後的游標位置與捲動。
                     monacoEditor.onDidChangeCursorPosition(() => {
                         if (!this.activeTabPath || this.activeTabIsImage || this.activeTabIsTerminal) return;
-                        this.scheduleMetaSave();
+                        this.scheduleViewStateSave();
                     });
                     monacoEditor.onDidScrollChange(() => {
                         if (!this.activeTabPath || this.activeTabIsImage || this.activeTabIsTerminal) return;
-                        this.scheduleMetaSave();
+                        this.scheduleViewStateSave();
                     });
 
                     // 自動補齊 HTML 閉合標籤（html / php / vue 模式，輸入 > 時觸發）
