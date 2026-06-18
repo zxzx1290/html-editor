@@ -6,6 +6,7 @@ static/textmate/
 static/xterm/
 static/plugins/
 static/lucide/
+static/encoding/
 static/favicon.ico
 html-editor
 html-editor.exe

@@ -41,6 +41,24 @@ fs.copyFileSync('node_modules/@xterm/addon-webgl/lib/addon-webgl.js', `${xtermDs
 console.log(`Copied xterm assets → ${xtermDst}`);
 
 
+// 編碼支援：把 iconv-lite-umd（編解碼）+ jschardet（偵測）bundle 成 IIFE，
+// 掛成全域 window.Encoding（與 textmate 同模式，避免 UMD 污染全域 / 撞 AMD loader）。
+const encDst = 'static/encoding';
+fs.rmSync(encDst, { recursive: true, force: true });
+fs.mkdirSync(encDst, { recursive: true });
+esbuild.buildSync({
+  entryPoints: ['encoding-entry.js'],
+  bundle: true,
+  format: 'iife',
+  globalName: 'Encoding',
+  outfile: `${encDst}/encoding.js`,
+  minify: true,
+  platform: 'browser',
+  target: ['es2020'],
+});
+console.log(`Bundled encoding libs → ${encDst}/encoding.js`);
+
+
 // TextMate engine：bundle vscode-textmate + vscode-oniguruma 成 IIFE，
 // 配合 grammar 檔與 WASM 一起部署到 static/textmate/
 const tmDst = 'static/textmate';

@@ -717,6 +717,16 @@ button.btn:disabled {
     padding: 4px 0;
 }
 
+#status .status-size {
+    padding: 0 10px;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    user-select: none;
+    opacity: .85;
+}
+
+#status .status-enc,
 #status .status-lang {
     cursor: pointer;
     padding: 0 10px;
@@ -726,6 +736,7 @@ button.btn:disabled {
     user-select: none;
 }
 
+#status .status-enc:hover,
 #status .status-lang:hover {
     background: var(--bg-statusbar-hover);
 }

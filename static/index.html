@@ -190,7 +190,7 @@
             <div v-for="tab in tabsList" :key="tab.path" class="tab"
                 :class="{
                     active: tab.path === activeTabPath,
-                    'tab-terminal': tab.isTerminal,
+                    'tab-terminal': tab.tabType === 'terminal',
                     'drag-before': dragOverTab === tab.path && dragInsertBefore,
                     'drag-after':  dragOverTab === tab.path && !dragInsertBefore,
                     'drag-source': dragSourceTab === tab.path,
@@ -203,14 +203,8 @@
                 @dragleave="onTabDragLeave($event, tab)"
                 @drop.prevent="onTabDrop($event, tab)"
                 @dragend="onTabDragEnd">
-                <i v-if="tab.isTerminal" class="tab-icon icon-terminal"></i>
-                <span class="tab-title" :title="tab.isTerminal ? tab.termName : (tab.searchLabel || (tab.isAnonymous ? '' : tab.path))">{{
-                    tab.isTerminal
-                        ? '終端機 ' + (tab.termName ? tab.termName.split('-').slice(-1)[0] : 'term')
-                        : (tab.searchLabel
-                            ? tab.searchLabel
-                            : (tab.isAnonymous ? 'Untitled ' + tab.path.split(':')[1] : tab.path.split('/').pop()))
-                }}</span>
+                <i v-if="tab.tabType === 'terminal'" class="tab-icon icon-terminal"></i>
+                <span class="tab-title" :title="tab.tabType === 'terminal' ? tab.termName : (tab.searchLabel || (tab.isAnonymous ? '' : tab.path))">{{ tabLabel(tab) }}</span>
                 <button class="tab-close" :class="{ dirty: tab.dirty }" draggable="false" @click.stop="closeTab(tab.path)" :title="tab.dirty ? '未儲存 · 點擊關閉' : '關閉'">
                     <i class="tab-close-x icon-x"></i>
                     <i class="tab-close-dot icon-dot"></i>
@@ -229,13 +223,16 @@
             <div id="empty-hint" v-show="tabsList.length === 0">從左側選擇檔案開始編輯</div>
             <div id="editor" ref="editorEl" v-show="activeTabPath && !activeTabIsImage && !activeTabIsTerminal"></div>
             <div id="image-preview" v-show="activeTabIsImage">
-                <img :src="imagePreviewSrc" />
+                <img :src="imagePreviewSrc" @load="onImgLoad" />
             </div>
             <div id="terminal-host" ref="terminalHost" v-show="activeTabIsTerminal"></div>
         </div>
 
         <div id="status">
             <span class="status-msg">{{ statusMsg }}</span>
+            <span class="status-size" v-if="statusRight">{{ statusRight }}</span>
+            <span class="status-enc" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTab.isAnonymous"
+                @click.stop="openEncodingMenu" title="選擇編碼">{{ currentEncodingLabel }}</span>
             <span class="status-lang" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal"
                 @click.stop="openLangPicker" title="選擇語法高亮語言">{{ currentLangLabel }}</span>
         </div>
@@ -317,6 +314,7 @@
 <script src="/static/xterm/addon-unicode11.js"></script>
 <script src="/static/xterm/addon-webgl.js"></script>
 <script src="/static/textmate/textmate.js"></script>
+<script src="/static/encoding/encoding.js"></script>
 <script src="/static/monaco/vs/loader.js"></script>
 
 <script>
@@ -617,6 +615,81 @@
             let n = bytes / 1024, i = 0;
             while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
             return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.round(n)) + ' ' + units[i];
+        }
+
+        // ──── 編碼：偵測 / 解碼 / 編碼（iconv-lite-umd + jschardet，比照 VSCode）
+        const ENCODINGS = [
+            { id: 'utf8',     label: 'UTF-8' },
+            { id: 'utf8bom',  label: 'UTF-8 with BOM' },
+            { id: 'utf16le',  label: 'UTF-16 LE' },
+            { id: 'utf16be',  label: 'UTF-16 BE' },
+            { id: 'big5',     label: 'Big5' },
+            { id: 'gbk',      label: 'GBK' },
+            { id: 'gb18030',  label: 'GB18030' },
+            { id: 'shiftjis', label: 'Shift_JIS' },
+            { id: 'eucjp',    label: 'EUC-JP' },
+            { id: 'euckr',    label: 'EUC-KR' },
+            { id: 'latin1',   label: 'Windows-1252 / Latin-1' },
+        ];
+        const ENC_LABEL = Object.fromEntries(ENCODINGS.map(e => [e.id, e.label]));
+        // 我方 id → iconv 編碼名（utf8 / utf8bom 走原生 TextEncoder/Decoder，不在此表）
+        const ICONV_NAME = {
+            utf16le: 'utf16-le', utf16be: 'utf16-be',
+            big5: 'big5', gbk: 'gbk', gb18030: 'gb18030',
+            shiftjis: 'shift_jis', eucjp: 'euc-jp', euckr: 'euc-kr', latin1: 'windows-1252',
+        };
+        // jschardet 回傳名（小寫）→ 我方 id
+        const JSCHARDET_ID = {
+            'utf-8': 'utf8', 'ascii': 'utf8',
+            'utf-16le': 'utf16le', 'utf-16be': 'utf16be',
+            'big5': 'big5', 'gb2312': 'gbk', 'gb18030': 'gb18030', 'hz-gb-2312': 'gbk',
+            'shift_jis': 'shiftjis', 'euc-jp': 'eucjp', 'euc-kr': 'euckr',
+            'windows-1252': 'latin1', 'iso-8859-1': 'latin1',
+        };
+
+        // 偵測編碼：先看 BOM，再用 jschardet（取樣 64KB、信心 ≥0.8 才採用），否則退回 utf8
+        function detectEncoding(bytes) {
+            if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) { mylog('detectEncoding', 'BOM → utf8bom'); return 'utf8bom'; }
+            if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) { mylog('detectEncoding', 'BOM → utf16le'); return 'utf16le'; }
+            if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) { mylog('detectEncoding', 'BOM → utf16be'); return 'utf16be'; }
+            try {
+                const sample = bytes.length > 65536 ? bytes.subarray(0, 65536) : bytes;
+                let bin = '';
+                for (let i = 0; i < sample.length; i++) bin += String.fromCharCode(sample[i]);
+                const r = Encoding.jschardet.detect(bin);
+                const id = r && r.encoding && r.confidence >= 0.8 ? JSCHARDET_ID[r.encoding.toLowerCase()] : null;
+                mylog('detectEncoding', 'jschardet:', r && r.encoding, 'confidence:', r && r.confidence, '->', id || 'utf8 (default)');
+                if (id) return id;
+            } catch (e) { mylog('detectEncoding', e.message); }
+            return 'utf8';
+        }
+
+        // bytes → 字串（依 id；utf8/utf16 會先剝掉 BOM）
+        function decodeBytes(bytes, id) {
+            if (id === 'utf8' || id === 'utf8bom') {
+                let b = bytes;
+                if (id === 'utf8bom' && b.length >= 3 && b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF) b = b.subarray(3);
+                return new TextDecoder('utf-8').decode(b);
+            }
+            let b = bytes;
+            if (id === 'utf16le' && b.length >= 2 && b[0] === 0xFF && b[1] === 0xFE) b = b.subarray(2);
+            if (id === 'utf16be' && b.length >= 2 && b[0] === 0xFE && b[1] === 0xFF) b = b.subarray(2);
+            return Encoding.iconv.decode(b, ICONV_NAME[id]);
+        }
+
+        // 字串 → Uint8Array（依 id；utf8bom/utf16 會補上 BOM，iconv 的 utf16-le/be 本身不帶 BOM）
+        function encodeText(text, id) {
+            if (id === 'utf8') return new TextEncoder().encode(text);
+            if (id === 'utf8bom') {
+                const u = new TextEncoder().encode(text);
+                const o = new Uint8Array(u.length + 3);
+                o.set([0xEF, 0xBB, 0xBF]); o.set(u, 3);
+                return o;
+            }
+            const body = new Uint8Array(Encoding.iconv.encode(text, ICONV_NAME[id]));
+            if (id === 'utf16le') { const o = new Uint8Array(body.length + 2); o.set([0xFF, 0xFE]); o.set(body, 2); return o; }
+            if (id === 'utf16be') { const o = new Uint8Array(body.length + 2); o.set([0xFE, 0xFF]); o.set(body, 2); return o; }
+            return body;
         }
 
         // 把檔案路徑映射到 Monaco 的 langId（先副檔名、再純檔名、最後 fallback plaintext）
@@ -1237,6 +1310,12 @@
                     anchorPath: null,
                     saveAsDlg: { visible: false, tree: [], selectedDir: '', filename: '', _resolve: null },
                     currentLangId: 'plaintext',
+                    currentEncoding: 'utf8',
+                    cursorPos: { line: 1, col: 1 },
+                    selCount: 0,
+                    selRanges: 1,
+                    imageDim: '',
+                    imageBytes: 0,
                     langPicker: { open: false, langs: [] },
                 };
             },
@@ -1246,10 +1325,10 @@
                     return this.tabsList.find(t => t.path === this.activeTabPath) || null;
                 },
                 activeTabIsImage() {
-                    return this.activeTab ? this.activeTab.isImage : false;
+                    return this.activeTab ? this.activeTab.tabType === 'image' : false;
                 },
                 activeTabIsTerminal() {
-                    return this.activeTab ? !!this.activeTab.isTerminal : false;
+                    return this.activeTab ? this.activeTab.tabType === 'terminal' : false;
                 },
                 activeTabDirty() {
                     return this.activeTab ? this.activeTab.dirty : false;
@@ -1259,11 +1338,43 @@
                     const found = this.langPicker.langs.find(l => l.id === this.currentLangId);
                     return found ? found.label : (this.currentLangId || 'Plain Text');
                 },
+                currentEncodingLabel() {
+                    return ENC_LABEL[this.currentEncoding] || this.currentEncoding;
+                },
+                // 狀態列右側：圖片顯示尺寸＋容量，文字檔顯示游標行列（有選取時加選取字數）
+                statusRight() {
+                    if (this.activeTabIsImage) {
+                        return this.imageDim + (this.imageBytes ? '   ' + formatSize(this.imageBytes) : '');
+                    }
+                    if (this.activeTab && !this.activeTabIsTerminal) {
+                        // 比照 VSCode editorStatus.ts getSelectionLabel
+                        if (this.selRanges > 1) {
+                            return this.selCount
+                                ? this.selRanges + ' 個選取 (已選取 ' + this.selCount + ' 字元)'
+                                : this.selRanges + ' 個選取';
+                        }
+                        let s = 'Ln ' + this.cursorPos.line + ', Col ' + this.cursorPos.col;
+                        if (this.selCount) s += ' (已選取 ' + this.selCount + ')';
+                        return s;
+                    }
+                    return '';
+                },
             },
 
             methods: {
                 isImagePath,
                 formatSize,
+                // 統一建立 tab 物件，確保欄位架構一致。tabType: 'file' | 'image' | 'search' | 'terminal'
+                makeTab(path, extra = {}) {
+                    return { path, dirty: false, tabType: 'file', ...extra };
+                },
+                // 分頁顯示名：一律從 path/termName/searchLabel 衍生，改名只改 path 即自動更新
+                tabLabel(tab) {
+                    if (tab.tabType === 'terminal') return '終端機 ' + (tab.termName ? tab.termName.split('-').slice(-1)[0] : 'term');
+                    if (tab.searchLabel) return tab.searchLabel;
+                    if (tab.isAnonymous) return 'Untitled ' + tab.path.split(':')[1];
+                    return tab.path.split('/').pop();
+                },
 
                 // ──── Dialog / Toast / Status
                 // 所有對話框（confirm / alert / prompt）的共用底層，回傳 Promise：
@@ -1331,6 +1442,9 @@
                     const m = monacoEditor && monacoEditor.getModel();
                     this.currentLangId = m ? m.getLanguageId() : 'plaintext';
                 },
+                onImgLoad(e) {
+                    this.imageDim = e.target.naturalWidth + ' × ' + e.target.naturalHeight;
+                },
 
                 // 第一次開 picker 時懶載入並快取整份 Monaco 已註冊語言清單，依 label 排序
                 loadLangList() {
@@ -1371,6 +1485,42 @@
                     this.closeLangPicker();
                 },
 
+                // ──── Encoding（比照 VSCode：點狀態列編碼 → 以該編碼重新開檔；之後存檔也用該編碼）
+                openEncodingMenu(e) {
+                    const items = ENCODINGS.map(enc => ({
+                        label: (enc.id === this.currentEncoding ? '● ' : ' ') + enc.label,
+                        action: () => this.reopenWithEncoding(enc.id),
+                    }));
+                    this.showCtxMenu(e.clientX, e.clientY, items);
+                },
+
+                // 重新以指定編碼從磁碟解碼開檔；該編碼會記在 tab 上，後續存檔沿用
+                async reopenWithEncoding(id) {
+                    const path = this.activeTabPath;
+                    const data = path && tabsData.get(path);
+                    if (!data || !data.model) return;
+                    if (id === (data.encoding || 'utf8')) return;
+                    if (this.activeTabDirty) {
+                        const ok = await this.dlgConfirm('以「' + (ENC_LABEL[id] || id) + '」重新開啟會捨棄未儲存的變更，繼續？', { danger: true, confirmText: '重新開啟' });
+                        if (!ok) return;
+                    }
+                    try {
+                        const bytes = await this.fetchBytes(path);
+                        const text = decodeBytes(bytes, id);
+                        data.model.setValue(text);
+                        data.encoding = id;
+                        data.originalContent = text;
+                        data.baseHash = simpleHash(text);
+                        this.currentEncoding = id;
+                        const tab = this.tabsList.find(t => t.path === path);
+                        if (tab) tab.dirty = false;
+                        this.clearDirtyEntry(path);
+                        this.setStatus('已以 ' + (ENC_LABEL[id] || id) + ' 重新開啟：' + path);
+                    } catch (err) {
+                        this.showError('重新開啟失敗: ' + err.message);
+                    }
+                },
+
                 async api(path, opts) {
                     opts = opts || {};
                     const res = await fetch(path, opts);
@@ -1389,6 +1539,17 @@
                     }
                     if (ct.includes('application/json')) return await res.json();
                     return await res.text();
+                },
+
+                // 抓檔案原始 bytes（給編碼解碼用；後端原樣回傳 bytes，前端自行解碼）
+                async fetchBytes(path) {
+                    const res = await fetch('/api/file?path=' + encodeURIComponent(path));
+                    if (!res.ok) {
+                        const err = new Error(res.statusText);
+                        err.status = res.status;
+                        throw err;
+                    }
+                    return new Uint8Array(await res.arrayBuffer());
                 },
 
                 // ──── File tree
@@ -1512,17 +1673,19 @@
                     try {
                         if (isImagePath(path)) {
                             tabsData.set(path, { model: null, originalContent: '', viewState: null });
-                            this.tabsList.push({ path, dirty: false, isImage: true });
+                            this.tabsList.push(this.makeTab(path, { tabType: 'image' }));
                             notifyOpen(path, '');
                         } else {
                             try {
                                 const langId = detectLang(path);
                                 const wirePromise = ensureLangWired(langId);
-                                const text = await this.api('/api/file?path=' + encodeURIComponent(path));
+                                const bytes = await this.fetchBytes(path);
+                                const encoding = detectEncoding(bytes);
+                                const text = decodeBytes(bytes, encoding);
                                 await wirePromise;
                                 const model = monaco.editor.createModel(text, langId);
-                                tabsData.set(path, { model, originalContent: text, viewState: null, baseHash: simpleHash(text) });
-                                this.tabsList.push({ path, dirty: false, isImage: false });
+                                tabsData.set(path, { model, originalContent: text, viewState: null, baseHash: simpleHash(text), encoding });
+                                this.tabsList.push(this.makeTab(path));
                                 notifyOpen(path, text);
                             } catch (e) {
                                 this.showError('開啟失敗: ' + e.message);
@@ -1550,7 +1713,7 @@
                     this.activeTabPath = path;
                     const newTab = this.tabsList.find(t => t.path === path);
 
-                    if (newTab && newTab.isTerminal) {
+                    if (newTab && newTab.tabType === 'terminal') {
                         for (const [n, e] of termInstances) {
                             e.paneEl.classList.toggle('active', n === newTab.termName);
                         }
@@ -1563,23 +1726,34 @@
                             mylog('activateTab', '找不到 tabsData 項目，tabsList/tabsData 可能不同步:', path);
                             return;
                         }
-                        if (newTab.isImage) {
-                            this.imagePreviewSrc = '/api/file?path=' + encodeURIComponent(path) + '&t=' + Date.now();
+                        if (newTab.tabType === 'image') {
                             this.setStatus('圖片預覽：' + path);
+                            const url = '/api/file?path=' + encodeURIComponent(path) + '&t=' + Date.now();
+                            try {
+                                const blob = await (await fetch(url)).blob();
+                                this.imageBytes = blob.size;
+                                if (this._imgObjUrl) URL.revokeObjectURL(this._imgObjUrl);
+                                this._imgObjUrl = URL.createObjectURL(blob);
+                                this.imagePreviewSrc = this._imgObjUrl;
+                            } catch {
+                                this.imageBytes = 0;
+                                this.imagePreviewSrc = url; // 退回直連
+                            }
                         } else {
                             monacoEditor.setModel(data.model);
                             if (data.viewState) monacoEditor.restoreViewState(data.viewState);
+                            this.currentEncoding = data.encoding || 'utf8';
                             this.setStatus('已開啟：' + path);
                         }
                     }
 
-                    if (!(newTab && newTab.isTerminal)) await this.revealInTree(path);
+                    if (!(newTab && newTab.tabType === 'terminal')) await this.revealInTree(path);
                     this.scheduleMetaSave();
                     this.$nextTick(() => {
                         const tabEl = document.querySelector('.tab.active');
                         if (tabEl) tabEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
                     });
-                    if (!(newTab && newTab.isTerminal)) this.scrollToTreeNode(path);
+                    if (!(newTab && newTab.tabType === 'terminal')) this.scrollToTreeNode(path);
                 },
 
                 async closeTab(path) {
@@ -1587,7 +1761,7 @@
                     if (idx < 0) return;
                     const tab = this.tabsList[idx];
 
-                    if (tab.isTerminal) {
+                    if (tab.tabType === 'terminal') {
                         const ok = await this.dlgConfirm(`關閉終端機「${tab.termName}」？`, { confirmText: '關閉', danger: true });
                         if (!ok) return;
                         // wait for server-side term_closed to clean up UI
@@ -1595,7 +1769,7 @@
                         return;
                     }
 
-                    const displayName = tab.searchLabel || (tab.isAnonymous ? 'Untitled ' + path.split(':')[1] : path.split('/').pop());
+                    const displayName = this.tabLabel(tab);
                     if (tab.dirty && !await this.dlgConfirm(`「${displayName}」有未儲存的變更，確定要關閉嗎？`)) return;
 
                     notifyClose(path);
@@ -1633,7 +1807,7 @@
 
                 // 關閉所有非終端機分頁；逐一走 closeTab，未儲存的逐檔確認（取消則保留該分頁、繼續下一個）
                 async closeAllTabs() {
-                    const targets = this.tabsList.filter(t => !t.isTerminal).map(t => t.path);
+                    const targets = this.tabsList.filter(t => t.tabType !== 'terminal').map(t => t.path);
                     for (const path of targets) {
                         await this.closeTab(path);
                     }
@@ -1724,11 +1898,12 @@
                     }
                     const content = monacoEditor.getValue();
                     pluginBus.emit('fileBeforeSave', { value: content, path: this.activeTabPath });
+                    const encoding = data.encoding || 'utf8';
                     try {
                         await this.api('/api/file?path=' + encodeURIComponent(this.activeTabPath), {
                             method: 'PUT',
-                            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-                            body: content,
+                            headers: { 'Content-Type': 'application/octet-stream' },
+                            body: encoding === 'utf8' ? content : encodeText(content, encoding),
                         });
                         data.originalContent = content;
                         const tab = this.tabsList.find(t => t.path === this.activeTabPath);
@@ -1864,7 +2039,7 @@
                     const path = `untitled:${n}`;
                     const model = monaco.editor.createModel('', 'plaintext');
                     tabsData.set(path, { model, originalContent: '', viewState: null });
-                    this.tabsList.push({ path, dirty: false, isImage: false, isAnonymous: true });
+                    this.tabsList.push(this.makeTab(path, { isAnonymous: true }));
                     notifyOpen(path, '');
                     this.activateTab(path);
                     this.scheduleMetaSave();
@@ -2057,7 +2232,7 @@
                     const path = termPathPrefix + name;
                     if (!this.tabsList.find(t => t.path === path)) {
                         const pos = this._findInsertPos(path);
-                        this.tabsList.splice(pos, 0, { path, isTerminal: true, termName: name, dirty: false, isImage: false });
+                        this.tabsList.splice(pos, 0, this.makeTab(path, { tabType: 'terminal', termName: name }));
                     }
                     this._ensureTerminal(name);
                     const isRestoring = restoringTerms.delete(name);
@@ -2699,11 +2874,10 @@
                             hadAnyResult: false,
                         },
                     });
-                    this.tabsList.push({
-                        path, dirty: false, isImage: false, isAnonymous: true,
-                        isSearchResult: true,
+                    this.tabsList.push(this.makeTab(path, {
+                        tabType: 'search', isAnonymous: true,
                         searchLabel: `regex: ${keyword}`,
-                    });
+                    }));
                     notifyOpen(path, header);
                     this.activateTab(path);
                     this.scheduleMetaSave();
@@ -3047,24 +3221,26 @@
                                 const content = saved !== undefined ? saved : '';
                                 const model = monaco.editor.createModel(content, 'plaintext');
                                 tabsData.set(path, { model, originalContent: '', viewState: viewStates[path] || null });
-                                this.tabsList.push({ path, dirty: content !== '', isImage: false, isAnonymous: true });
+                                this.tabsList.push(this.makeTab(path, { dirty: content !== '', isAnonymous: true }));
                                 notifyOpen(path, content);
                                 continue;
                             }
                             if (isImagePath(path)) {
                                 tabsData.set(path, { model: null, originalContent: '', viewState: null });
-                                this.tabsList.push({ path, dirty: false, isImage: true });
+                                this.tabsList.push(this.makeTab(path, { tabType: 'image' }));
                                 notifyOpen(path, '');
                             } else {
                                 const langId = detectLang(path);
                                 const wirePromise = ensureLangWired(langId);
-                                const text = await this.api('/api/file?path=' + encodeURIComponent(path));
+                                const bytes = await this.fetchBytes(path);
+                                const encoding = detectEncoding(bytes);
+                                const text = decodeBytes(bytes, encoding);
                                 await wirePromise;
                                 const model = monaco.editor.createModel(text, langId);
                                 const saved = dirtyContents[path];
                                 let isDirty = saved !== undefined && saved !== text;
-                                tabsData.set(path, { model, originalContent: text, viewState: viewStates[path] || null, baseHash: simpleHash(text) });
-                                this.tabsList.push({ path, dirty: false, isImage: false });
+                                tabsData.set(path, { model, originalContent: text, viewState: viewStates[path] || null, baseHash: simpleHash(text), encoding });
+                                this.tabsList.push(this.makeTab(path));
                                 notifyOpen(path, text);
                                 if (isDirty) {
                                     const storedHash = (session.baseHashes || {})[path];
@@ -3095,7 +3271,7 @@
                                     await ensureLangWired(langId);
                                     const model = monaco.editor.createModel(saved, langId);
                                     tabsData.set(path, { model, originalContent: '', viewState: viewStates[path] || null });
-                                    this.tabsList.push({ path, dirty: true, isImage: false, isAnonymous: true });
+                                    this.tabsList.push(this.makeTab(path, { dirty: true, isAnonymous: true }));
                                     notifyOpen(path, saved);
                                 } else {
                                     this.clearDirtyEntry(path);
@@ -3699,9 +3875,21 @@
 
                     // 游標移動／捲動時持久化 viewState（debounce 走 scheduleMetaSave），
                     // 這樣即使沒有切換分頁，重開網頁也能回到最後的游標位置與捲動。
-                    monacoEditor.onDidChangeCursorPosition(() => {
+                    monacoEditor.onDidChangeCursorPosition((e) => {
+                        this.cursorPos = { line: e.position.lineNumber, col: e.position.column };
                         if (!this.activeTabPath || this.activeTabIsImage || this.activeTabIsTerminal) return;
                         this.scheduleViewStateSave();
+                    });
+                    // 選取字數（比照 VSCode editorStatus.ts onSelectionChange：
+                    // getCharacterCountInRange 逐段加總，含多游標的所有選取區段）
+                    monacoEditor.onDidChangeCursorSelection((e) => {
+                        const m = monacoEditor.getModel();
+                        if (!m) { this.selCount = 0; this.selRanges = 1; return; }
+                        const sels = [e.selection, ...e.secondarySelections];
+                        let n = 0;
+                        for (const s of sels) n += m.getCharacterCountInRange(s);
+                        this.selCount = n;
+                        this.selRanges = sels.length;
                     });
                     monacoEditor.onDidScrollChange(() => {
                         if (!this.activeTabPath || this.activeTabIsImage || this.activeTabIsTerminal) return;
