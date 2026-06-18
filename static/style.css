@@ -717,7 +717,7 @@ button.btn:disabled {
     padding: 4px 0;
 }
 
-#status .status-size {
+#status .status-right {
     padding: 0 10px;
     align-self: stretch;
     display: flex;

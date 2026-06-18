@@ -230,9 +230,9 @@
 
         <div id="status">
             <span class="status-msg">{{ statusMsg }}</span>
-            <span class="status-size" v-if="statusRight">{{ statusRight }}</span>
+            <span class="status-right" v-if="statusRight">{{ statusRight }}</span>
             <span class="status-enc" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTab.isAnonymous"
-                @click.stop="openEncodingMenu" title="選擇編碼">{{ currentEncodingLabel }}</span>
+                @click.stop="openEncodingMenu" title="選取編碼">{{ currentEncodingLabel }}</span>
             <span class="status-lang" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal"
                 @click.stop="openLangPicker" title="選擇語法高亮語言">{{ currentLangLabel }}</span>
         </div>
@@ -1347,13 +1347,13 @@
                         return this.imageDim + (this.imageBytes ? '   ' + formatSize(this.imageBytes) : '');
                     }
                     if (this.activeTab && !this.activeTabIsTerminal) {
-                        // 比照 VSCode editorStatus.ts getSelectionLabel
+                        // 字串比照 VSCode 繁中在地化（editorStatus singleSelection / multiSelection）
                         if (this.selRanges > 1) {
                             return this.selCount
-                                ? this.selRanges + ' 個選取 (已選取 ' + this.selCount + ' 字元)'
-                                : this.selRanges + ' 個選取';
+                                ? this.selRanges + ' 個選取項目 (已選取 ' + this.selCount + ' 個字元)'
+                                : this.selRanges + ' 個選取項目';
                         }
-                        let s = 'Ln ' + this.cursorPos.line + ', Col ' + this.cursorPos.col;
+                        let s = '第 ' + this.cursorPos.line + ' 行，第 ' + this.cursorPos.col + ' 欄';
                         if (this.selCount) s += ' (已選取 ' + this.selCount + ')';
                         return s;
                     }
