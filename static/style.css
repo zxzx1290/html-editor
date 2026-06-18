@@ -724,6 +724,7 @@ button.btn:disabled {
     align-items: center;
     user-select: none;
     opacity: .85;
+    white-space: pre;  /* 保留尺寸與容量之間的多個空白 */
 }
 
 #status .status-enc,
