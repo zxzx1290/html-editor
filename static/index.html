@@ -2478,6 +2478,9 @@
                             }
                         }
                         await this.refreshDir(parentDir);
+                        this.selectedPath = newPath;
+                        this.selectedPaths = [newPath];
+                        this.scrollToTreeNode(newPath);
                         this.showToast('已重新命名為：' + newName);
                     } catch (e) {
                         this.showError('重新命名失敗：' + e.message);
