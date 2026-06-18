@@ -328,64 +328,6 @@
         console.log(`[${ts}]`, `[${src}]`, ...args);
     }
 
-    // ──── Plugin System
-    window.editorPlugin = (function () {
-        class EventEmitter {
-            constructor() { this._l = {}; }
-            on(ev, fn) { (this._l[ev] = this._l[ev] || []).push(fn); return this; }
-            off(ev, fn) { if (this._l[ev]) this._l[ev] = this._l[ev].filter(f => f !== fn); return this; }
-            emit(ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { mylog('plugin emit', ev, e); } }); }
-        }
-
-        const saveService = new EventEmitter();
-
-        const tabManagerSvc = new EventEmitter();
-        tabManagerSvc.getTabs = function () {
-            const app = window._editorApp;
-            return app ? app.tabsList.map(t => ({ path: t.path, document: { title: t.path.split('/').pop(), value: '' } })) : [];
-        };
-
-        const bubbleSvc = {
-            popup(msg) {
-                const app = window._editorApp;
-                if (app) app.showToast(String(msg));
-                else mylog('bubble', msg);
-            },
-        };
-
-        const dialogAlertSvc = {
-            show(title, body, detail, cb) {
-                const msg = [title, body, detail].filter(Boolean).join('\n');
-                window._editorApp.dlgAlert(msg).then(() => { if (cb) cb(); });
-            },
-        };
-
-        const services = {
-            save: saveService,
-            'dialog.alert': dialogAlertSvc,
-            tabManager: tabManagerSvc,
-            'notification.bubble': bubbleSvc,
-        };
-
-        async function loadPlugin(url) {
-            try {
-                const code = await fetch(url).then(r => {
-                    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
-                    return r.text();
-                });
-                new Function(code)();
-                mylog('plugin', 'loaded:', url);
-            } catch (e) {
-                mylog('plugin', 'failed to load:', url, e);
-            }
-        }
-
-        // F12 調適用：實體於建立後由主程式注入
-        return { services, saveService, tabManagerSvc, bubbleSvc, dialogAlertSvc, loadPlugin, monacoEditor: null, termInstances: null };
-    })();
-</script>
-
-<script>
     (function () {
         // ──── Constants & shared state
         // 圖片副檔名清單
@@ -440,6 +382,51 @@
                 }
             }, 100);
         }
+
+        // ──── Plugin API（對外只暴露 window.editor）
+        // 設計：內部邏輯一律直呼，event bus 只在真實生命週期邊界（開檔 / 關檔 /
+        // 存檔）向 plugin 廣播，不再讓 app 透過 bus 跟自己對話。
+        class EventEmitter {
+            constructor() { this._l = {}; }
+            on(ev, fn) { (this._l[ev] = this._l[ev] || []).push(fn); return this; }
+            off(ev, fn) { if (this._l[ev]) this._l[ev] = this._l[ev].filter(f => f !== fn); return this; }
+            emit(ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { mylog('plugin emit', ev, e); } }); }
+        }
+        const pluginBus = new EventEmitter();
+
+        // wsSend / fileOnOpen / fileOnClose 的真正實作由 initWs 注入；先放 no-op，
+        // 讓更早被呼叫的地方安全略過。
+        let wsSend = () => {};
+        let fileOnOpen = () => {};
+        let fileOnClose = () => {};
+        // 開 / 關檔的單一入口：先做協作 WS 通知，再廣播給 plugin。
+        function notifyOpen(path, value) { fileOnOpen(path); pluginBus.emit('fileOnOpen', { path, value }); }
+        function notifyClose(path) { fileOnClose(path); pluginBus.emit('fileOnClose', { path }); }
+
+        async function loadPlugin(url) {
+            try {
+                const code = await fetch(url).then(r => {
+                    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+                    return r.text();
+                });
+                new Function(code)();
+                mylog('plugin', 'loaded:', url);
+            } catch (e) {
+                mylog('plugin', 'failed to load:', url, e);
+            }
+        }
+
+        // plugin 介面：on/off 訂閱 fileOnOpen|fileOnClose|fileBeforeSave|fileAfterSave；其餘為服務方法。
+        window.editor = {
+            on: (ev, fn) => pluginBus.on(ev, fn),
+            off: (ev, fn) => pluginBus.off(ev, fn),
+            notify: msg => { const a = window._editorApp; if (a) a.showToast(String(msg)); else mylog('notify', msg); },
+            alert: (title, body, detail) => window._editorApp.dlgAlert([title, body, detail].filter(Boolean).join('\n')),
+            getTabs: () => (window._editorApp ? window._editorApp.tabsList.map(t => t.path) : []),
+            loadPlugin,
+            get monaco() { return monacoEditor; },
+            get terminals() { return termInstances; },
+        };
 
         // ──── 主題色彩工具：VS Code theme colors → UI
         function hexToRgb(h) {
@@ -1067,29 +1054,28 @@
             const RECONNECT_DELAYS = [3, 5, 10, 20, 30];
             let reconnectAttempt = 0;
 
-            function wsSend(data) {
+            wsSend = function (data) {
                 if (!socket || socket.readyState !== WebSocket.OPEN) return;
                 socket.send(JSON.stringify(data));
-            }
-            window.editorPlugin.wsSend = wsSend;
+            };
 
-            function fileOnOpen(path) {
+            fileOnOpen = function (path) {
                 const tab = app.tabsList.find(t => t.path === path);
                 if (tab && tab.isAnonymous) return;  // 匿名檔案不通知
                 const i = path.lastIndexOf('/');
                 const folder = i >= 0 ? path.slice(0, i) : '';
                 const file = i >= 0 ? path.slice(i + 1) : path;
                 wsSend({ type: 'file_on_open', payload: { path: folder, file } });
-            }
+            };
 
-            function fileOnClose(path) {
+            fileOnClose = function (path) {
                 const tab = app.tabsList.find(t => t.path === path);
                 if (tab && tab.isAnonymous) return;  // 匿名檔案不通知
                 const i = path.lastIndexOf('/');
                 const folder = i >= 0 ? path.slice(0, i) : '';
                 const file = i >= 0 ? path.slice(i + 1) : path;
                 wsSend({ type: 'file_on_close', payload: { path: folder, file } });
-            }
+            };
 
             function connect() {
                 if (socket && socket.readyState !== WebSocket.CLOSED) return;
@@ -1098,7 +1084,7 @@
                 socket.onopen = function () {
                     reconnectAttempt = 0;
                     app.showToast('已上線');
-                    window.editorPlugin.tabManagerSvc.getTabs().forEach(t => fileOnOpen(t.path));
+                    app.tabsList.forEach(t => fileOnOpen(t.path));
                     if (app.canTerminal) wsSend({ type: 'term_list' });
                 };
 
@@ -1125,12 +1111,7 @@
                             break;
                         case 'same_file_open': {
                             const info = msg.payload;
-                            window.editorPlugin.dialogAlertSvc.show(
-                                '注意',
-                                '重複開啟檔案 ' + info.path + '/' + info.file,
-                                '人員：' + info.user,
-                                function () { }
-                            );
+                            app.dlgAlert('注意\n重複開啟檔案 ' + info.path + '/' + info.file + '\n人員：' + info.user);
                             break;
                         }
                         case 'user_online':
@@ -1186,9 +1167,6 @@
                     setTimeout(connect, delay * 1000);
                 };
             }
-
-            window.editorPlugin.tabManagerSvc.on('open', function (e) { fileOnOpen(e.tab.path); });
-            window.editorPlugin.tabManagerSvc.on('tabDestroy', function (e) { fileOnClose(e.tab.path); });
 
             connect();
         }
@@ -1535,7 +1513,7 @@
                         if (isImagePath(path)) {
                             tabsData.set(path, { model: null, originalContent: '', viewState: null });
                             this.tabsList.push({ path, dirty: false, isImage: true });
-                            window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
+                            notifyOpen(path, '');
                         } else {
                             try {
                                 const langId = detectLang(path);
@@ -1545,7 +1523,7 @@
                                 const model = monaco.editor.createModel(text, langId);
                                 tabsData.set(path, { model, originalContent: text, viewState: null, baseHash: simpleHash(text) });
                                 this.tabsList.push({ path, dirty: false, isImage: false });
-                                window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
+                                notifyOpen(path, text);
                             } catch (e) {
                                 this.showError('開啟失敗: ' + e.message);
                                 return;
@@ -1620,7 +1598,7 @@
                     const displayName = tab.searchLabel || (tab.isAnonymous ? 'Untitled ' + path.split(':')[1] : path.split('/').pop());
                     if (tab.dirty && !await this.dlgConfirm(`「${displayName}」有未儲存的變更，確定要關閉嗎？`)) return;
 
-                    window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path } });
+                    notifyClose(path);
                     const data = tabsData.get(path);
                     // 搜尋分頁在進行中關閉 → abort fetch，讓 server 提早結束、釋放 per-user 並發鎖
                     if (data && data.searchAbort) {
@@ -1745,7 +1723,7 @@
                         if (edits.length > 0) model.pushEditOperations([], edits, () => null);
                     }
                     const content = monacoEditor.getValue();
-                    window.editorPlugin.saveService.emit('beforeSave', { value: content, path: this.activeTabPath });
+                    pluginBus.emit('fileBeforeSave', { value: content, path: this.activeTabPath });
                     try {
                         await this.api('/api/file?path=' + encodeURIComponent(this.activeTabPath), {
                             method: 'PUT',
@@ -1758,7 +1736,7 @@
                         this.clearDirtyEntry(this.activeTabPath);
                         this.setStatus('已儲存：' + this.activeTabPath);
                         this.showToast('儲存成功');
-                        window.editorPlugin.saveService.emit('afterSave', {
+                        pluginBus.emit('fileAfterSave', {
                             path: this.activeTabPath,
                             document: { title: this.activeTabPath.split('/').pop() },
                             value: content,
@@ -1845,7 +1823,7 @@
                     this.isSaving = true;
                     try {
                         const content = monacoEditor.getValue();
-                        window.editorPlugin.saveService.emit('beforeSave', { value: content, path: targetPath });
+                        pluginBus.emit('fileBeforeSave', { value: content, path: targetPath });
                         await this.api('/api/file?path=' + encodeURIComponent(targetPath), {
                             method: 'PUT',
                             headers: { 'Content-Type': 'text/plain; charset=utf-8' },
@@ -1860,14 +1838,14 @@
                         this.clearDirtyEntry(oldPath);
                         if (this.activeTabPath === oldPath) this.activeTabPath = targetPath;
                         if (this.selectedPath === oldPath) { this.selectedPath = targetPath; this.selectedPaths = [targetPath]; }
-                        window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: oldPath } });
-                        window.editorPlugin.tabManagerSvc.emit('open', { tab: { path: targetPath, document: { value: content } } });
+                        notifyClose(oldPath);
+                        notifyOpen(targetPath, content);
                         await this.refreshDir(this.parentOf(targetPath));
                         this.scrollToTreeNode(targetPath);
                         this.setStatus('已儲存：' + targetPath);
                         this.showToast('儲存成功');
                         this.scheduleMetaSave();
-                        window.editorPlugin.saveService.emit('afterSave', {
+                        pluginBus.emit('fileAfterSave', {
                             path: targetPath,
                             document: { title: targetPath.split('/').pop() },
                             value: content,
@@ -1887,7 +1865,7 @@
                     const model = monaco.editor.createModel('', 'plaintext');
                     tabsData.set(path, { model, originalContent: '', viewState: null });
                     this.tabsList.push({ path, dirty: false, isImage: false, isAnonymous: true });
-                    window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
+                    notifyOpen(path, '');
                     this.activateTab(path);
                     this.scheduleMetaSave();
                     // 自動focus新檔案的編輯器
@@ -1988,12 +1966,12 @@
                 requestNewTerminal() {
                     if (!this.canTerminal) return;
                     const { cols, rows } = this._termSize();
-                    window.editorPlugin.wsSend({ type: 'term_open', payload: { cols, rows } });
+                    wsSend({ type: 'term_open', payload: { cols, rows } });
                 },
 
                 attachTerminal(name) {
                     const { cols, rows } = this._termSize();
-                    window.editorPlugin.wsSend({ type: 'term_attach', payload: { name, cols, rows } });
+                    wsSend({ type: 'term_attach', payload: { name, cols, rows } });
                 },
 
                 _ensureTerminal(name) {
@@ -2063,11 +2041,11 @@
 
                     term.onData(d => {
                         const data = btoa(unescape(encodeURIComponent(d)));
-                        window.editorPlugin.wsSend({ type: 'term_input', payload: { name, data } });
+                        wsSend({ type: 'term_input', payload: { name, data } });
                     });
 
                     term.onResize(({ cols, rows }) => {
-                        window.editorPlugin.wsSend({ type: 'term_resize', payload: { name, cols, rows } });
+                        wsSend({ type: 'term_resize', payload: { name, cols, rows } });
                     });
 
                     const entry = { term, fitAddon, paneEl, name };
@@ -2120,7 +2098,7 @@
                 },
 
                 killTerminal(name) {
-                    window.editorPlugin.wsSend({ type: 'term_kill', payload: { name } });
+                    wsSend({ type: 'term_kill', payload: { name } });
                 },
 
                 _fitActiveTerminal() {
@@ -2442,14 +2420,14 @@
                                         : this.tabsList.filter(t => t.path === from)
                                             .map(t => [t, actualTo]);
                                     for (const [tab, newPath] of movedTabs) {
-                                        window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: tab.path } });
+                                        notifyClose(tab.path);
                                         const d = tabsData.get(tab.path);
                                         tabsData.delete(tab.path);
                                         tabsData.set(newPath, d);
                                         if (d && d.model) monaco.editor.setModelLanguage(d.model, detectLang(newPath));
                                         if (this.activeTabPath === tab.path) this.activeTabPath = newPath;
                                         tab.path = newPath;
-                                        window.editorPlugin.tabManagerSvc.emit('open', { tab: { path: newPath, document: { value: '' } } });
+                                        notifyOpen(newPath, '');
                                     }
                                 } else {
                                     const res = await this.api('/api/copy?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to), { method: 'POST' });
@@ -2507,7 +2485,7 @@
                                 await this.api('/api/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
                                 const toClose = this.tabsList.filter(t => t.path === path || (isDir && t.path.startsWith(path + '/'))).map(t => t.path);
                                 for (const p of toClose) {
-                                    window.editorPlugin.tabManagerSvc.emit('tabDestroy', { tab: { path: p } });
+                                    notifyClose(p);
                                     const d = tabsData.get(p);
                                     if (d && d.model) d.model.dispose();
                                     tabsData.delete(p);
@@ -2726,7 +2704,7 @@
                         isSearchResult: true,
                         searchLabel: `regex: ${keyword}`,
                     });
-                    window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: header } } });
+                    notifyOpen(path, header);
                     this.activateTab(path);
                     this.scheduleMetaSave();
                     return path;
@@ -3070,13 +3048,13 @@
                                 const model = monaco.editor.createModel(content, 'plaintext');
                                 tabsData.set(path, { model, originalContent: '', viewState: viewStates[path] || null });
                                 this.tabsList.push({ path, dirty: content !== '', isImage: false, isAnonymous: true });
-                                window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: content } } });
+                                notifyOpen(path, content);
                                 continue;
                             }
                             if (isImagePath(path)) {
                                 tabsData.set(path, { model: null, originalContent: '', viewState: null });
                                 this.tabsList.push({ path, dirty: false, isImage: true });
-                                window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: '' } } });
+                                notifyOpen(path, '');
                             } else {
                                 const langId = detectLang(path);
                                 const wirePromise = ensureLangWired(langId);
@@ -3087,7 +3065,7 @@
                                 let isDirty = saved !== undefined && saved !== text;
                                 tabsData.set(path, { model, originalContent: text, viewState: viewStates[path] || null, baseHash: simpleHash(text) });
                                 this.tabsList.push({ path, dirty: false, isImage: false });
-                                window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: text } } });
+                                notifyOpen(path, text);
                                 if (isDirty) {
                                     const storedHash = (session.baseHashes || {})[path];
                                     if (storedHash !== undefined && storedHash !== simpleHash(text)) {
@@ -3118,7 +3096,7 @@
                                     const model = monaco.editor.createModel(saved, langId);
                                     tabsData.set(path, { model, originalContent: '', viewState: viewStates[path] || null });
                                     this.tabsList.push({ path, dirty: true, isImage: false, isAnonymous: true });
-                                    window.editorPlugin.tabManagerSvc.emit('open', { tab: { path, document: { value: saved } } });
+                                    notifyOpen(path, saved);
                                 } else {
                                     this.clearDirtyEntry(path);
                                 }
@@ -3639,12 +3617,6 @@
                         unicodeHighlight: { ambiguousCharacters: false },
                     });
 
-                    // F12 調適：把實體掛到 editorPlugin
-                    if (window.editorPlugin) {
-                        window.editorPlugin.monacoEditor = monacoEditor;
-                        window.editorPlugin.termInstances = termInstances;
-                    }
-
                     // 註冊 HTML 配對標籤高亮（含 .php 檔）
                     const htmlTagPairProvider = {
                         provideDocumentHighlights(model, position) {
@@ -3859,7 +3831,7 @@
                             if (Array.isArray(list)) {
                                 mylog('plugin', 'plugins.json:', list);
                                 for (const url of list) {
-                                    await window.editorPlugin.loadPlugin(url);
+                                    await loadPlugin(url);
                                 }
                             }
                         }

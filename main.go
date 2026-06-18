@@ -1004,7 +1004,7 @@ func (s *server) handleCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleApiConfig(w http.ResponseWriter, r *http.Request) {
-	resp := map[string]any{"sessionCheck": true}
+	resp := map[string]any{}
 	if c, err := r.Cookie("editorToken"); err == nil {
 		if username, ok := s.validateSession(c.Value); ok {
 			resp["username"] = username

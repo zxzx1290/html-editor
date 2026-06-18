@@ -283,57 +283,51 @@ URL 陣列，每個項目為 plugin JS 檔案的路徑：
 
 ### Plugin 格式
 
-Plugin 為 IIFE，透過 `window.editorPlugin.services` 取得各服務：
+Plugin 為 IIFE，全部 API 收斂在單一命名空間 `window.editor`：
 
 ```javascript
 (function () {
-    var save       = window.editorPlugin.services.save;
-    var tabManager = window.editorPlugin.services.tabManager;
-    var bubble     = window.editorPlugin.services['notification.bubble'];
-    var alertDia   = window.editorPlugin.services['dialog.alert'];
-
-    // 訂閱事件
-    save.on('beforeSave', function (e) {
-        // e.value  — 即將儲存的檔案內容
-        // e.path   — 檔案路徑
+    // 訂閱生命週期事件
+    window.editor.on('fileBeforeSave', function (e) {
+        // e.value — 即將儲存的內容；e.path — 檔案路徑
     });
 
-    save.on('afterSave', function (e) {
-        // e.path            — 已儲存的檔案路徑
-        // e.document.title  — 檔名
-        // e.value           — 儲存後的內容
+    window.editor.on('fileAfterSave', function (e) {
+        // e.path / e.value — 已儲存的路徑與內容；e.document.title — 檔名
     });
 
-    tabManager.on('open', function (e) {
-        // e.tab.path           — 開啟的檔案路徑
-        // e.tab.document.value — 檔案內容（初次開啟時為實際內容；session 還原時亦會觸發）
+    window.editor.on('fileOnOpen', function (e) {
+        // e.path — 開啟的檔案路徑；e.value — 檔案內容（session 還原時亦會觸發）
     });
 
-    tabManager.on('tabDestroy', function (e) {
-        // e.tab.path — 關閉的檔案路徑
+    window.editor.on('fileOnClose', function (e) {
+        // e.path — 關閉的檔案路徑
     });
 
-    // 取得目前已開啟的所有 tab（document.value 永遠為空字串，請透過 open 事件取得內容）
-    var tabs = tabManager.getTabs(); // [{ path, document: { title, value: '' } }, ...]
+    // 取得目前已開啟的所有檔案路徑
+    var tabs = window.editor.getTabs(); // ['dir/a.txt', 'b.js', ...]
 
-    // 顯示 toast 通知
-    bubble.popup('訊息文字');
+    window.editor.notify('訊息文字');            // toast 通知
+    window.editor.alert('標題', '內文', '細節'); // 單按鈕警告對話框
 
-    // 顯示單按鈕警告對話框
-    alertDia.show('標題', '內文', '細節', function () { /* 關閉後回呼 */ });
+    // 直接存取編輯器實體（除錯 / 進階用）
+    // window.editor.monaco      — Monaco editor 實體
+    // window.editor.terminals   — 終端機實體 Map
 })();
 ```
 
-#### 可用服務一覽
+#### `window.editor` API 一覽
 
-| 服務名稱 | 說明 |
-|----------|------|
-| `save` | beforeSave / afterSave 事件 |
-| `tabManager` | open / tabDestroy 事件；`getTabs()` |
-| `notification.bubble` | `popup(msg)` — toast 通知 |
-| `dialog.alert` | `show(title, body, detail, cb)` — 警告對話框 |
+| 成員 | 說明 |
+|------|------|
+| `on(ev, fn)` / `off(ev, fn)` | 訂閱 / 取消事件：`fileOnOpen`、`fileOnClose`、`fileBeforeSave`、`fileAfterSave` |
+| `getTabs()` | 回傳目前已開啟的檔案路徑陣列 |
+| `notify(msg)` | toast 通知 |
+| `alert(title, body, detail)` | 單按鈕警告對話框 |
+| `loadPlugin(url)` | 動態載入另一個 plugin |
+| `monaco` / `terminals` | Monaco editor 實體與終端機 Map（getter） |
 
-> **注意**：Plugin 在 session 還原之前載入，因此 `tabManager.on('open', ...)` 的處理器會在 session 還原時對每個還原的 tab 觸發一次。
+> **注意**：Plugin 在 session 還原之前載入，因此 `on('fileOnOpen', ...)` 的處理器會在 session 還原時對每個還原的 tab 觸發一次（斷線重連則不會）。
 
 ## 部署
 
@@ -373,7 +367,7 @@ static/
 | `POST` | `/api/rename?from=&to=` | 重新命名或移動；目的地已存在回傳 409（`?auto=1` 時自動加序號） |
 | `POST` | `/api/copy?from=&to=` | 複製檔案或目錄（遞迴）；目的地已存在自動加序號 |
 | `POST` | `/api/search` | 資料夾遞迴 regex 搜尋；body `{ "path": "<dir>", "q": "<regex>" }`，以 `application/x-ndjson` 串流回傳 `{type:"file",path,matches:[{line,text}]}` 與最後一筆 `{type:"done",files_scanned,files_matched,total_matches,elapsed_ms,truncated,timeout}`；超過 30 秒會逾時、單檔大於 5 MB 直接跳過、每位使用者同時只允許一個搜尋（並發時回 429） |
-| `GET` | `/api/config` | 回傳 `{ sessionCheck: true, username?, terminal? }`；session 有效時附上 `username`（目前登入帳號）與 `terminal`（該帳號是否可用終端機） |
+| `GET` | `/api/config` | 回傳 `{ username?, terminal? }`；session 有效時附上 `username`（目前登入帳號）與 `terminal`（該帳號是否可用終端機） |
 | `POST` | `/login` | 登入（form: username, code） |
 | `GET` | `/logout` | 登出並清除 `editorToken` cookie |
 | `GET` | `/check` | 回傳 `{ "data": <剩餘秒數>, "extended": bool }`；TTL 不足 `sessionTTL / 2` 時自動延長並寫入新 JWT cookie；無效 token 回傳 401 |
