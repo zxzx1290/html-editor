@@ -728,6 +728,7 @@ button.btn:disabled {
 }
 
 #status .status-enc,
+#status .status-indent,
 #status .status-lang {
     cursor: pointer;
     padding: 0 10px;
@@ -738,6 +739,7 @@ button.btn:disabled {
 }
 
 #status .status-enc:hover,
+#status .status-indent:hover,
 #status .status-lang:hover {
     background: var(--bg-statusbar-hover);
 }

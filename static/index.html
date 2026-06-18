@@ -231,6 +231,8 @@
         <div id="status">
             <span class="status-msg">{{ statusMsg }}</span>
             <span class="status-right" v-if="statusRight">{{ statusRight }}</span>
+            <span class="status-indent" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && indentInfo"
+                @click.stop="openIndentMenu" title="選取縮排">{{ indentLabel }}</span>
             <span class="status-enc" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTab.isAnonymous"
                 @click.stop="openEncodingMenu" title="選取編碼">{{ currentEncodingLabel }}</span>
             <span class="status-lang" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal"
@@ -1300,6 +1302,7 @@
                     isSaving: false,
                     toasts: [],
                     ctxMenu: { visible: false, x: 0, y: 0, items: [] },
+                    indentInfo: null, // { insertSpaces, tabSize, indentSize }，來自當前 model.getOptions()
                     imagePreviewSrc: '',
                     editorReady: false,
                     uploads: [],
@@ -1340,6 +1343,17 @@
                 },
                 currentEncodingLabel() {
                     return ENC_LABEL[this.currentEncoding] || this.currentEncoding;
+                },
+                // 縮排狀態字串，比照 VSCode editorStatus.ts（spacesSize / spacesAndTabsSize / tabSize）
+                indentLabel() {
+                    const i = this.indentInfo;
+                    if (!i) return '';
+                    if (i.insertSpaces) {
+                        return i.indentSize === i.tabSize
+                            ? '空格: ' + i.indentSize
+                            : '空格: ' + i.indentSize + ' (Tab 大小: ' + i.tabSize + ')';
+                    }
+                    return 'Tab 大小: ' + i.tabSize;
                 },
                 // 狀態列右側：圖片顯示尺寸＋容量，文字檔顯示游標行列（有選取時加選取字數）
                 statusRight() {
@@ -1441,6 +1455,7 @@
                 refreshCurrentLang() {
                     const m = monacoEditor && monacoEditor.getModel();
                     this.currentLangId = m ? m.getLanguageId() : 'plaintext';
+                    mylog('refreshCurrentLang', this.currentLangId);
                 },
                 onImgLoad(e) {
                     this.imageDim = e.target.naturalWidth + ' × ' + e.target.naturalHeight;
@@ -1483,6 +1498,44 @@
                         this.currentLangId = langId;
                     }
                     this.closeLangPicker();
+                },
+
+                // ──── Indentation（比照 VSCode editorStatus.ts showIndentationPicker）
+                // 從當前 model 讀回縮排設定供狀態列顯示；onDidChangeModel/Options 時呼叫
+                refreshIndentInfo() {
+                    const m = monacoEditor && monacoEditor.getModel();
+                    if (!m) { this.indentInfo = null; return; }
+                    const o = m.getOptions();
+                    this.indentInfo = { insertSpaces: o.insertSpaces, tabSize: o.tabSize, indentSize: o.indentSize };
+                    mylog('refreshIndentInfo', this.indentInfo);
+                },
+                openIndentMenu(e) {
+                    const m = () => monacoEditor && monacoEditor.getModel();
+                    if (!m()) return;
+                    const i = this.indentInfo;
+                    const pos = { x: e.clientX, y: e.clientY };
+                    // 子選單：選 1-8 的尺寸，cur 標 ●（在原位置重開選單，類似 VSCode quick pick 接續）
+                    // setTimeout 0：讓本次點擊冒泡觸發的 document hideCtxMenu 先跑完，再重開子選單
+                    const sizePicker = (cur, apply) => () => {
+                        const items = [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({
+                            label: (n === cur ? '● ' : '   ') + n,
+                            action: () => apply(n),
+                        }));
+                        setTimeout(() => this.showCtxMenu(pos.x, pos.y, items), 0);
+                    };
+                    const runAction = id => { monacoEditor.focus(); const a = monacoEditor.getAction(id); if (a) a.run(); };
+                    this.showCtxMenu(pos.x, pos.y, [
+                        { label: '以空格鍵縮排', action: sizePicker(i.insertSpaces ? i.indentSize : 0,
+                            n => m().updateOptions({ insertSpaces: true, tabSize: n, indentSize: n })) },
+                        { label: '以 Tab 鍵縮排', action: sizePicker(!i.insertSpaces ? i.tabSize : 0,
+                            n => m().updateOptions({ insertSpaces: false, tabSize: n })) },
+                        { label: '變更 Tab 顯示大小', action: sizePicker(i.tabSize,
+                            n => m().updateOptions({ tabSize: n })) },
+                        '-',
+                        { label: '依據內容偵測縮排', action: () => m().detectIndentation(i.insertSpaces, i.tabSize) },
+                        { label: '將縮排轉換成空格', action: () => runAction('editor.action.indentationToSpaces') },
+                        { label: '將縮排轉換成 Tab', action: () => runAction('editor.action.indentationToTabs') },
+                    ]);
                 },
 
                 // ──── Encoding（比照 VSCode：點狀態列編碼 → 以該編碼重新開檔；之後存檔也用該編碼）
@@ -3838,9 +3891,17 @@
                         }
                         eolDecorCollection.set(decors);
                     };
+
+                    monacoEditor.onDidChangeModelOptions(() => {
+                        mylog('monacoEditor', 'onDidChangeModelOptions');
+                        this.refreshIndentInfo();
+                    });
+
                     monacoEditor.onDidChangeModel(() => {
+                        mylog('monacoEditor', 'onDidChangeModel');
                         updateEolDecorations();
                         this.refreshCurrentLang();
+                        this.refreshIndentInfo();
                         // 切換 model 時把當前的括號上色設定套到新 model
                         // （createModel 是 Monaco 預設值 enabled:true，沒套會看到一閃）
                         const m = monacoEditor.getModel();
@@ -3849,6 +3910,7 @@
                             independentColorPoolPerBracketType: false,
                         }});
                     });
+
                     monacoEditor.onDidChangeModelLanguage(() => this.refreshCurrentLang());
 
                     // Ctrl+Click（Mac 為 Cmd+Click）在搜尋結果分頁跳轉到對應檔案的某一行
@@ -3883,6 +3945,7 @@
                         if (!this.activeTabPath || this.activeTabIsImage || this.activeTabIsTerminal) return;
                         this.scheduleViewStateSave();
                     });
+
                     // 選取字數（比照 VSCode editorStatus.ts onSelectionChange：
                     // getCharacterCountInRange 逐段加總，含多游標的所有選取區段）
                     monacoEditor.onDidChangeCursorSelection((e) => {
@@ -3894,6 +3957,7 @@
                         this.selCount = n;
                         this.selRanges = sels.length;
                     });
+
                     monacoEditor.onDidScrollChange(() => {
                         if (!this.activeTabPath || this.activeTabIsImage || this.activeTabIsTerminal) return;
                         this.scheduleViewStateSave();
