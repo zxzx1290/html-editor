@@ -154,6 +154,8 @@ Windows：
   "rateLimitBanDuration": 300,
   "jwtSecret": "change-this-to-a-long-random-string",
   "trustProxy": false,
+  "logMode": "fmt",
+  "logTag": "html-editor",
   "users": {
     "alice": {
       "totpSecret": "JBSWY3DPEHPK3PXP",
@@ -180,6 +182,8 @@ Windows：
 | `rateLimitBanDuration` | 觸發封鎖後的封鎖時長（秒）；預設同 `rateLimitWindow` |
 | `jwtSecret` | JWT 簽署金鑰（**必填**）；長度須至少 32 字元，否則程式拒絕啟動 |
 | `trustProxy` | 是否信任 `X-Forwarded-For` / `X-Forwarded-Proto`（預設 `false`）；僅在已知信任的 reverse proxy 後方開啟 |
+| `logMode` | log 輸出模式：`fmt`（輸出到 stdout，自帶時間戳，預設）或 `syslog`（寫入本機 syslog，時間戳由 syslog 提供）。`syslog` 僅 Linux/macOS 支援，其他系統會 fallback 回 stdout |
+| `logTag` | `syslog` 模式的 tag；留空則預設 `html-editor`。僅在 `logMode` 為 `syslog` 時生效 |
 | `loginNotify` | 登入成功／失敗時發送的對外 HTTP 通知（選填，預設不啟用）；詳見下方 [登入通知](#登入通知-loginnotify) |
 | `users.<name>.totpSecret` | TOTP 金鑰（Base32），可用 Google Authenticator 等 App 掃碼 |
 | `users.<name>.workspace` | 該使用者的 workspace 目錄 |

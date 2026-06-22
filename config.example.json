@@ -8,6 +8,8 @@
   "rateLimitBanDuration": 300,
   "jwtSecret": "change-this-to-a-long-random-string",
   "trustProxy": false,
+  "logMode": "fmt",
+  "logTag": "html-editor",
   "loginNotify": {
     "url": "https://api.mailgun.net/v3/YOUR_DOMAIN/messages",
     "method": "POST",

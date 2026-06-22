@@ -62,6 +62,8 @@ type Config struct {
 	RateLimitBanDuration int64                 `json:"rateLimitBanDuration"` // seconds; 0 → same as window
 	JwtSecret            string                `json:"jwtSecret"`            // JWT signing secret; random if empty
 	TrustProxy           bool                  `json:"trustProxy"`           // trust X-Forwarded-* headers; only enable when behind a trusted reverse proxy
+	LogMode              string                `json:"logMode"`              // "fmt"（stdout，預設）或 "syslog"（本機 syslog）
+	LogTag               string                `json:"logTag"`               // syslog tag；留空則預設 "html-editor"
 	Users                map[string]UserConfig `json:"users"`
 	LoginNotify          *LoginNotifyConfig    `json:"loginNotify"` // optional outbound HTTP notification on login success/failure
 }
@@ -468,6 +470,11 @@ func main() {
 	if len(cfg.Users) == 0 {
 		fmt.Fprintln(os.Stderr, "config.json must define at least one user")
 		os.Exit(1)
+	}
+
+	// 依 config 設定 log 輸出（fmt → stdout、syslog → 本機 syslog，tag=html-editor）。
+	if err := initLogging(cfg.LogMode, cfg.LogTag); err != nil {
+		logf("[log] fallback to stdout: %v\n", err)
 	}
 
 	for username, userCfg := range cfg.Users {
@@ -1932,8 +1939,24 @@ func availableDest(abs string) string {
 	}
 }
 
+// log 輸出 sink，由 initLogging 依 config logMode 設定（見 logsetup_unix.go / logsetup_other.go）。
+// 預設 stdout 並自帶時間戳；syslog 模式改寫到本機 syslog（時間戳由 syslog 提供，故關閉自帶時間戳）。
+const (
+	logModeFmt    = "fmt"
+	logModeSyslog = "syslog"
+)
+
+var (
+	logWriter io.Writer = os.Stdout
+	logMode             = logModeFmt
+)
+
 func logf(format string, args ...any) {
-	fmt.Printf(time.Now().Format("2006/01/02 15:04:05")+" "+format, args...)
+	if logMode == logModeFmt {
+		fmt.Fprintf(logWriter, time.Now().Format("2006/01/02 15:04:05")+" "+format, args...)
+	} else {
+		fmt.Fprintf(logWriter, format, args...)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
