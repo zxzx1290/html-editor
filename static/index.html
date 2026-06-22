@@ -3302,9 +3302,8 @@
                                     const storedHash = (session.baseHashes || {})[path];
                                     if (storedHash !== undefined && storedHash !== simpleHash(text)) {
                                         mylog('_restoreSessionInner', 'hash mismatch:', path, '| stored:', storedHash, '| current:', simpleHash(text));
-                                        const fname = path.split('/').pop();
                                         const keep = await this.dlgConfirm(
-                                            `「${fname}」在您離開後已被他人修改。\n是否仍要載入您的未儲存草稿？（儲存時將覆蓋他人的修改）`,
+                                            `「${path}」在您離開後已被他人修改。\n是否仍要載入您的未儲存草稿？（儲存時將覆蓋他人的修改）`,
                                             { confirmText: '載入草稿', cancelText: '使用伺服器版本', danger: true }
                                         );
                                         if (!keep) { isDirty = false; this.clearDirtyEntry(path); }
@@ -3316,9 +3315,8 @@
                             }
                         } catch (err) {
                             if (err.status === 404 && dirtyContents[path] !== undefined) {
-                                const fname = path.split('/').pop();
                                 const keep = await this.dlgConfirm(
-                                    `「${fname}」在伺服器上已不存在，是否要恢復尚未儲存的資料？`,
+                                    `「${path}」在伺服器上已不存在，是否要恢復尚未儲存的資料？`,
                                     { confirmText: '恢復資料', cancelText: '放棄' }
                                 );
                                 if (keep) {
