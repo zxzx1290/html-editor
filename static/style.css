@@ -581,7 +581,9 @@ button.btn:disabled {
 .tab-close:hover { background: rgba(255, 255, 255, 0.15); color: var(--fg) !important; }
 
 .tab-new-btn {
-    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     height: 30px;
     padding: 0 10px;
     background: transparent;
