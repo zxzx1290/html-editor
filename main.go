@@ -4,12 +4,17 @@ import (
 	"archive/zip"
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
+	"mime"
+	"net"
 	"net/http"
+	"net/smtp"
 	"net/url"
 	"os"
 	"os/signal"
@@ -18,6 +23,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -65,29 +71,28 @@ type Config struct {
 	LogMode              string                `json:"logMode"`              // "fmt"（stdout，預設）或 "syslog"（本機 syslog）
 	LogTag               string                `json:"logTag"`               // syslog tag；留空則預設 "html-editor"
 	Users                map[string]UserConfig `json:"users"`
-	LoginNotify          *LoginNotifyConfig    `json:"loginNotify"` // optional outbound HTTP notification on login success/failure
+	LoginNotify          *LoginNotifyConfig    `json:"loginNotify"` // optional SMTP email notification on login success/failure
 }
 
-// LoginNotifyConfig describes an outbound HTTP request fired on login events.
-// Empty URL disables notifications entirely.
+// LoginNotifyConfig describes an SMTP email sent on login events.
+// Empty Host disables notifications entirely.
 //
-// Template variables usable in Form values: {username} {ip} {event} {reason} {time}
+// Template variables usable in Subject / Body: {username} {ip} {event} {reason} {time}
 //   - {event}:  "success" | "failure"
 //   - {reason}: "" | "invalid" | "replay" | "blocked"
-//
-// Body selection:
-//   - Form set            → application/x-www-form-urlencoded (e.g. Mailgun)
-//   - Form empty + POST    → JSON body {event,username,ip,reason,time}
-//   - Form empty + GET     → same fields appended as query string
 type LoginNotifyConfig struct {
-	URL            string            `json:"url"`
-	Method         string            `json:"method"`         // "POST" (default) | "GET"
-	NotifySuccess  bool              `json:"notifySuccess"`  // send on successful login
-	NotifyFailure  bool              `json:"notifyFailure"`  // send on failed login
-	TimeoutSeconds int               `json:"timeoutSeconds"` // request timeout; 0 → 5
-	BasicAuth      string            `json:"basicAuth"`      // "user:pass" → Authorization: Basic
-	Headers        map[string]string `json:"headers"`        // extra request headers
-	Form           map[string]string `json:"form"`           // urlencoded form fields (template-expanded)
+	Host           string `json:"host"`           // SMTP server host; empty disables notifications
+	Port           int    `json:"port"`           // SMTP port; 0 → 587
+	Username       string `json:"username"`       // SMTP auth username; empty → no auth
+	Password       string `json:"password"`       // SMTP auth password
+	TLS            string `json:"tls"`            // "starttls" (default) | "tls" (implicit, e.g. port 465) | "none"
+	From           string `json:"from"`           // sender address (template-expanded)
+	To             string `json:"to"`             // recipient address(es), comma/space separated
+	Subject        string `json:"subject"`        // subject template
+	Body           string `json:"body"`           // plain-text body template
+	NotifySuccess  bool   `json:"notifySuccess"`  // send on successful login
+	NotifyFailure  bool   `json:"notifyFailure"`  // send on failed login
+	TimeoutSeconds int    `json:"timeoutSeconds"` // connection/IO timeout; 0 → 5
 }
 
 // ─── JWT claims ───────────────────────────────────────────────────────────────
@@ -532,7 +537,7 @@ func main() {
 	logf("[config] %d user(s) loaded\n", len(cfg.Users))
 
 	// if notification is enabled, log it on startup
-	if cfg.LoginNotify != nil && cfg.LoginNotify.URL != "" {
+	if cfg.LoginNotify != nil && cfg.LoginNotify.Host != "" {
 		logf("[config] login notifications enabled\n")
 	}
 
@@ -854,12 +859,12 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-// notifyLogin fires an outbound HTTP notification for a login event, if enabled.
-// It returns immediately; the request runs in a background goroutine so a slow
-// or failing endpoint never blocks or breaks the login flow.
+// notifyLogin sends an SMTP email for a login event, if enabled.
+// It returns immediately; the mail is sent in a background goroutine so a slow
+// or failing mail server never blocks or breaks the login flow.
 func (s *server) notifyLogin(event, username, ip, reason string) {
 	cfg := s.config.LoginNotify
-	if cfg == nil || cfg.URL == "" {
+	if cfg == nil || cfg.Host == "" {
 		return
 	}
 	if event == "success" && !cfg.NotifySuccess {
@@ -886,75 +891,121 @@ func (s *server) sendLoginNotify(cfg *LoginNotifyConfig, event, username, ip, re
 		"reason":   reason,
 		"time":     time.Now().Format(time.RFC3339),
 	}
-	method := strings.ToUpper(strings.TrimSpace(cfg.Method))
-	if method == "" {
-		method = http.MethodPost
-	}
+
 	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-
-	var (
-		req *http.Request
-		err error
-	)
-	switch {
-	case len(cfg.Form) > 0:
-		form := url.Values{}
-		for k, v := range cfg.Form {
-			form.Set(k, notifyExpand(v, vars))
-		}
-		req, err = http.NewRequest(method, cfg.URL, strings.NewReader(form.Encode()))
-		if err == nil {
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		}
-	case method == http.MethodGet:
-		u, perr := url.Parse(cfg.URL)
-		if perr != nil {
-			logf("[notify] bad url: %v\n", perr)
-			return
-		}
-		q := u.Query()
-		for k, v := range vars {
-			q.Set(k, v)
-		}
-		u.RawQuery = q.Encode()
-		req, err = http.NewRequest(method, u.String(), nil)
-	default:
-		body, _ := json.Marshal(vars)
-		req, err = http.NewRequest(method, cfg.URL, strings.NewReader(string(body)))
-		if err == nil {
-			req.Header.Set("Content-Type", "application/json")
-		}
+	port := cfg.Port
+	if port == 0 {
+		port = 587
 	}
-	if err != nil {
-		logf("[notify] build request failed: %v\n", err)
+	mode := strings.ToLower(strings.TrimSpace(cfg.TLS))
+	if mode == "" {
+		mode = "starttls"
+	}
+
+	from := notifyExpand(cfg.From, vars)
+	rcpts := notifySplitAddrs(notifyExpand(cfg.To, vars))
+	if from == "" || len(rcpts) == 0 {
+		logf("[notify] missing from/to; skip event=%s user=%s\n", event, username)
 		return
 	}
 
-	for k, v := range cfg.Headers {
-		req.Header.Set(k, v)
+	subject := notifyExpand(cfg.Subject, vars)
+	// Body is HTML, so escape the (user-controlled) substituted values to
+	// prevent markup injection from a crafted username/ip.
+	htmlVars := make(map[string]string, len(vars))
+	for k, v := range vars {
+		htmlVars[k] = html.EscapeString(v)
 	}
-	if cfg.BasicAuth != "" {
-		if i := strings.IndexByte(cfg.BasicAuth, ':'); i >= 0 {
-			req.SetBasicAuth(cfg.BasicAuth[:i], cfg.BasicAuth[i+1:])
-		}
+	body := notifyExpand(cfg.Body, htmlVars)
+	msg := notifyBuildMail(from, cfg.To, subject, body)
+
+	var auth smtp.Auth
+	if cfg.Username != "" {
+		auth = smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
 	}
 
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
-	if err != nil {
+	if err := notifySMTPSend(net.JoinHostPort(cfg.Host, strconv.Itoa(port)), cfg.Host, mode, timeout, auth, from, rcpts, msg); err != nil {
 		logf("[notify] send failed event=%s user=%s: %v\n", event, username, err)
 		return
 	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode >= 400 {
-		logf("[notify] non-2xx event=%s user=%s status=%d\n", event, username, resp.StatusCode)
-		return
+	logf("[notify] sent event=%s user=%s to=%s\n", event, username, strings.Join(rcpts, ","))
+}
+
+// notifySplitAddrs splits a comma/semicolon/space separated address list.
+func notifySplitAddrs(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' '
+	})
+}
+
+// notifyBuildMail assembles an RFC 5322 HTML UTF-8 message. The Subject is
+// MIME word-encoded so non-ASCII (e.g. Chinese) usernames survive transit.
+func notifyBuildMail(from, to, subject, body string) []byte {
+	var b strings.Builder
+	b.WriteString("From: " + from + "\r\n")
+	b.WriteString("To: " + to + "\r\n")
+	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", subject) + "\r\n")
+	b.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
+	b.WriteString("MIME-Version: 1.0\r\n")
+	b.WriteString("Content-Type: text/html; charset=\"utf-8\"\r\n")
+	b.WriteString("\r\n")
+	b.WriteString(body)
+	return []byte(b.String())
+}
+
+// notifySMTPSend delivers msg over SMTP. mode selects "tls" (implicit TLS),
+// "starttls" (upgrade after connect, when offered), or "none" (plaintext).
+func notifySMTPSend(addr, host, mode string, timeout time.Duration, auth smtp.Auth, from string, to []string, msg []byte) error {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return err
 	}
-	logf("[notify] sent event=%s user=%s status=%d\n", event, username, resp.StatusCode)
+	conn.SetDeadline(time.Now().Add(timeout))
+	if mode == "tls" {
+		conn = tls.Client(conn, &tls.Config{ServerName: host})
+	}
+
+	c, err := smtp.NewClient(conn, host)
+	if err != nil {
+		conn.Close()
+		return err
+	}
+	defer c.Close()
+
+	if mode == "starttls" {
+		if ok, _ := c.Extension("STARTTLS"); ok {
+			if err := c.StartTLS(&tls.Config{ServerName: host}); err != nil {
+				return err
+			}
+		}
+	}
+	if auth != nil {
+		if err := c.Auth(auth); err != nil {
+			return err
+		}
+	}
+	if err := c.Mail(from); err != nil {
+		return err
+	}
+	for _, addr := range to {
+		if err := c.Rcpt(addr); err != nil {
+			return err
+		}
+	}
+	w, err := c.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(msg); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.Quit()
 }
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {

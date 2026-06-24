@@ -184,7 +184,7 @@ Windows：
 | `trustProxy` | 是否信任 `X-Forwarded-For` / `X-Forwarded-Proto`（預設 `false`）；僅在已知信任的 reverse proxy 後方開啟 |
 | `logMode` | log 輸出模式：`fmt`（輸出到 stdout，自帶時間戳，預設）或 `syslog`（寫入本機 syslog，時間戳由 syslog 提供）。`syslog` 僅 Linux/macOS 支援，其他系統會 fallback 回 stdout |
 | `logTag` | `syslog` 模式的 tag；留空則預設 `html-editor`。僅在 `logMode` 為 `syslog` 時生效 |
-| `loginNotify` | 登入成功／失敗時發送的對外 HTTP 通知（選填，預設不啟用）；詳見下方 [登入通知](#登入通知-loginnotify) |
+| `loginNotify` | 登入成功／失敗時寄送的 SMTP 郵件通知（選填，預設不啟用）；詳見下方 [登入通知](#登入通知-loginnotify) |
 | `users.<name>.totpSecret` | TOTP 金鑰（Base32），可用 Google Authenticator 等 App 掃碼 |
 | `users.<name>.workspace` | 該使用者的 workspace 目錄 |
 | `users.<name>.terminal` | 是否開放此使用者使用 tmux 終端機；預設 `false`。需 Linux/macOS 環境且系統已安裝 `tmux` 才會生效 |
@@ -193,45 +193,41 @@ Windows：
 
 ### 登入通知 (loginNotify)
 
-設定 `loginNotify` 後，登入成功或失敗時會在背景發送一個對外 HTTP 請求（goroutine 非同步送出，**通知失敗或逾時不會影響登入**）。`url` 留空即停用。
+設定 `loginNotify` 後，登入成功或失敗時會在背景透過 SMTP 寄出一封郵件（goroutine 非同步送出，**通知失敗或逾時不會影響登入**）。`host` 留空即停用。
 
 ```json
 "loginNotify": {
-  "url": "https://api.mailgun.net/v3/YOUR_DOMAIN/messages",
-  "method": "POST",
+  "host": "smtp.gmail.com",
+  "port": 587,
+  "username": "notify@example.com",
+  "password": "your-smtp-password-or-app-password",
+  "tls": "starttls",
   "notifySuccess": true,
   "notifyFailure": true,
-  "timeoutSeconds": 3,
-  "basicAuth": "api:key-xxxxxxxxxxxxxxxx",
-  "form": {
-    "from": "notify@YOUR_DOMAIN",
-    "to": "you@example.com",
-    "subject": "[html-editor] {username} {event} login from {ip}",
-    "text": "user={username} event={event} ip={ip} reason={reason} time={time}"
-  }
+  "timeoutSeconds": 5,
+  "from": "notify@example.com",
+  "to": "you@example.com",
+  "subject": "[html-editor] {username} {event} login from {ip}",
+  "body": "<h3>html-editor login notification</h3><table><tr><td>User</td><td>{username}</td></tr><tr><td>Event</td><td>{event}</td></tr><tr><td>IP</td><td>{ip}</td></tr><tr><td>Reason</td><td>{reason}</td></tr><tr><td>Time</td><td>{time}</td></tr></table>"
 }
 ```
 
 | 欄位 | 說明 |
 |------|------|
-| `url` | 通知目標網址；留空表示停用 |
-| `method` | `POST`（預設）或 `GET` |
+| `host` | SMTP 伺服器位址；留空表示停用 |
+| `port` | SMTP 連接埠；預設 `587` |
+| `username` | SMTP 認證帳號；留空則不做認證 |
+| `password` | SMTP 認證密碼（Gmail 等需用「應用程式密碼」） |
+| `tls` | `starttls`（預設，連線後升級，常見於 587 埠）、`tls`（隱式 TLS，常見於 465 埠）或 `none`（明文） |
 | `notifySuccess` | 登入成功時是否通知 |
 | `notifyFailure` | 登入失敗時是否通知（含帳密錯誤、TOTP 重放、IP 封鎖） |
-| `timeoutSeconds` | 請求逾時秒數；預設 5 |
-| `basicAuth` | `"使用者:密碼"`，會轉成 `Authorization: Basic` 標頭（Mailgun 用 `api:金鑰`） |
-| `headers` | 額外的請求標頭（例如 `Authorization: Bearer ...`） |
-| `form` | urlencoded 表單欄位；填了就以 `application/x-www-form-urlencoded` 送出（對接 Mailgun 等郵件服務） |
+| `timeoutSeconds` | 連線／傳輸逾時秒數；預設 5 |
+| `from` | 寄件者地址 |
+| `to` | 收件者地址；可用逗號、分號或空白分隔多個 |
+| `subject` | 郵件主旨（會做變數代換，非 ASCII 字元會自動編碼） |
+| `body` | HTML 郵件內文（`Content-Type: text/html`，會做變數代換；代入的變數值會自動做 HTML 跳脫以防注入） |
 
-**送出格式依設定自動切換：**
-
-| 情況 | 送出內容 |
-|------|---------|
-| 有填 `form` | `application/x-www-form-urlencoded` 表單，欄位值會做變數代換 |
-| 無 `form`，`method: POST` | JSON body：`{"event","username","ip","reason","time"}` |
-| 無 `form`，`method: GET` | 上述欄位接成 query string：`?event=success&username=...&ip=...` |
-
-**可用變數**（會在送出前代換 `form` 的值）：
+**可用變數**（會在送出前代換 `subject` 與 `body` 的值）：
 
 | 變數 | 內容 |
 |------|------|

@@ -11,18 +11,18 @@
   "logMode": "fmt",
   "logTag": "html-editor",
   "loginNotify": {
-    "url": "https://api.mailgun.net/v3/YOUR_DOMAIN/messages",
-    "method": "POST",
+    "host": "smtp.gmail.com",
+    "port": 587,
+    "username": "notify@example.com",
+    "password": "your-smtp-password-or-app-password",
+    "tls": "starttls",
     "notifySuccess": true,
     "notifyFailure": true,
-    "timeoutSeconds": 3,
-    "basicAuth": "api:key-xxxxxxxxxxxxxxxx",
-    "form": {
-      "from": "notify@YOUR_DOMAIN",
-      "to": "you@example.com",
-      "subject": "[html-editor] {username} {event} login from {ip}",
-      "text": "user={username} event={event} ip={ip} reason={reason} time={time}"
-    }
+    "timeoutSeconds": 5,
+    "from": "notify@example.com",
+    "to": "you@example.com",
+    "subject": "[html-editor] {username} {event} login from {ip}",
+    "body": "<h3>html-editor login notification</h3><table><tr><td>User</td><td>{username}</td></tr><tr><td>Event</td><td>{event}</td></tr><tr><td>IP</td><td>{ip}</td></tr><tr><td>Reason</td><td>{reason}</td></tr><tr><td>Time</td><td>{time}</td></tr></table>"
   },
   "users": {
     "alice": {
