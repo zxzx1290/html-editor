@@ -1797,6 +1797,7 @@
                             if (data.viewState) monacoEditor.restoreViewState(data.viewState);
                             this.currentEncoding = data.encoding || 'utf8';
                             this.setStatus('已開啟：' + path);
+                            this.$nextTick(() => { monacoEditor.layout(); monacoEditor.focus(); });
                         }
                     }
 
@@ -2096,14 +2097,6 @@
                     notifyOpen(path, '');
                     this.activateTab(path);
                     this.scheduleMetaSave();
-                    // 自動focus新檔案的編輯器
-                    this.$nextTick(() => {
-                        if (this.activeTabPath === path && monacoEditor) {
-                            monacoEditor.layout();
-                            monacoEditor.setPosition({ lineNumber: 1, column: 1 });
-                            monacoEditor.focus();
-                        }
-                    });
                 },
 
                 onNewBtnClick() {
@@ -2589,14 +2582,6 @@
                         });
                         await this.refreshDir(parentDir || '');
                         await this.openFile(path);
-                        // 自動focus新檔案的編輯器
-                        this.$nextTick(() => {
-                            if (this.activeTabPath === path && monacoEditor && !this.activeTabIsImage) {
-                                monacoEditor.layout();
-                                monacoEditor.setPosition({ lineNumber: 1, column: 1 });
-                                monacoEditor.focus();
-                            }
-                        });
                     } catch (e) {
                         this.showError('建立失敗：' + e.message);
                     }
@@ -3112,7 +3097,6 @@
                     if (!m) return;
                     monacoEditor.revealLineInCenter(line);
                     monacoEditor.setPosition({ lineNumber: line, column: 1 });
-                    monacoEditor.focus();
                 },
 
                 // ──── Drag and drop
