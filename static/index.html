@@ -321,12 +321,14 @@
 
 <script>
     // ──── Logger
-    function mylog(src, ...args) {
+    function _logparts(src) {
         const t = new Date();
         const p = (n, w = 2) => String(n).padStart(w, '0');
         const ts = `${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}.${p(t.getMilliseconds(), 3)}`;
-        console.log(`[${ts}]`, `[${src}]`, ...args);
+        return [`[${ts}]`, `[${src}]`];
     }
+    function mylog(src, ...args) { console.log(..._logparts(src), ...args); }
+    function myerr(src, ...args) { console.error(..._logparts(src), ...args); }
 
     (function () {
         // ──── Constants & shared state
@@ -381,7 +383,7 @@
                     try {
                         e.fitAddon.fit();
                     } catch (err) {
-                        mylog('debouncedFitAll', 'fit failed', err);
+                        myerr('debouncedFitAll', 'fit failed', err);
                     }
                 }
             }, 100);
@@ -394,7 +396,7 @@
             constructor() { this._l = {}; }
             on(ev, fn) { (this._l[ev] = this._l[ev] || []).push(fn); return this; }
             off(ev, fn) { if (this._l[ev]) this._l[ev] = this._l[ev].filter(f => f !== fn); return this; }
-            emit(ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { mylog('plugin emit', ev, e); } }); }
+            emit(ev, d) { (this._l[ev] || []).forEach(fn => { try { fn(d); } catch (e) { myerr('plugin emit', ev, e); } }); }
         }
         const pluginBus = new EventEmitter();
 
@@ -416,7 +418,7 @@
                 new Function(code)();
                 mylog('plugin', 'loaded:', url);
             } catch (e) {
-                mylog('plugin', 'failed to load:', url, e);
+                myerr('plugin', 'failed to load:', url, e);
             }
         }
 
@@ -575,28 +577,28 @@
                 ]);
                 return meta ? { ...meta, dirtyContents, baseHashes } : null;
             } catch (e) {
-                mylog('loadSession', 'failed to load session', e); return null;
+                myerr('loadSession', 'failed to load session', e); return null;
             }
         }
 
         function saveDirtyFile(path, content) {
             idbOp(STORE_DIRTY, 'readwrite', s => s.put(content, path))
-                .catch(err => mylog('saveDirtyFile', 'failed to persist dirty file:', path, err));
+                .catch(err => myerr('saveDirtyFile', 'failed to persist dirty file:', path, err));
         }
 
         function deleteDirtyFile(path) {
             idbOp(STORE_DIRTY, 'readwrite', s => s.delete(path))
-                .catch(err => mylog('deleteDirtyFile', 'failed to delete dirty file:', path, err));
+                .catch(err => myerr('deleteDirtyFile', 'failed to delete dirty file:', path, err));
         }
 
         function saveBaseHash(path, hash) {
             idbOp(STORE_HASH, 'readwrite', s => s.put(hash, path))
-                .catch(err => mylog('saveBaseHash', 'failed to persist base hash:', path, err));
+                .catch(err => myerr('saveBaseHash', 'failed to persist base hash:', path, err));
         }
 
         function deleteBaseHash(path) {
             idbOp(STORE_HASH, 'readwrite', s => s.delete(path))
-                .catch(err => mylog('deleteBaseHash', 'failed to delete base hash:', path, err));
+                .catch(err => myerr('deleteBaseHash', 'failed to delete base hash:', path, err));
         }
 
         // ──── Editor state & 雜項 helpers
@@ -668,7 +670,7 @@
                 const id = r && r.encoding && r.confidence >= 0.8 ? JSCHARDET_ID[r.encoding.toLowerCase()] : null;
                 mylog('detectEncoding', 'jschardet:', r && r.encoding, 'confidence:', r && r.confidence, '->', id || 'utf8 (default)');
                 if (id) return id;
-            } catch (e) { mylog('detectEncoding', e.message); }
+            } catch (e) { myerr('detectEncoding', e.message); }
             return 'utf8';
         }
 
@@ -713,7 +715,7 @@
             try {
                 return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {};
             } catch (e) {
-                mylog('loadSettings', 'parse failed', e);
+                myerr('loadSettings', 'parse failed', e);
                 return {};
             }
         }
@@ -1239,7 +1241,7 @@
                 };
 
                 socket.onerror = function (err) {
-                    mylog('ws-collab', 'error', err);
+                    myerr('ws-collab', 'error', err);
                 };
 
                 socket.onclose = function () {
@@ -1263,7 +1265,7 @@
             try {
                 cfg = await fetch('/api/config').then(r => r.json());
             } catch (e) {
-                mylog('initBuiltins', 'config fetch failed', e); return;
+                myerr('initBuiltins', 'config fetch failed', e); return;
             }
             app.currentUser = cfg.username || '';
             app.canTerminal = cfg.terminal === true;
@@ -1599,7 +1601,7 @@
                             try {
                                 msg = (await res.json()).error || msg;
                             } catch (e) {
-                                mylog('api', 'error body parse failed', e);
+                                myerr('api', 'error body parse failed', e);
                             }
                         }
                         const err = new Error(msg);
@@ -1795,7 +1797,7 @@
                         const data = tabsData.get(path);
                         if (!data) {
                             this.showError('找不到文件數據');
-                            mylog('activateTab', '找不到 tabsData 項目，tabsList/tabsData 可能不同步:', path);
+                            myerr('activateTab', '找不到 tabsData 項目，tabsList/tabsData 可能不同步:', path);
                             return;
                         }
                         if (newTab.tabType === 'image') {
@@ -1808,7 +1810,7 @@
                                 this._imgObjUrl = URL.createObjectURL(blob);
                                 this.imagePreviewSrc = this._imgObjUrl;
                             } catch (e) {
-                                mylog('openTab', 'image blob fetch failed, fallback to direct url', e);
+                                myerr('openTab', 'image blob fetch failed, fallback to direct url', e);
                                 this.imageBytes = 0;
                                 this.imagePreviewSrc = url; // 退回直連
                             }
@@ -1853,7 +1855,7 @@
                         try {
                             data.searchAbort.abort();
                         } catch (e) {
-                            mylog('search', 'abort failed', e);
+                            myerr('search', 'abort failed', e);
                         }
                     }
                     if (data && data.model) data.model.dispose();
@@ -1898,7 +1900,7 @@
                         ev.dataTransfer.effectAllowed = 'move';
                         ev.dataTransfer.setData('text/plain', tab.path);
                     } catch (e) {
-                        mylog('onTabDragStart', 'setData failed', e);
+                        myerr('onTabDragStart', 'setData failed', e);
                     }
                 },
                 onTabDragOver(ev, tab) {
@@ -2009,7 +2011,7 @@
                         const files = await this.fetchDir('');
                         rootItems = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false, isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '' }));
                     } catch (e) {
-                        mylog('dlgSaveAs', 'list root dir failed', e);
+                        myerr('dlgSaveAs', 'list root dir failed', e);
                     }
                     return new Promise(resolve => {
                         this.saveAsDlg = { visible: true, tree: rootItems, selectedDir: '', filename: '', _resolve: resolve };
@@ -2054,7 +2056,7 @@
                         const children = files.map(f => ({ path: f.path, name: f.name, isDir: f.isDir, depth: item.depth + 1, expanded: false, isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '' }));
                         tree.splice(idx + 1, 0, ...children);
                     } catch (e) {
-                        mylog('saveAsDlgExpandDir', 'fetch dir failed', e);
+                        myerr('saveAsDlgExpandDir', 'fetch dir failed', e);
                         item.expanded = false;
                     }
                 },
@@ -2210,7 +2212,9 @@
                             entry.term.options.fontFamily = fontFamily;
                             entry.term.options.fontSize = fontSize;
                             entry.fitAddon.fit();
-                        } catch (e) { mylog('term', 'style apply failed', e); }
+                        } catch (e) {
+                            myerr('term', 'style apply failed', e);
+                        }
                     }
                     mylog('_applyTerminalStyle', 'applying terminal style', { fontFamily, fontSize });
                 },
@@ -2260,7 +2264,7 @@
                         term.loadAddon(webglAddon);
                         mylog('_ensureTerminal', 'WebGL renderer enabled for terminal', name);
                     } catch (e) {
-                        mylog('_ensureTerminal', 'WebGL renderer failed to load for terminal', name, e);
+                        myerr('_ensureTerminal', 'WebGL renderer failed to load for terminal', name, e);
                     }
 
                     // Ctrl+C 有反白→複製，否則放行送 SIGINT；Ctrl+V → 貼上；F12 → 放給瀏覽器開 DevTools
@@ -2270,7 +2274,7 @@
                         if (ev.code === 'F12') return false;
                         if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && ev.code === 'KeyC') {
                             if (term.hasSelection()) {
-                                navigator.clipboard.writeText(term.getSelection()).catch(e => mylog('term', 'clipboard write failed', e));
+                                navigator.clipboard.writeText(term.getSelection()).catch(e => myerr('term', 'clipboard write failed', e));
                                 return false;
                             }
                             return true;
@@ -2342,7 +2346,7 @@
                         try {
                             entry.term.dispose();
                         } catch (e) {
-                            mylog('onTerminalClosed', 'dispose failed', e);
+                            myerr('onTerminalClosed', 'dispose failed', e);
                         }
                         if (entry.paneEl && entry.paneEl.parentNode) entry.paneEl.parentNode.removeChild(entry.paneEl);
                         termInstances.delete(name);
@@ -2368,7 +2372,7 @@
                             entry.fitAddon.fit();
                             entry.term.focus();
                         } catch (e) {
-                            mylog('_fitActiveTerminal', 'fit/focus failed', e);
+                            myerr('_fitActiveTerminal', 'fit/focus failed', e);
                         }
                     });
                 },
@@ -2423,7 +2427,7 @@
                                 try {
                                     msg = JSON.parse(xhr.responseText).error || msg;
                                 } catch (e) {
-                                    mylog('uploadFile', 'error body parse failed', e);
+                                    myerr('uploadFile', 'error body parse failed', e);
                                 }
                                 entry.status = 'error';
                                 entry.error = true;
@@ -2471,7 +2475,7 @@
                             if (!f.isDir) existing.add(f.name);
                         }
                     } catch (e) {
-                        mylog('uploadFiles', 'list target dir failed; overwrite check skipped', e);
+                        myerr('uploadFiles', 'list target dir failed; overwrite check skipped', e);
                     }
 
                     const tasks = [];
@@ -2502,7 +2506,7 @@
                                 successCount++;
                                 lastSuccessPath = targetDir ? targetDir + '/' + t.file.name : t.file.name;
                             } catch (e) {
-                                mylog('uploadFiles', 'upload task failed', t.file.name, e);
+                                myerr('uploadFiles', 'upload task failed', t.file.name, e);
                             }
                         }
                     };
@@ -2996,7 +3000,7 @@
                         try {
                             this._handleSearchEvent(tabPath, JSON.parse(tail));
                         } catch (e) {
-                            mylog('_consumeSearchStream', 'tail parse failed', e);
+                            myerr('_consumeSearchStream', 'tail parse failed', e);
                         }
                     }
                 },
@@ -3239,7 +3243,7 @@
                         }, 'tabs'
                     ))
                     .then(() => mylog('saveMeta', 'meta saved'))
-                    .catch(err => mylog('saveMeta', 'failed to persist meta:', err));
+                    .catch(err => myerr('saveMeta', 'failed to persist meta:', err));
                 },
 
                 // 還原階段不寫：restoreSession 的 await 抓檔常超過 debounce，
@@ -3367,7 +3371,7 @@
                                     this.clearDirtyEntry(path);
                                 }
                             } else {
-                                mylog('_restoreSessionInner', 'failed to restore tab:', path, err);
+                                myerr('_restoreSessionInner', 'failed to restore tab:', path, err);
                             }
                         }
                     }
@@ -3521,7 +3525,7 @@
                         retokenizeTextMate();
                         persistSettings({ theme });
                     } catch (err) {
-                        mylog('onThemeChange', 'Failed to load theme:', theme, err);
+                        myerr('onThemeChange', 'Failed to load theme:', theme, err);
                         this.showError('載入主題失敗');
                         this.settings.theme = prev;
                     }
@@ -3613,7 +3617,7 @@
                             req.onblocked = resolve;
                         });
                     } catch (err) {
-                        mylog('doLogout', 'failed to clear session', err);
+                        myerr('doLogout', 'failed to clear session', err);
                         alert('clear session failed');
                     }
                     window.location.href = '/logout';
@@ -3787,10 +3791,10 @@
                     // 順序反了的話，第一次 tokenize 拿到的 encoded fg index 會對應到
                     // 空 colorMap，整段文字會以預設前景色呈現直到下一次 setTheme。
                     const s = this.settings;
-                    await this.ensureTheme(s.theme).catch(e => mylog('mounted', 'ensureTheme failed', s.theme, e));
+                    await this.ensureTheme(s.theme).catch(e => myerr('mounted', 'ensureTheme failed', s.theme, e));
                     let activeTheme = loadedThemes.has(s.theme) ? s.theme : DEFAULT_THEME;
                     if (!loadedThemes.has(activeTheme)) {
-                        await this.ensureTheme(activeTheme).catch(e => mylog('mounted', 'ensureTheme failed', activeTheme, e));
+                        await this.ensureTheme(activeTheme).catch(e => myerr('mounted', 'ensureTheme failed', activeTheme, e));
                     }
                     this.applyThemeColors(activeTheme);
 
@@ -4128,7 +4132,7 @@
                             }
                         }
                     } catch (e) {
-                        mylog('plugin', 'plugins.json load error:', e);
+                        myerr('plugin', 'plugins.json load error:', e);
                     }
 
                     mylog('onmount', 'initBuiltins start');
