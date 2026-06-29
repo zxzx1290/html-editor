@@ -710,13 +710,30 @@
             return FILENAME_LANG[base] || 'plaintext';
         }
 
+        // 設定預設值（型別齊全）。loadSettings 一律 merge 進來，呼叫端拿到的就是完整、
+        // 型別正確的物件，不必再 || / === true / !== false 補洞。
+        const SETTINGS_DEFAULTS = {
+            sidebarWidth: 250,
+            theme: DEFAULT_THEME,
+            fontSize: 14,
+            fontFamily: '',
+            wordWrap: true,
+            stickyScroll: true,
+            bracketColorization: false,
+            showInvisible: false,
+            trimOnSave: true,
+            customPhpHtmlComment: false,
+            terminalFontFamily: '',
+            terminalFontSize: 14,
+        };
+
         function loadSettings() {
             mylog('loadSettings', 'loading settings');
             try {
-                return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {};
+                return { ...SETTINGS_DEFAULTS, ...(JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}) };
             } catch (e) {
                 myerr('loadSettings', 'parse failed', e);
-                return {};
+                return { ...SETTINGS_DEFAULTS };
             }
         }
 
@@ -1282,7 +1299,7 @@
                 const s = loadSettings();
                 return {
                     sidebarCollapsed: false,
-                    sidebarWidth: s.sidebarWidth || 250,
+                    sidebarWidth: s.sidebarWidth,
                     treeItems: [],
                     selectedPath: null,
                     treeFocused: false,
@@ -1293,17 +1310,17 @@
                     tabsList: [],
                     activeTabPath: null,
                     settings: {
-                        theme: s.theme || DEFAULT_THEME,
-                        fontSize: s.fontSize || 14,
-                        fontFamily: s.fontFamily || '',
-                        wordWrap: s.wordWrap !== false,
-                        stickyScroll: s.stickyScroll !== false,
-                        bracketColorization: s.bracketColorization === true,
-                        showInvisible: s.showInvisible === true,
-                        trimOnSave: s.trimOnSave !== false,
-                        customPhpHtmlComment: s.customPhpHtmlComment === true,
-                        terminalFontFamily: s.terminalFontFamily || '',
-                        terminalFontSize: s.terminalFontSize || 14,
+                        theme: s.theme,
+                        fontSize: s.fontSize,
+                        fontFamily: s.fontFamily,
+                        wordWrap: s.wordWrap,
+                        stickyScroll: s.stickyScroll,
+                        bracketColorization: s.bracketColorization,
+                        showInvisible: s.showInvisible,
+                        trimOnSave: s.trimOnSave,
+                        customPhpHtmlComment: s.customPhpHtmlComment,
+                        terminalFontFamily: s.terminalFontFamily,
+                        terminalFontSize: s.terminalFontSize,
                     },
                     currentUser: '',
                     canTerminal: false,
@@ -3550,24 +3567,29 @@
                     persistSettings({ wordWrap: this.settings.wordWrap });
                 },
 
-                // 切換括號配對上色：editor.updateOptions 對 bracketPairColorization
-                // 不靈敏（issue #3013 / discussion #3980），改用 TextModel.updateOptions
-                // 的 bracketColorizationOptions 直接打到 model 層，BracketPairs tree
-                // 會以 createChangeEvent 觸發重建。對所有已開的 model 套用一輪。
+                // 切換括號配對上色：設 editor option 即可。standalone 的 updateOptions
+                // 會把它寫進 config，ModelService 自動 loop 所有 model 呼叫
+                // model.updateOptions({ bracketColorizationOptions }) 觸發 tree 重建。
                 onBracketColorizationChange() {
                     this.applyBracketColorization();
                     persistSettings({ bracketColorization: this.settings.bracketColorization });
                 },
                 applyBracketColorization() {
+                    const enabled = this.settings.bracketColorization;
+                    // editor option：讓 standalone config 與設定同步，新建 model 的 creation
+                    // options 才正確，且擋掉之後任何 updateOptions（如改字體）經 ModelService
+                    // 把 config 預設值 cascade 回所有 model 的覆蓋。
+                    monacoEditor.updateOptions({ bracketPairColorization: {
+                        enabled, independentColorPoolPerBracketType: false,
+                    }});
+                    // model option：editor option 不會重繪既有 model（issue #3013），直接打
+                    // model 層才會觸發 BracketPairs tree 重建、立即生效。
                     const opts = { bracketColorizationOptions: {
-                        enabled: this.settings.bracketColorization,
-                        independentColorPoolPerBracketType: false,
+                        enabled, independentColorPoolPerBracketType: false,
                     }};
                     tabsData.forEach(d => { if (d.model) d.model.updateOptions(opts); });
-                    if (monacoEditor) {
-                        const m = monacoEditor.getModel();
-                        if (m) m.updateOptions(opts);
-                    }
+                    const m = monacoEditor.getModel();
+                    if (m) m.updateOptions(opts);
                 },
 
                 onStickyScrollChange() {
@@ -3888,6 +3910,14 @@
                         stickyScroll: { enabled: s.stickyScroll },
                         renderWhitespace: s.showInvisible ? 'all' : 'none',
                         unicodeHighlight: { ambiguousCharacters: false },
+                        // 括號上色的權威是 editor option：standalone 的 updateOptions 會把它
+                        // 灌進 config service，ModelService 再據此算新 model 的 creation
+                        // options、並 cascade 到所有既有 model。沒在這設，config 預設 true，
+                        // 每次 updateOptions（連改字體）都會把 true 重套回所有 model。
+                        bracketPairColorization: {
+                            enabled: s.bracketColorization,
+                            independentColorPoolPerBracketType: false,
+                        },
                     });
 
                     // 註冊 HTML 配對標籤高亮（含 .php 檔）
@@ -3943,8 +3973,7 @@
                         updateEolDecorations();
                         this.refreshCurrentLang();
                         this.refreshIndentInfo();
-                        // 切換 model 時把當前的括號上色設定套到新 model
-                        // （createModel 是 Monaco 預設值 enabled:true，沒套會看到一閃）
+                        // 新 model 的預設是 enabled:true，切到它時把目前設定補套上，避免一閃
                         const m = monacoEditor.getModel();
                         if (m) m.updateOptions({ bracketColorizationOptions: {
                             enabled: this.settings.bracketColorization,
