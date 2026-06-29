@@ -1833,10 +1833,16 @@
                             }
                         } else {
                             monacoEditor.setModel(data.model);
-                            if (data.viewState) monacoEditor.restoreViewState(data.viewState);
                             this.currentEncoding = data.encoding || 'utf8';
                             this.setStatus('已開啟：' + path);
-                            this.$nextTick(() => { monacoEditor.layout(); monacoEditor.focus(); });
+                            // restoreViewState 必須等 editor 真正可見且 layout 過再做：
+                            // 從圖片/終端機分頁切回時 editor 還是 v-show display:none（height 0），
+                            // 此時還原捲動會被 Monaco 夾到底部（誤捲到最後一行）。
+                            this.$nextTick(() => {
+                                monacoEditor.layout();
+                                if (data.viewState) monacoEditor.restoreViewState(data.viewState);
+                                monacoEditor.focus();
+                            });
                         }
                     }
 
