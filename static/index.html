@@ -3751,6 +3751,15 @@
                             this.deleteFile(selItem.path, selItem.isDir);
                         }
                     }
+                    // 重新命名
+                    if (this.treeFocused && e.key === 'F2' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                        const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
+                        const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
+                        if (selItem) {
+                            e.preventDefault();
+                            this.renameItem(selItem);
+                        }
+                    }
                     // 剪貼簿操作
                     if (this.treeFocused && (e.ctrlKey || e.metaKey)) {
                         const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
