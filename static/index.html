@@ -1651,14 +1651,36 @@
                     return data.files || [];
                 },
 
+                // 重新抓取 dirPath 的內容並與既有節點合併：path 相同者沿用原本的
+                // 節點物件（只就地更新可變欄位），讓 keyed v-for 重用 DOM、不閃爍，
+                // 同時保留展開狀態；展開中的子目錄會遞迴重抓以反映 CLI 等外部變動。
+                async buildSegment(dirPath, depth, oldByPath) {
+                    const files = await this.fetchDir(dirPath);
+                    const seg = [];
+                    for (const f of files) {
+                        let node = oldByPath.get(f.path);
+                        if (node) {
+                            node.name = f.name; node.isDir = f.isDir; node.depth = depth;
+                            node.isSymlink = !!f.isSymlink; node.linkTarget = f.linkTarget || ''; node.size = f.size;
+                        } else {
+                            node = {
+                                path: f.path, name: f.name, isDir: f.isDir, depth, expanded: false,
+                                isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '', size: f.size,
+                            };
+                        }
+                        seg.push(node);
+                        if (node.isDir && node.expanded) {
+                            seg.push(...await this.buildSegment(f.path, depth + 1, oldByPath));
+                        }
+                    }
+                    return seg;
+                },
+
                 async loadTree() {
                     mylog('loadTree', 'loading file tree');
                     try {
-                        const files = await this.fetchDir('');
-                        this.treeItems = files.map(f => ({
-                            path: f.path, name: f.name, isDir: f.isDir, depth: 0, expanded: false,
-                            isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '', size: f.size,
-                        }));
+                        const oldByPath = new Map(this.treeItems.map(t => [t.path, t]));
+                        this.treeItems = await this.buildSegment('', 0, oldByPath);
                     } catch (e) {
                         this.showError('載入檔案列表失敗：' + e.message);
                     }
@@ -1736,14 +1758,23 @@
                 },
 
                 async refreshDir(dirPath) {
-                    if (dirPath === '') {
-                        await this.loadTree();
-                    } else {
-                        const item = this.treeItems.find(t => t.path === dirPath && t.isDir);
-                        if (item) {
-                            if (item.expanded) this.collapseDir(item);
-                            await this.expandDir(item);
-                        }
+                    if (dirPath === '') { await this.loadTree(); return; }
+                    const idx = this.treeItems.findIndex(t => t.path === dirPath && t.isDir);
+                    if (idx < 0) return;
+                    const parent = this.treeItems[idx];
+                    if (!parent.expanded) { await this.expandDir(parent); return; } // 未展開：首次展開即顯示最新，不會閃爍
+                    if (expandingPaths.has(dirPath)) return;
+                    expandingPaths.add(dirPath);
+                    try {
+                        let end = idx + 1;
+                        while (end < this.treeItems.length && this.treeItems[end].depth > parent.depth) end++;
+                        const oldByPath = new Map(this.treeItems.slice(idx + 1, end).map(t => [t.path, t]));
+                        const seg = await this.buildSegment(dirPath, parent.depth + 1, oldByPath);
+                        this.treeItems.splice(idx + 1, end - idx - 1, ...seg);
+                    } catch (e) {
+                        this.showError('重新整理目錄失敗：' + e.message);
+                    } finally {
+                        expandingPaths.delete(dirPath);
                     }
                 },
 
@@ -2608,17 +2639,6 @@
                     }
                 },
 
-                async forceRefreshDir(dirPath) {
-                    if (!dirPath) {
-                        await this.loadTree();
-                        return;
-                    }
-                    const item = this.treeItems.find(t => t.path === dirPath && t.isDir);
-                    if (!item) return;
-                    if (item.expanded) this.collapseDir(item);
-                    await this.expandDir(item);
-                },
-
                 async mkdir(parentDir) {
                     const name = await this.dlgPrompt('輸入目錄名稱（可包含 / 建立巢狀）：');
                     if (!name) return;
@@ -2871,7 +2891,7 @@
                             { label: '重新命名', action: () => this.renameItem(item) },
                             '-',
                             { label: '搜尋', action: () => this.searchInFolder(path) },
-                            { label: '重新整理', action: () => this.forceRefreshDir(path) },
+                            { label: '重新整理', action: () => this.refreshDir(path) },
                             '-',
                             { label: '刪除目錄', danger: true, action: () => this.deleteFile(path, true) },
                         );
