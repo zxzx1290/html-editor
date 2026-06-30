@@ -3926,6 +3926,10 @@
                         },
                     });
 
+                    // 程式化聚焦編輯器（開檔/切頁籤）不會觸發 document click，treeFocused 會殘留
+                    // true，導致在編輯器內按 Ctrl+C 被當成複製檔案。聚焦編輯器時直接清掉旗標。
+                    monacoEditor.onDidFocusEditorText(() => { this.treeFocused = false; });
+
                     // 註冊 HTML 配對標籤高亮（含 .php 檔）
                     const htmlTagPairProvider = {
                         provideDocumentHighlights(model, position) {
