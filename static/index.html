@@ -1373,7 +1373,7 @@
                 // 狀態列要顯示的語言名稱（從 Monaco aliases 取，沒有就退 raw id）
                 currentLangLabel() {
                     const found = this.langPicker.langs.find(l => l.id === this.currentLangId);
-                    return found ? found.label : (this.currentLangId || 'Plain Text');
+                    return found ? found.label : 'Plain Text';
                 },
                 currentEncodingLabel() {
                     return ENC_LABEL[this.currentEncoding] || this.currentEncoding;
@@ -1495,20 +1495,20 @@
                     this.imageDim = e.target.naturalWidth + ' × ' + e.target.naturalHeight;
                 },
 
-                // 第一次開 picker 時懶載入並快取整份 Monaco 已註冊語言清單，依 label 排序
+                // 載入並快取整份 Monaco 已註冊語言清單，依 label 排序
                 loadLangList() {
-                    if (this.langPicker.langs.length || !window.monaco) return;
+                    if (this.langPicker.langs.length) return;
                     const list = monaco.languages.getLanguages().map(l => ({
                         id: l.id,
                         label: (l.aliases && l.aliases[0]) || l.id,
                     }));
                     list.sort((a, b) => a.label.localeCompare(b.label));
                     this.langPicker.langs = list;
+                    mylog('loadLangList', this.langPicker.langs.length, 'languages loaded');
                 },
 
                 // 開啟語言選單，並 scroll 到目前語言所在位置
                 openLangPicker() {
-                    this.loadLangList();
                     this.langPicker.open = true;
                     this.$nextTick(() => {
                         const idx = this.langPicker.langs.findIndex(l => l.id === this.currentLangId);
@@ -3929,6 +3929,9 @@
                     // 程式化聚焦編輯器（開檔/切頁籤）不會觸發 document click，treeFocused 會殘留
                     // true，導致在編輯器內按 Ctrl+C 被當成複製檔案。聚焦編輯器時直接清掉旗標。
                     monacoEditor.onDidFocusEditorText(() => { this.treeFocused = false; });
+
+                    // 一開始就載好語言清單，狀態列標籤即可直接顯示 alias（如 PHP）
+                    this.loadLangList();
 
                     // 註冊 HTML 配對標籤高亮（含 .php 檔）
                     const htmlTagPairProvider = {
