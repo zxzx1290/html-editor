@@ -1154,9 +1154,9 @@
             const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             let socket = null;
             let dupCount = 0;
-            // 斷線重連的遞增間隔（秒）：3 → 5 → 10 → 20 → 30，之後維持 30 上限。
-            // 連線成功後 reconnectAttempt 歸零，下次斷線重新從 3 秒起算。
-            const RECONNECT_DELAYS = [3, 5, 10, 20, 30];
+            // 斷線重連的遞增間隔（秒）：1 → 3 → 5 → 10 → 20 → 30，之後維持 30 上限。
+            // 連線成功後 reconnectAttempt 歸零，下次斷線重新從 1 秒起算。
+            const RECONNECT_DELAYS = [1, 3, 5, 10, 20, 30];
             let reconnectAttempt = 0;
 
             wsSend = function (data) {
