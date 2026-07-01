@@ -602,8 +602,14 @@ func main() {
 				clients = append(clients, c)
 			}
 			s.hub.mu.RUnlock()
+			// seen 是本 tick 共享的 stat 快取
+			seen := make(map[string]time.Time)
 			for _, c := range clients {
-				s.pollWatchDirs(c)
+				s.pollWatchDirs(c, seen)
+			}
+			// len(seen) = 本輪實際 stat 的唯一目錄數（去重後）。
+			if len(seen) > 0 {
+				// logf("[watch] tick observed %d unique dirs across %d clients\n", len(seen), len(clients))
 			}
 		}
 	}()
@@ -1224,9 +1230,9 @@ func (s *server) updateWatchDirs(c *WsClient, paths []string) {
 }
 
 // pollWatchDirs 對 client 監看中的每個目錄 stat 一次，mtime 有變就推 dir_changed。
-// 目錄 mtime 反映子項的增/刪/改名（正是 CLI 等外部變動），在 FUSE / 網路掛載上
-// 也可靠（stat 會走到後端），這是 fsnotify/inotify 在那些檔案系統上收不到的。
-func (s *server) pollWatchDirs(c *WsClient) {
+// 目錄 mtime 反映子項的增/刪/改名（正是 CLI 等外部變動），在 FUSE / 網路掛載上也可靠（stat 會走到後端），這是 fsnotify/inotify 在那些檔案系統上收不到的。
+// seen 是本 tick 共享的 stat 快取（絕對路徑 → 觀測到的 mtime）；同一 abs 一輪只 stat 一次，多 client 監看同一目錄時省去重複 stat。key 用 abs 而非 rel，因各 user workspace 不同、同一 rel 可能指向不同實體目錄。stat 失敗記零值當哨兵，同輪不重試。
+func (s *server) pollWatchDirs(c *WsClient, seen map[string]time.Time) {
 	ws, ok := s.userWorkspace(c.username)
 	if !ok {
 		return
@@ -1243,20 +1249,25 @@ func (s *server) pollWatchDirs(c *WsClient) {
 		if err != nil {
 			continue
 		}
-		var mt time.Time
-		// 底層 FS 卡住時 os.Stat 可能不回來；用 runWithTimeout 包住，讓卡住的目錄只拖到自己、不會癱瘓整個 poll 迴圈（卡住的 goroutine 仍會殘留到 syscall 自然回傳，與本檔其他 FS 操作同一個已知上限）。
-		if err := runWithTimeout(context.Background(), fileOpQuickTimeout, func() error {
-			info, ferr := os.Stat(abs)
-			if ferr == nil {
-				mt = info.ModTime()
-			}
-			return ferr
-		}); err != nil {
+		mt, cached := seen[abs]
+		if !cached {
+			// 底層 FS 卡住時 os.Stat 可能不回來；用 runWithTimeout 包住，讓卡住的目錄只拖到自己、不會癱瘓整個 poll 迴圈（卡住的 goroutine 仍會殘留到 syscall 自然回傳，與本檔其他 FS 操作同一個已知上限）。失敗時 mt 維持零值，寫進快取當哨兵。
+			runWithTimeout(context.Background(), fileOpQuickTimeout, func() error {
+				info, ferr := os.Stat(abs)
+				if ferr == nil {
+					mt = info.ModTime()
+				}
+				return ferr
+			})
+			seen[abs] = mt
+		}
+		if mt.IsZero() { // stat 失敗（真實目錄 mtime 不可能是零值）
+			logf("[watch] stat_failed user=%s path=%s\n", c.username, rel)
 			continue
 		}
 		c.watchMu.Lock()
-		prev, still := c.watchDirs[rel]
-		changed := still && !mt.Equal(prev)
+		prev, exists := c.watchDirs[rel]
+		changed := exists && !mt.Equal(prev)
 		if changed {
 			c.watchDirs[rel] = mt
 		}

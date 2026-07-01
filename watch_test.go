@@ -24,7 +24,7 @@ func TestWatchDirsDetectChange(t *testing.T) {
 	s.updateWatchDirs(c, []string{""})
 
 	// 註冊當下不應誤報。
-	s.pollWatchDirs(c)
+	s.pollWatchDirs(c, map[string]time.Time{})
 	select {
 	case <-c.send:
 		t.Fatal("unexpected dir_changed on unchanged dir")
@@ -37,7 +37,7 @@ func TestWatchDirsDetectChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.pollWatchDirs(c)
+	s.pollWatchDirs(c, map[string]time.Time{})
 	select {
 	case data := <-c.send:
 		var m wsOutMsg
