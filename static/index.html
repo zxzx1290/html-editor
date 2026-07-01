@@ -1191,6 +1191,8 @@
                     app.showToast('已上線');
                     app.tabsList.forEach(t => fileOnOpen(t.path));
                     if (app.canTerminal) wsSend({ type: 'term_list' });
+                    // loadTree 內會重新全量上報 watch_dirs，讓 server 端對齊。
+                    app.loadTree();
                 };
 
                 socket.onmessage = function (event) {
@@ -1253,6 +1255,9 @@
                             break;
                         case 'term_closed':
                             app.onTerminalClosed(msg.payload.name);
+                            break;
+                        case 'dir_changed':
+                            app.refreshDir(msg.payload.path);
                             break;
                     }
                 };
@@ -1681,6 +1686,7 @@
                     try {
                         const oldByPath = new Map(this.treeItems.map(t => [t.path, t]));
                         this.treeItems = await this.buildSegment('', 0, oldByPath);
+                        this.scheduleWatchReport();
                     } catch (e) {
                         this.showError('載入檔案列表失敗：' + e.message);
                     }
@@ -1699,6 +1705,7 @@
                             isSymlink: !!f.isSymlink, linkTarget: f.linkTarget || '', size: f.size,
                         }));
                         this.treeItems.splice(idx + 1, 0, ...children);
+                        this.scheduleWatchReport();
                     } catch (e) {
                         item.expanded = false;
                         this.showError('載入目錄失敗：' + e.message);
@@ -1714,6 +1721,7 @@
                     let end = idx + 1;
                     while (end < this.treeItems.length && this.treeItems[end].depth > item.depth) end++;
                     this.treeItems.splice(idx + 1, end - idx - 1);
+                    this.scheduleWatchReport();
                 },
 
                 async onNodeClick(item, event) {
@@ -1758,6 +1766,7 @@
                 },
 
                 async refreshDir(dirPath) {
+                    mylog('refreshDir', dirPath);
                     if (dirPath === '') { await this.loadTree(); return; }
                     const idx = this.treeItems.findIndex(t => t.path === dirPath && t.isDir);
                     if (idx < 0) return;
@@ -1771,11 +1780,26 @@
                         const oldByPath = new Map(this.treeItems.slice(idx + 1, end).map(t => [t.path, t]));
                         const seg = await this.buildSegment(dirPath, parent.depth + 1, oldByPath);
                         this.treeItems.splice(idx + 1, end - idx - 1, ...seg);
+                        this.scheduleWatchReport();
                     } catch (e) {
                         this.showError('重新整理目錄失敗：' + e.message);
                     } finally {
                         expandingPaths.delete(dirPath);
                     }
+                },
+
+                // 把目前展開中的目錄（含根目錄）全量上報給 server，供其輪詢 mtime、
+                // 外部變動時推 dir_changed。全量覆蓋，斷線重連時無腦重送即可對齊。
+                reportWatchDirs() {
+                    const paths = [''];
+                    for (const t of this.treeItems) {
+                        if (t.isDir && t.expanded) paths.push(t.path);
+                    }
+                    wsSend({ type: 'watch_dirs', payload: { paths } });
+                },
+                scheduleWatchReport() {
+                    clearTimeout(this._watchTimer);
+                    this._watchTimer = setTimeout(() => this.reportWatchDirs(), 150);
                 },
 
                 // ──── Tabs

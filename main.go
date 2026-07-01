@@ -61,6 +61,7 @@ type Config struct {
 	Host                 string                `json:"host"`
 	Port                 int                   `json:"port"`
 	SessionTTL           int64                 `json:"sessionTTL"`           // seconds; 0 → 86400
+	WatchPollInterval    int64                 `json:"watchPollInterval"`    // tree view 目錄輪詢間隔 seconds; 0 → 3
 	MaxUploadSize        int64                 `json:"maxUploadSize"`        // bytes; 0 → 50MB
 	Title                string                `json:"title"`                // app display name; default "HTML Editor"
 	RateLimitWindow      int64                 `json:"rateLimitWindow"`      // seconds; 0 → 300
@@ -247,6 +248,13 @@ type WsClient struct {
 	send      chan []byte
 	closeOnce sync.Once
 	hub       *Hub
+
+	// watchDirs 是前端展開中的目錄（相對 workspace 路徑 → 上次見到的 mtime）。
+	// 前端每次展開/收合都全量上報覆蓋，poll goroutine 據此比對 mtime，變動就推
+	// dir_changed。斷線時整個 client 被 unregister 丟棄，這份狀態隨之消失，重連
+	// 由前端重新全量上報，不需額外清理。
+	watchMu   sync.Mutex
+	watchDirs map[string]time.Time
 }
 
 // ─── Hub ──────────────────────────────────────────────────────────────────────
@@ -387,6 +395,23 @@ func (h *Hub) clientCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.clients)
+}
+
+// watchDirCount 回傳所有 client 監看中的目錄總數，供 status log 觀察。
+func (h *Hub) watchDirCount() int {
+	h.mu.RLock()
+	clients := make([]*WsClient, 0, len(h.clients))
+	for _, c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.mu.RUnlock()
+	total := 0
+	for _, c := range clients {
+		c.watchMu.Lock()
+		total += len(c.watchDirs)
+		c.watchMu.Unlock()
+	}
+	return total
 }
 
 func (h *Hub) sendTo(username string, msg any) {
@@ -541,22 +566,45 @@ func main() {
 		logf("[config] login notifications enabled\n")
 	}
 
+	// goroutines 數量可協助觀察 syscall 卡住時的洩漏狀況：
+	// runWithTimeout 超時後，卡在 syscall 的 goroutine 不會被回收，
+	// 若這個數字長期上升、即使閒置也下不來，代表底層 FS 有問題。
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for range t.C {
-			// goroutines 數量可協助觀察 syscall 卡住時的洩漏狀況：
-			// runWithTimeout 超時後，卡在 syscall 的 goroutine 不會被回收，
-			// 若這個數字長期上升、即使閒置也下不來，代表底層 FS 有問題。
-			logf("[status] ws_clients=%d goroutines=%d\n", s.hub.clientCount(), runtime.NumGoroutine())
+			logf("[status] ws_clients=%d watch_dirs=%d goroutines=%d\n", s.hub.clientCount(), s.hub.watchDirCount(), runtime.NumGoroutine())
 		}
 	}()
 
+	// rate limiter gc，清理過期 bans 與 stale attempts，避免 map 無限增長。
 	go func() {
 		t := time.NewTicker(10 * time.Minute)
 		defer t.Stop()
 		for range t.C {
 			s.limiter.gc()
+		}
+	}()
+
+	// 輪詢每個連線中 client 展開中的目錄，mtime 有變就推 dir_changed，
+	// 讓前端 tree view 即時反映 CLI 等外部檔案系統變動。
+	watchInterval := time.Duration(cfg.WatchPollInterval) * time.Second
+	if watchInterval <= 0 {
+		watchInterval = watchPollInterval
+	}
+	go func() {
+		t := time.NewTicker(watchInterval)
+		defer t.Stop()
+		for range t.C {
+			s.hub.mu.RLock()
+			clients := make([]*WsClient, 0, len(s.hub.clients))
+			for _, c := range s.hub.clients {
+				clients = append(clients, c)
+			}
+			s.hub.mu.RUnlock()
+			for _, c := range clients {
+				s.pollWatchDirs(c)
+			}
 		}
 	}()
 
@@ -1122,9 +1170,102 @@ func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 }
 
 const (
-	wsPingInterval = 30 * time.Second
-	wsReadDeadline = 70 * time.Second
+	wsPingInterval    = 30 * time.Second
+	wsReadDeadline    = 70 * time.Second
+	watchPollInterval = 3 * time.Second // tree view 目錄變動輪詢預設間隔（config 未設時）
+	maxWatchDirs      = 500             // 單一 client 最多監看的目錄數，防濫用
 )
+
+// userWorkspace 回傳指定使用者的 workspace 絕對路徑。
+func (s *server) userWorkspace(username string) (string, bool) {
+	uc, ok := s.config.Users[username]
+	if !ok {
+		return "", false
+	}
+	abs, err := filepath.Abs(uc.Workspace)
+	if err != nil {
+		return "", false
+	}
+	return abs, true
+}
+
+// updateWatchDirs 以前端上報的完整清單覆蓋 client 的監看目錄。沿用仍在清單中
+// 的舊 mtime，對新目錄先 stat 一次記下當前 mtime（避免註冊當下就誤報變動）。
+func (s *server) updateWatchDirs(c *WsClient, paths []string) {
+	if len(paths) > maxWatchDirs {
+		paths = paths[:maxWatchDirs]
+	}
+	ws, ok := s.userWorkspace(c.username)
+
+	c.watchMu.Lock()
+	old := c.watchDirs
+	c.watchMu.Unlock()
+
+	next := make(map[string]time.Time, len(paths))
+	for _, rel := range paths {
+		if mt, exists := old[rel]; exists {
+			next[rel] = mt
+			continue
+		}
+		var mt time.Time
+		if ok {
+			if abs, err := resolvePath(ws, rel); err == nil {
+				if info, err := os.Stat(abs); err == nil {
+					mt = info.ModTime()
+				}
+			}
+		}
+		next[rel] = mt
+	}
+
+	c.watchMu.Lock()
+	c.watchDirs = next
+	c.watchMu.Unlock()
+}
+
+// pollWatchDirs 對 client 監看中的每個目錄 stat 一次，mtime 有變就推 dir_changed。
+// 目錄 mtime 反映子項的增/刪/改名（正是 CLI 等外部變動），在 FUSE / 網路掛載上
+// 也可靠（stat 會走到後端），這是 fsnotify/inotify 在那些檔案系統上收不到的。
+func (s *server) pollWatchDirs(c *WsClient) {
+	ws, ok := s.userWorkspace(c.username)
+	if !ok {
+		return
+	}
+	c.watchMu.Lock()
+	paths := make([]string, 0, len(c.watchDirs))
+	for p := range c.watchDirs {
+		paths = append(paths, p)
+	}
+	c.watchMu.Unlock()
+
+	for _, rel := range paths {
+		abs, err := resolvePath(ws, rel)
+		if err != nil {
+			continue
+		}
+		var mt time.Time
+		// 底層 FS 卡住時 os.Stat 可能不回來；用 runWithTimeout 包住，讓卡住的目錄只拖到自己、不會癱瘓整個 poll 迴圈（卡住的 goroutine 仍會殘留到 syscall 自然回傳，與本檔其他 FS 操作同一個已知上限）。
+		if err := runWithTimeout(context.Background(), fileOpQuickTimeout, func() error {
+			info, ferr := os.Stat(abs)
+			if ferr == nil {
+				mt = info.ModTime()
+			}
+			return ferr
+		}); err != nil {
+			continue
+		}
+		c.watchMu.Lock()
+		prev, still := c.watchDirs[rel]
+		changed := still && !mt.Equal(prev)
+		if changed {
+			c.watchDirs[rel] = mt
+		}
+		c.watchMu.Unlock()
+		if changed {
+			s.hub.sendTo(c.username, wsOutMsg{Type: "dir_changed", Payload: map[string]string{"path": rel}})
+		}
+	}
+}
 
 func (c *WsClient) readPump(s *server) {
 	defer c.conn.Close()
@@ -1191,6 +1332,16 @@ func (c *WsClient) readPump(s *server) {
 			s.hub.broadcast(wsOutMsg{Type: "file_closed", Payload: map[string]string{
 				"user": c.username, "path": p.Path, "file": p.File,
 			}}, c.username)
+
+		case "watch_dirs":
+			var p struct {
+				Paths []string `json:"paths"`
+			}
+			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				logf("[ws] watch_dirs bad_payload user=%s err=%v\n", c.username, err)
+				continue
+			}
+			s.updateWatchDirs(c, p.Paths)
 
 		case "term_list":
 			if !s.checkTermPermission(c) {
