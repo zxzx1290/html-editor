@@ -375,6 +375,16 @@ static/
 
 所有路徑均以 workspace 為根目錄，後端會阻擋路徑逃逸（`../` 等）。
 
+### Symlink 行為（刻意設計）
+
+路徑逃逸防護採字串比對，擋的是 `../` 這類相對路徑逃逸。**符號連結（symlink）則是刻意允許跟隨的**：`/api/file`、`/api/download`、`/api/search` 會沿著 workspace 內的 symlink 讀取／遍歷，即使目標位於 workspace 之外。這是本專案的預期行為（例如讓使用者以 symlink 掛入共用素材、跨專案引用）。
+
+安全含義：**workspace 內的 symlink 等同信任邊界**。任何能在某使用者 workspace 內建立 symlink 的人（例如具備 `terminal` 權限者），即可讓該 workspace 的其他存取者透過上述 API 讀到 workspace 外的檔案。因此：
+
+- 不要讓多個信任層級不同的使用者共用同一個 workspace；
+- 具 `terminal` 權限者本就能存取伺服器上該程序可及的檔案，symlink follow 不構成額外的權限提升；
+- 若部署環境要求嚴格隔離，請以作業系統層級手段（獨立帳號、chroot、容器、mount namespace）約束程序本身可觸及的檔案範圍。
+
 ## 支援的檔案類型
 
 伺服器接受任意副檔名，無限制。

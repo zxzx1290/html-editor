@@ -1178,6 +1178,7 @@ func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 const (
 	wsPingInterval    = 30 * time.Second
 	wsReadDeadline    = 70 * time.Second
+	wsMaxMessageSize  = 64 * 1024 // 單位：bytes， 單一 ws 訊息上限，擋超大 payload 吃記憶體/灌爆 log
 	watchPollInterval = 3 * time.Second // tree view 目錄變動輪詢預設間隔（config 未設時）
 	maxWatchDirs      = 500             // 單一 client 最多監看的目錄數，防濫用
 )
@@ -1284,6 +1285,7 @@ func (c *WsClient) readPump(s *server) {
 	defer s.hub.unregister(c)
 	defer logf("[ws] disconnect user=%s\n", c.username)
 
+	c.conn.SetReadLimit(wsMaxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
@@ -1744,6 +1746,10 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+	if strings.ContainsFunc(header.Filename, isCtrl) {
+		writeError(w, http.StatusBadRequest, "invalid filename")
+		return
+	}
 	if header.Size > s.maxUploadSize() {
 		writeError(w, http.StatusRequestEntityTooLarge, "file too large")
 		return
@@ -2164,7 +2170,37 @@ var (
 	logMode             = logModeFmt
 )
 
+// isCtrl 判斷是否為控制字元（C0 + DEL）。控制字元不該出現在檔名/路徑裡：
+// 會被拿來偽造 log 行、在管理者 cat log 時攻擊終端機，或干擾前端顯示。
+func isCtrl(r rune) bool { return r < 0x20 || r == 0x7f }
+
+// maxLogArgLen 單一 log 參數的長度上限（rune），防超長檔名/路徑/payload 撐爆 log 行。
+const maxLogArgLen = 1024
+
+// stripCtrl 淨化 log 輸出邊界的字串（來源不只檔名，還有 error 訊息、ws payload 等）：
+// 移除控制字元並截斷過長內容。
+func stripCtrl(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if isCtrl(r) {
+			return -1
+		}
+		return r
+	}, s)
+	if rs := []rune(s); len(rs) > maxLogArgLen {
+		return string(rs[:maxLogArgLen]) + "…(truncated)"
+	}
+	return s
+}
+
 func logf(format string, args ...any) {
+	for i, a := range args {
+		switch v := a.(type) {
+		case string:
+			args[i] = stripCtrl(v)
+		case error:
+			args[i] = stripCtrl(v.Error())
+		}
+	}
 	if logMode == logModeFmt {
 		fmt.Fprintf(logWriter, time.Now().Format("2006/01/02 15:04:05")+" "+format, args...)
 	} else {
@@ -2189,6 +2225,9 @@ func writeOK(w http.ResponseWriter) {
 func resolvePath(workspace, rel string) (string, error) {
 	if rel == "" {
 		return workspace, nil
+	}
+	if strings.ContainsFunc(rel, isCtrl) {
+		return "", errors.New("path contains control characters")
 	}
 	cleaned := filepath.Clean("/" + rel)
 	cleaned = strings.TrimPrefix(cleaned, "/")

@@ -1266,14 +1266,14 @@
                     myerr('ws-collab', 'error', err);
                 };
 
-                socket.onclose = function () {
+                socket.onclose = function (e) {
                     socket = null;
                     const base = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)];
                     reconnectAttempt++;
                     // 加上 ±20% jitter，錯開多客戶端在伺服器恢復瞬間同時重連（避免驚群效應）
                     const delay = base * (0.8 + Math.random() * 0.4);
                     app.showError('已離線，約 ' + Math.round(delay) + ' 秒後自動重新連線');
-                    mylog('ws-collab', 'connection closed, retrying in', delay.toFixed(1), 's');
+                    mylog('ws-collab', `connection closed, code=${e.code} clean=${e.wasClean} reason=${e.reason || '-'}, retrying in ${delay.toFixed(1)}s`);
                     setTimeout(connect, delay * 1000);
                 };
             }
