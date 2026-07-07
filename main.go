@@ -280,12 +280,13 @@ func fileKey(path, file string) string {
 }
 
 func (h *Hub) register(c *WsClient) bool {
-	if c.username == "" {
+	if c.username == "" {  // 匿名 → 拒絕
 		return false
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, exists := h.clients[c.username]; exists {
+	if _, exists := h.clients[c.username]; exists { // 同帳號已在線 → 拒絕
+		logf("[ws] register failed: user=%s already online\n", c.username)
 		return false
 	}
 	h.clients[c.username] = c
@@ -1156,12 +1157,14 @@ func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+
 	client := &WsClient{
 		username: username,
 		conn:     conn,
 		send:     make(chan []byte, 64),
 		hub:      s.hub,
 	}
+
 	if !s.hub.register(client) {
 		s.hub.sendTo(username, wsOutMsg{Type: "error", Payload: "duplicate connect"})
 		data, _ := json.Marshal(wsOutMsg{Type: "error", Payload: "duplicate connect"})
@@ -1169,6 +1172,7 @@ func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 		return
 	}
+
 	logf("[ws] connect user=%s\n", username)
 	s.hub.broadcast(wsOutMsg{Type: "user_online", Payload: map[string]string{"user": username}}, username)
 	go client.writePump()
