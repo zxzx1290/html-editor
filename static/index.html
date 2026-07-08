@@ -43,6 +43,7 @@
                 }"
                 :style="{ paddingLeft: (8 + item.depth * 14) + 'px' }" :data-path="item.path"
                 :data-is-dir="item.isDir ? '1' : '0'" @click="onNodeClick(item, $event)"
+                @dblclick="onNodeDblClick(item)"
                 @contextmenu.prevent.stop="onTreeContextMenu($event, item)">
                 <i class="tree-arrow" :class="item.isDir ? (item.expanded ? 'icon-chevron-down' : 'icon-chevron-right') : ''"></i>
                 <i class="tree-icon" :class="item.isSymlink ? (item.isDir ? 'icon-folder-symlink' : 'icon-file-symlink') : (item.isDir ? (item.expanded ? 'icon-folder-open' : 'icon-folder') : (isImagePath(item.path) ? 'icon-image' : 'icon-file'))"></i>
@@ -363,7 +364,7 @@
         const SETTINGS_KEY = 'html-editor-settings';
         // Monaco models and view states stored outside Vue reactivity
         const tabsData = new Map(); // path → { model, originalContent, viewState, baseHash }
-        const openingPaths = new Set(); // paths currently being fetched (race-condition guard)
+        const openingPaths = new Map(); // path -> focusMonaco（開檔併發鎖；值可被稍後的雙擊改成 true 以要求聚焦）
         const expandingPaths = new Set(); // 目錄正在展開中（避免快速重複點擊造成 state 不一致／重複 request）
         const uploadXhrs = new Map(); // upload id → XMLHttpRequest（供取消用，存在 Vue 響應式之外）
         const UPLOAD_CONCURRENCY = 3; // 上傳併行上限
@@ -1639,6 +1640,7 @@
 
                 // 抓檔案原始 bytes（給編碼解碼用；後端原樣回傳 bytes，前端自行解碼）
                 async fetchBytes(path) {
+                    mylog('fetchBytes', path);
                     const res = await fetch('/api/file?path=' + encodeURIComponent(path));
                     if (!res.ok) {
                         const err = new Error(res.statusText);
@@ -1748,9 +1750,19 @@
                             if (item.expanded) this.collapseDir(item);
                             else await this.expandDir(item);
                         } else {
-                            await this.openFile(item.path);
+                            mylog('onNodeClick', item.path);
+                            // 單擊開啟但不搶焦點，讓鍵盤停在檔案樹可繼續上下瀏覽。
+                            await this.openFile(item.path, false);
                         }
                     }
+                },
+
+                // 雙擊進入編輯：focusMonaco 用預設 true。若檔案已是 active 分頁，activateTab 會 early-return 而不聚焦，故這裡補一發。
+                async onNodeDblClick(item) {
+                    if (item.isDir || isImagePath(item.path)) return;
+                    mylog('onNodeDblClick', item.path);
+                    await this.openFile(item.path);
+                    if (this.activeTabPath === item.path && monacoEditor) monacoEditor.focus();
                 },
 
                 parentOf(path) {
@@ -1804,17 +1816,19 @@
 
                 // ──── Tabs
 
-                async openFile(path) {
-                    mylog('openFile', path);
+                async openFile(path, focusMonaco = true) {
+                    mylog('openFile', path, 'focusMonaco=' + focusMonaco);
                     if (this.tabsList.find(t => t.path === path)) {
-                        await this.activateTab(path);
+                        await this.activateTab(path, focusMonaco);
                         return;
                     }
                     if (openingPaths.has(path)) {
+                        // 已在開檔中；若這次要聚焦（雙擊），把該次開檔的意圖升級為聚焦
+                        if (focusMonaco) openingPaths.set(path, true);
                         this.showToast('正在開啟 ' + path + '，請稍候');
                         return;
                     };
-                    openingPaths.add(path);
+                    openingPaths.set(path, focusMonaco);
 
                     try {
                         if (isImagePath(path)) {
@@ -1839,14 +1853,17 @@
                             }
                         }
 
-                        await this.activateTab(path);
+                        // 用 map 裡「可能被雙擊升級過」的意圖，而非開檔當下的參數
+                        await this.activateTab(path, openingPaths.get(path));
                         this.scheduleMetaSave();
                     } finally {
                         openingPaths.delete(path);
                     }
                 },
 
-                async activateTab(path) {
+                // focusMonaco：由呼叫端決定要不要把焦點搬進編輯器。
+                // 分頁點擊/雙擊開檔/新檔預設 focus；單擊樹節點（預覽）與 session 還原這類「不該搶焦點」的開檔傳 false，讓焦點留在原處（行動裝置上還可避免誤彈鍵盤）。
+                async activateTab(path, focusMonaco = true) {
                     if (this.activeTabPath === path) return;
                     this.selectedPath = path;
                     this.selectedPaths = [path];
@@ -1896,7 +1913,7 @@
                             this.$nextTick(() => {
                                 monacoEditor.layout();
                                 if (data.viewState) monacoEditor.restoreViewState(data.viewState);
-                                monacoEditor.focus();
+                                if (focusMonaco) monacoEditor.focus();
                             });
                         }
                     }
@@ -3450,7 +3467,7 @@
                     if (this.tabsList.length > 0) {
                         const target = this.tabsList.find(t => t.path === session.activeTab) || this.tabsList[0];
                         mylog('_restoreSessionInner', 'activating tab:', target.path);
-                        await this.activateTab(target.path);
+                        await this.activateTab(target.path, false);
                         await this.revealInTree(target.path);
                     } else if (this._pendingActiveTab === null) {
                         mylog('_restoreSessionInner', 'no tabs to restore');
