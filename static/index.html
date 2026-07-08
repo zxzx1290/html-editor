@@ -675,6 +675,15 @@
             return 'utf8';
         }
 
+        // 比照 VSCode：檔頭 512 bytes 內出現 NUL(0x00) 即視為 binary，擋下不進文字編輯器。
+        // 帶 BOM 的 UTF-16 例外（開頭 FF FE / FE FF 之後常有 0x00，卻是合法文字）。
+        function seemsBinary(bytes) {
+            if (bytes.length >= 2 && ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF))) return false;
+            const n = Math.min(bytes.length, 512);
+            for (let i = 0; i < n; i++) if (bytes[i] === 0) return true;
+            return false;
+        }
+
         // bytes → 字串（依 id；utf8/utf16 會先剝掉 BOM）
         function decodeBytes(bytes, id) {
             if (id === 'utf8' || id === 'utf8bom') {
@@ -1816,7 +1825,7 @@
 
                 // ──── Tabs
 
-                async openFile(path, focusMonaco = true) {
+                async openFile(path, focusMonaco = true, forceText = false) {
                     mylog('openFile', path, 'focusMonaco=' + focusMonaco);
                     if (this.tabsList.find(t => t.path === path)) {
                         await this.activateTab(path, focusMonaco);
@@ -1840,6 +1849,16 @@
                                 const langId = detectLang(path);
                                 const wirePromise = ensureLangWired(langId);
                                 const bytes = await this.fetchBytes(path);
+                                if (!forceText && seemsBinary(bytes)) {
+                                    // 先釋放開檔鎖，確認框可能停留很久，且按下確認後要重新進入 openFile
+                                    openingPaths.delete(path);
+                                    const ok = await this.dlgConfirm(
+                                        `「${path}」看起來是二進位檔案，強制以文字開啟可能顯示亂碼、儲存時損毀內容。仍要開啟嗎？`,
+                                        { confirmText: '仍要開啟', cancelText: '取消', danger: true }
+                                    );
+                                    if (ok) await this.openFile(path, focusMonaco, true);
+                                    return;
+                                }
                                 const encoding = detectEncoding(bytes);
                                 const text = decodeBytes(bytes, encoding);
                                 await wirePromise;
