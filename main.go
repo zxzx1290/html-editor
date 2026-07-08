@@ -827,16 +827,25 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) clientIP(r *http.Request) string {
+	raw := ""
 	if s.config.TrustProxy {
 		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-			return strings.TrimSpace(strings.Split(forwarded, ",")[0])
+			raw = strings.TrimSpace(strings.Split(forwarded, ",")[0])
 		}
 	}
-	ip := r.RemoteAddr
-	if i := strings.LastIndex(ip, ":"); i >= 0 {
-		ip = ip[:i]
+	if raw == "" {
+		raw = r.RemoteAddr
+		if host, _, err := net.SplitHostPort(raw); err == nil {
+			raw = host
+		}
 	}
-	return ip
+	// net.ParseIP 在源頭確認 IP 合法：只接受合法 IPv4/IPv6 並輸出正規形式，
+	// 非法值（含 CR/LF、標頭注入字元）回傳 nil，untrusted X-Forwarded-For
+	// 無法流入 log 與通知信件。CWE-640。
+	if ip := net.ParseIP(raw); ip != nil {
+		return ip.String()
+	}
+	return "unknown"
 }
 
 func (s *server) isSecureRequest(r *http.Request) bool {
@@ -931,9 +940,22 @@ func (s *server) notifyLogin(event, username, ip, reason string) {
 	go s.sendLoginNotify(cfg, event, username, ip, reason)
 }
 
+// notifyStripCRLF removes CR/LF (and other control chars) from a substituted value so untrusted input (e.g. X-Forwarded-For ip) can't inject extra mail headers, recipients, or SMTP commands. CWE-640.
+func notifyStripCRLF(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func notifyExpand(tmpl string, vars map[string]string) string {
 	for k, v := range vars {
-		tmpl = strings.ReplaceAll(tmpl, "{"+k+"}", v)
+		tmpl = strings.ReplaceAll(tmpl, "{"+k+"}", notifyStripCRLF(v))
 	}
 	return tmpl
 }
