@@ -1207,12 +1207,13 @@
                 socket = new WebSocket(wsUrl);
 
                 socket.onopen = function () {
+                    const isReconnect = reconnectAttempt > 0;
                     reconnectAttempt = 0;
                     app.showToast('已上線');
                     app.tabsList.forEach(t => fileOnOpen(t.path));
                     if (app.canTerminal) wsSend({ type: 'term_list' });
-                    // loadTree 內會重新全量上報 watch_dirs，讓 server 端對齊。
-                    app.loadTree();
+                    if (isReconnect) app.loadTree();
+                    else app.reportWatchDirs();
                 };
 
                 socket.onmessage = function (event) {
@@ -1689,6 +1690,7 @@
                 // ──── File tree
 
                 async fetchDir(path) {
+                    mylog('fetchDir', path);
                     const url = path ? '/api/files?path=' + encodeURIComponent(path) : '/api/files';
                     const data = await this.api(url);
                     return data.files || [];
@@ -1934,6 +1936,7 @@
                 // 分頁點擊/雙擊開檔/新檔預設 focus；單擊樹節點（預覽）與 session 還原這類「不該搶焦點」的開檔傳 false，讓焦點留在原處（行動裝置上還可避免誤彈鍵盤）。
                 async activateTab(path, focusMonaco = true) {
                     if (this.activeTabPath === path) return;
+                    mylog('activateTab', path, 'focusMonaco=' + focusMonaco);
                     this.selectedPath = path;
                     this.selectedPaths = [path];
 
@@ -3537,7 +3540,6 @@
                         const target = this.tabsList.find(t => t.path === session.activeTab) || this.tabsList[0];
                         mylog('_restoreSessionInner', 'activating tab:', target.path);
                         await this.activateTab(target.path, false);
-                        await this.revealInTree(target.path);
                     } else if (this._pendingActiveTab === null) {
                         mylog('_restoreSessionInner', 'no tabs to restore');
                     }
