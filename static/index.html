@@ -1371,7 +1371,7 @@
                     clipboard: { items: [], mode: null },
                     isPasting: false,
                     selectedPaths: [],
-                    anchorPath: null,
+                    anchorPath: null, // shift-select 的範圍起點：上次單擊選的節點，shift-click 時從此到目前項整段選取
                     saveAsDlg: { visible: false, tree: [], selectedDir: '', filename: '', _resolve: null },
                     currentLangId: 'plaintext',
                     currentEncoding: 'utf8',
@@ -1387,6 +1387,8 @@
             computed: {
                 // 依搜尋關鍵字過濾「已展開」的樹節點（treeItems 本就只含展開中資料夾的子項）
                 visibleTreeItems() {
+                    if (!this.treeSearchOpen) return this.treeItems; // 關掉搜尋框即停用過濾（關鍵字保留）
+                    mylog('visibleTreeItems', 'filtering treeItems with query', this.treeSearchQuery);
                     const q = this.treeSearchQuery.trim().toLowerCase();
                     if (!q) return this.treeItems;
                     return this.treeItems.filter(t => t.name.toLowerCase().includes(q));
@@ -1439,6 +1441,13 @@
                         return s;
                     }
                     return '';
+                },
+            },
+
+            watch: {
+                // 關掉搜尋框即恢復完整樹，把目前選取節點捲入可見範圍
+                treeSearchOpen(open) {
+                    if (!open && this.selectedPath) this.scrollToTreeNode(this.selectedPath);
                 },
             },
 
@@ -1717,10 +1726,9 @@
 
                 toggleTreeSearch() {
                     this.treeSearchOpen = !this.treeSearchOpen;
+                    // 關掉時保留關鍵字，重新開啟即恢復上次過濾
                     if (this.treeSearchOpen) {
-                        this.$nextTick(() => this.$refs.treeSearchInput && this.$refs.treeSearchInput.focus());
-                    } else {
-                        this.treeSearchQuery = '';
+                        this.$nextTick(() => this.$refs.treeSearchInput && this.$refs.treeSearchInput.select());
                     }
                 },
 
@@ -1786,6 +1794,8 @@
                         this.selectedPath = item.path;
                         this.selectedPaths = [item.path];
                         this.anchorPath = item.path;
+                        // 一般單擊即關掉搜尋框停用過濾（保留關鍵字）：展開資料夾的子項才不會被過濾掉，點檔案也回到完整樹。捲入視野交給 treeSearchOpen 的 watcher
+                        this.treeSearchOpen = false;
                         if (item.isDir) {
                             if (expandingPaths.has(item.path)) return; // 展開中，忽略重複點擊
                             if (item.expanded) this.collapseDir(item);
@@ -1815,6 +1825,7 @@
                 selectTreeNode(path) {
                     this.selectedPath = path;
                     this.selectedPaths = [path];
+                    this.anchorPath = path; // 同步 shift-select 錨點，避免後續範圍選從舊節點算起
                     this.scrollToTreeNode(path);
                 },
 
@@ -2008,7 +2019,7 @@
                         try {
                             data.searchAbort.abort();
                         } catch (e) {
-                            myerr('search', 'abort failed', e);
+                            myerr('closeTab', 'search', 'abort failed', e);
                         }
                     }
                     if (data && data.model) data.model.dispose();
@@ -2784,11 +2795,13 @@
                 clipboardCutItems(items) {
                     this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'cut' };
                     this.showToast(items.length > 1 ? `已剪下 ${items.length} 個` : '已剪下：' + items[0].path.split('/').pop());
+                    mylog('clipboardCutItems', 'items', Vue.toRaw(this.clipboard));
                 },
 
                 clipboardCopyItems(items) {
                     this.clipboard = { items: items.map(i => ({ path: i.path, isDir: i.isDir })), mode: 'copy' };
                     this.showToast(items.length > 1 ? `已複製 ${items.length} 個` : '已複製：' + items[0].path.split('/').pop());
+                    mylog('clipboardCopyItems', 'items', Vue.toRaw(this.clipboard));
                 },
 
                 async duplicateItem(item) {
