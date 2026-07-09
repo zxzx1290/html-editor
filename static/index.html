@@ -414,6 +414,7 @@
         // wsSend / fileOnOpen / fileOnClose 的真正實作由 initWs 注入；先放 no-op，
         // 讓更早被呼叫的地方安全略過。
         let wsSend = () => {};
+        let wsClose = () => {};
         let fileOnOpen = () => {};
         let fileOnClose = () => {};
         // 開 / 關檔的單一入口：先做協作 WS 通知，再廣播給 plugin。
@@ -1173,6 +1174,7 @@
             mylog('initWs', 'init websocket');
             const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             let socket = null;
+            let closing = false;
             let dupCount = 0;
             // 斷線重連的遞增間隔（秒）：1 → 3 → 5 → 10 → 20 → 30，之後維持 30 上限。
             // 連線成功後 reconnectAttempt 歸零，下次斷線重新從 1 秒起算。
@@ -1182,6 +1184,12 @@
             wsSend = function (data) {
                 if (!socket || socket.readyState !== WebSocket.OPEN) return;
                 socket.send(JSON.stringify(data));
+            };
+
+            // 主動關閉（登出用）：標記故意關閉，讓 onclose 不再排重連。
+            wsClose = function () {
+                closing = true;
+                if (socket) socket.close();
             };
 
             fileOnOpen = function (path) {
@@ -1289,6 +1297,7 @@
 
                 socket.onclose = function (e) {
                     socket = null;
+                    if (closing) return;   // 故意關閉（登出），不重連
                     const base = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)];
                     reconnectAttempt++;
                     // 加上 ±20% jitter，錯開多客戶端在伺服器恢復瞬間同時重連（避免驚群效應）
@@ -3780,6 +3789,7 @@
                         myerr('doLogout', 'failed to clear session', err);
                         alert('clear session failed');
                     }
+                    wsClose();
                     window.location.href = '/logout';
                 },
             },
