@@ -292,6 +292,11 @@ button.btn:hover {
     background: var(--bg-button-secondary-hover);
 }
 
+button.btn.active {
+    background: var(--bg-button-secondary-hover);
+    border-color: var(--bg-button);
+}
+
 button.btn.primary {
     background: var(--bg-button);
     border-color: var(--bg-button);

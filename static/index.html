@@ -28,7 +28,17 @@
             <span>WORKSPACE
                 <template v-if="currentUser"> · <span style="font-weight:normal;text-transform:none;letter-spacing:0;color:var(--fg);">{{ currentUser }}</span></template>
             </span>
-            <button class="btn" @click="loadTree" title="重新整理" style="padding:2px 6px;"><i class="icon-refresh-cw"></i></button>
+            <div style="display:flex;gap:3px;">
+                <button class="btn" @click="toggleTreeSearch" :class="{ active: treeSearchOpen }" title="搜尋" style="padding:2px 6px;"><i class="icon-search"></i></button>
+                <button class="btn" @click="loadTree" title="重新整理" style="padding:2px 6px;"><i class="icon-refresh-cw"></i></button>
+            </div>
+        </div>
+        <div id="tree-search" v-if="treeSearchOpen" style="padding:4px 8px;position:relative;">
+            <input ref="treeSearchInput" v-model="treeSearchQuery" type="text" placeholder="過濾已展開的檔案/資料夾"
+                @keydown.esc="toggleTreeSearch"
+                style="width:100%;box-sizing:border-box;padding:3px 22px 3px 6px;font-size:12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:3px;" />
+            <button v-if="treeSearchQuery" @click="clearTreeSearch" title="清除"
+                style="position:absolute;right:12px;top:50%;transform:translateY(-50%);display:flex;padding:2px;background:none;border:none;color:var(--fg-dim);cursor:pointer;"><i class="icon-x"></i></button>
         </div>
         <div id="file-tree"
             :class="{ 'drag-active': treeDragActive, 'drop-over-root': treeDragActive && dropOverDir === '' }"
@@ -36,7 +46,7 @@
             @click="treeFocused = true" @contextmenu.prevent="onTreeContextMenu($event, null)"
             @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
             <div v-if="treeItems.length === 0 && editorReady" style="padding:10px;color:var(--fg-dim);font-style:italic;">(空，拖曳檔案到此或右鍵建立)</div>
-            <div v-for="item in treeItems" :key="item.path" class="tree-node" :class="{
+            <div v-for="item in visibleTreeItems" :key="item.path" class="tree-node" :class="{
                     active: selectedPaths.includes(item.path) && treeFocused,
                     'active-blur': selectedPaths.includes(item.path) && !treeFocused,
                     'drop-over': item.isDir && item.path === dropOverDir
@@ -1316,6 +1326,8 @@
                     sidebarCollapsed: false,
                     sidebarWidth: s.sidebarWidth,
                     treeItems: [],
+                    treeSearchOpen: false,
+                    treeSearchQuery: '',
                     selectedPath: null,
                     treeFocused: false,
                     treeDragActive: false,
@@ -1373,6 +1385,12 @@
             },
 
             computed: {
+                // 依搜尋關鍵字過濾「已展開」的樹節點（treeItems 本就只含展開中資料夾的子項）
+                visibleTreeItems() {
+                    const q = this.treeSearchQuery.trim().toLowerCase();
+                    if (!q) return this.treeItems;
+                    return this.treeItems.filter(t => t.name.toLowerCase().includes(q));
+                },
                 activeTab() {
                     return this.tabsList.find(t => t.path === this.activeTabPath) || null;
                 },
@@ -1692,6 +1710,20 @@
                     return seg;
                 },
 
+                clearTreeSearch() {
+                    this.treeSearchQuery = '';
+                    this.$refs.treeSearchInput && this.$refs.treeSearchInput.focus();
+                },
+
+                toggleTreeSearch() {
+                    this.treeSearchOpen = !this.treeSearchOpen;
+                    if (this.treeSearchOpen) {
+                        this.$nextTick(() => this.$refs.treeSearchInput && this.$refs.treeSearchInput.focus());
+                    } else {
+                        this.treeSearchQuery = '';
+                    }
+                },
+
                 async loadTree() {
                     mylog('loadTree', 'loading file tree');
                     try {
@@ -1777,6 +1809,13 @@
                 parentOf(path) {
                     const i = path.lastIndexOf('/');
                     return i >= 0 ? path.slice(0, i) : '';
+                },
+
+                // 單選某樹節點並捲入可見範圍
+                selectTreeNode(path) {
+                    this.selectedPath = path;
+                    this.selectedPaths = [path];
+                    this.scrollToTreeNode(path);
                 },
 
                 scrollToTreeNode(path) {
@@ -2690,9 +2729,7 @@
                             }
                         }
                         await this.refreshDir(parentDir);
-                        this.selectedPath = newPath;
-                        this.selectedPaths = [newPath];
-                        this.scrollToTreeNode(newPath);
+                        this.selectTreeNode(newPath);
                         this.showToast('已重新命名為：' + newName);
                     } catch (e) {
                         this.showError('重新命名失敗：' + e.message);
@@ -4017,7 +4054,12 @@
 
                     // 程式化聚焦編輯器（開檔/切頁籤）不會觸發 document click，treeFocused 會殘留
                     // true，導致在編輯器內按 Ctrl+C 被當成複製檔案。聚焦編輯器時直接清掉旗標。
-                    monacoEditor.onDidFocusEditorText(() => { this.treeFocused = false; });
+                    monacoEditor.onDidFocusEditorText(() => {
+                        mylog('monacoEditor', 'onDidFocusEditorText');
+                        this.treeFocused = false;
+                        // 樹的選取可能被建立副本等操作移到別的檔（如副本），聚焦編輯器時把樹游標拉回目前編輯的檔並捲入可見範圍
+                        if (this.activeTabPath) this.selectTreeNode(this.activeTabPath);
+                    });
 
                     // 一開始就載好語言清單，狀態列標籤即可直接顯示 alias（如 PHP）
                     this.loadLangList();
