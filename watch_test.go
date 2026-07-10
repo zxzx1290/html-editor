@@ -16,9 +16,7 @@ func TestWatchDirsDetectChange(t *testing.T) {
 		"u": {Workspace: dir},
 	}}, hub: newHub()}
 	c := &WsClient{username: "u", send: make(chan []byte, 8), hub: s.hub}
-	if !s.hub.register(c) {
-		t.Fatal("register failed")
-	}
+	s.hub.register(c)
 
 	// 監看根目錄；此時記下當前 mtime。
 	s.updateWatchDirs(c, []string{""})

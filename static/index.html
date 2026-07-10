@@ -1175,7 +1175,6 @@
             const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             let socket = null;
             let closing = false;
-            let dupCount = 0;
             // 斷線重連的遞增間隔（秒）：1 → 3 → 5 → 10 → 20 → 30，之後維持 30 上限。
             // 連線成功後 reconnectAttempt 歸零，下次斷線重新從 1 秒起算。
             const RECONNECT_DELAYS = [1, 3, 5, 10, 20, 30];
@@ -1233,16 +1232,13 @@
 
                     switch (msg.type) {
                         case 'error':
-                            if (msg.payload === 'duplicate connect') {
-                                dupCount++;
-                                app.showError('重複連線 #' + dupCount);
-                                if (dupCount > 2) window.location.href = '/logout?reason=duplicate_connect';
-                            }
+                            app.showError(msg.payload);
                             break;
                         case 'message':
                             app.showToast(msg.payload);
                             break;
                         case 'kick':
+                            wsClose();   // 先主動關 socket 並停重連，避免導頁被 beforeunload 擋住時 socket 殘留
                             window.location.href = '/logout?reason=kick';
                             break;
                         case 'same_file_open': {

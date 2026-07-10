@@ -103,99 +103,6 @@ type jwtClaims struct {
 	jwt.RegisteredClaims
 }
 
-// ─── Rate limiter (in-memory, resets on restart) ──────────────────────────────
-
-type rateLimiter struct {
-	mu          sync.Mutex
-	attempts    map[string][]time.Time
-	bans        map[string]time.Time
-	window      time.Duration
-	maxAttempts int
-	banDuration time.Duration
-}
-
-func newRateLimiter(window time.Duration, maxAttempts int, banDuration time.Duration) *rateLimiter {
-	return &rateLimiter{
-		attempts:    make(map[string][]time.Time),
-		bans:        make(map[string]time.Time),
-		window:      window,
-		maxAttempts: maxAttempts,
-		banDuration: banDuration,
-	}
-}
-
-func (rl *rateLimiter) isBlocked(ip string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	now := time.Now()
-	if expiry, ok := rl.bans[ip]; ok {
-		if now.Before(expiry) {
-			return true
-		}
-		delete(rl.bans, ip)
-		delete(rl.attempts, ip)
-	}
-	var recent []time.Time
-	for _, t := range rl.attempts[ip] {
-		if now.Sub(t) < rl.window {
-			recent = append(recent, t)
-		}
-	}
-	rl.attempts[ip] = recent
-	return len(recent) >= rl.maxAttempts
-}
-
-// record logs a failed attempt and returns true only when this attempt is the
-// one that newly triggers a ban (the transition into the blocked state), so
-// callers can notify exactly once rather than on every subsequent blocked hit.
-func (rl *rateLimiter) record(ip string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	now := time.Now()
-	alreadyBanned := false
-	if expiry, ok := rl.bans[ip]; ok && now.Before(expiry) {
-		alreadyBanned = true
-	}
-	rl.attempts[ip] = append(rl.attempts[ip], now)
-	var recent int
-	for _, t := range rl.attempts[ip] {
-		if now.Sub(t) < rl.window {
-			recent++
-		}
-	}
-	if recent >= rl.maxAttempts {
-		rl.bans[ip] = now.Add(rl.banDuration)
-		return !alreadyBanned
-	}
-	return false
-}
-
-// gc removes expired bans and stale attempts so the maps do not grow unbounded
-// for IPs that never return.
-func (rl *rateLimiter) gc() {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	now := time.Now()
-	for ip, expiry := range rl.bans {
-		if now.After(expiry) {
-			delete(rl.bans, ip)
-		}
-	}
-	for ip, ts := range rl.attempts {
-		var recent []time.Time
-		for _, t := range ts {
-			if now.Sub(t) < rl.window {
-				recent = append(recent, t)
-			}
-		}
-		if len(recent) == 0 {
-			delete(rl.attempts, ip)
-		} else {
-			rl.attempts[ip] = recent
-		}
-	}
-}
-
 // ─── TOTP replay guard ───────────────────────────────────────────────────────
 
 type totpReplay struct {
@@ -279,18 +186,19 @@ func fileKey(path, file string) string {
 	return path + "/" + file
 }
 
-func (h *Hub) register(c *WsClient) bool {
-	if c.username == "" {  // 匿名 → 拒絕
-		return false
-	}
+func (h *Hub) register(c *WsClient) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, exists := h.clients[c.username]; exists { // 同帳號已在線 → 拒絕
-		logf("[ws] register failed: user=%s already online\n", c.username)
-		return false
+	if old, exists := h.clients[c.username]; exists {
+		// 同帳號已在線：踢掉舊連線、接受新的（last-connection-wins）。
+		// 先送 kick 讓誠實客戶端自行 wsClose 離開；逾時仍在（惡意 hold 住、或持續自動回 pong 讓 read deadline 一直續命）就由 server 強制關閉，回收殘留 socket/goroutine。誠實客戶端此時早已自關，重複 Close 無害。
+		logf("[ws] replace online conn: user=%s\n", c.username)
+		kick, _ := json.Marshal(wsOutMsg{Type: "kick"})
+		safelySend(old.send, kick)
+		oldConn := old.conn
+		time.AfterFunc(3*time.Second, func() { oldConn.Close() })
 	}
 	h.clients[c.username] = c
-	return true
 }
 
 func (h *Hub) unregister(c *WsClient) {
@@ -480,6 +388,7 @@ type server struct {
 	jwtSecret      []byte
 	hub            *Hub
 	limiter        *rateLimiter
+	wsLimiter      *rateLimiter // 每使用者 WS 連線頻率限流（擋惡意反覆 connect→hold）
 	totpReplay     *totpReplay
 	tmux           *tmuxManager
 	searchInFlight sync.Map // map[username]struct{}：每位使用者同時只能 1 個搜尋
@@ -557,6 +466,9 @@ func main() {
 		jwtSecret:  secret,
 		hub:        newHub(),
 		limiter:    newRateLimiter(rlWindow, rlMax, rlBan),
+		// 誠實客戶端最壞約 6 次/分（重連退避 1,3,5,10,20,30s）＋重新整理，抓 20/分留足餘裕；
+		// 超過就 ban 5 分鐘。key 為 username（見 handleWs）。
+		wsLimiter:  newRateLimiter(time.Minute, 20, 5*time.Minute),
 		totpReplay: newTotpReplay(90 * time.Second),
 		tmux:       newTmuxManager(),
 	}
@@ -584,6 +496,7 @@ func main() {
 		defer t.Stop()
 		for range t.C {
 			s.limiter.gc()
+			s.wsLimiter.gc()
 		}
 	}()
 
@@ -1175,6 +1088,12 @@ var wsUpgrader = websocket.Upgrader{
 
 func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 	username, _ := r.Context().Value(ctxUsername).(string)
+	// 每使用者 WS 連線頻率限流：擋惡意反覆 connect→hold；在 Upgrade 前擋掉，被 ban 期間直接回 429，不浪費 handshake。
+	if s.wsLimiter.isBlocked(username) {
+		http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+		return
+	}
+	s.wsLimiter.record(username)
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -1187,13 +1106,7 @@ func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 		hub:      s.hub,
 	}
 
-	if !s.hub.register(client) {
-		s.hub.sendTo(username, wsOutMsg{Type: "error", Payload: "duplicate connect"})
-		data, _ := json.Marshal(wsOutMsg{Type: "error", Payload: "duplicate connect"})
-		conn.WriteMessage(websocket.TextMessage, data)
-		conn.Close()
-		return
-	}
+	s.hub.register(client)
 
 	logf("[ws] connect user=%s\n", username)
 	s.hub.broadcast(wsOutMsg{Type: "user_online", Payload: map[string]string{"user": username}}, username)
