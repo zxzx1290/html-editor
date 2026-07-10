@@ -32,7 +32,7 @@ func (m *tmuxManager) attach(client *WsClient, name string, cols, rows uint16) (
 
 func (m *tmuxManager) detach(name string) {}
 
-func (m *tmuxManager) detachAllForUser(user string) {}
+func (m *tmuxManager) detachForClient(c *WsClient) {}
 
 func (m *tmuxManager) resize(name string, cols, rows uint16) error {
 	return errors.New("tmux disabled")

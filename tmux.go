@@ -38,6 +38,7 @@ type tmuxManager struct {
 type tmuxAttach struct {
 	name      string
 	owner     string
+	client    *WsClient // 建立此 attach 的連線；detach 時據此比對，避免舊連線誤殺同帳號新連線的 attach
 	binary    string
 	pty       *os.File
 	cmd       *exec.Cmd
@@ -213,6 +214,7 @@ func (m *tmuxManager) attach(client *WsClient, name string, cols, rows uint16) (
 	a := &tmuxAttach{
 		name:   name,
 		owner:  client.username,
+		client: client,
 		binary: m.binary,
 		pty:    ptmx,
 		cmd:    cmd,
@@ -291,11 +293,13 @@ func (m *tmuxManager) detach(name string) {
 	logf("[tmux] detached session=%s\n", name)
 }
 
-func (m *tmuxManager) detachAllForUser(user string) {
+// detachForClient 只清掉「這條連線自己建立」的 attach。用連線身分（指標）而非 username
+// 比對：同帳號 last-connection-wins 換手時，舊連線斷線的清理不可誤殺新連線已建立的 attach。
+func (m *tmuxManager) detachForClient(c *WsClient) {
 	m.mu.Lock()
 	var victims []*tmuxAttach
 	for name, a := range m.attaches {
-		if a.owner == user {
+		if a.client == c {
 			victims = append(victims, a)
 			delete(m.attaches, name)
 		}
@@ -304,7 +308,7 @@ func (m *tmuxManager) detachAllForUser(user string) {
 	for _, v := range victims {
 		v.close()
 	}
-	logf("[tmux] detached all sessions for user=%s count=%d\n", user, len(victims))
+	logf("[tmux] detached sessions for user=%s count=%d\n", c.username, len(victims))
 }
 
 func (m *tmuxManager) resize(name string, cols, rows uint16) error {

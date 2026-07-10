@@ -565,7 +565,7 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
-	logf("html-editor shutting down...\n")
+	logf("[main] shutting down...\n")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1220,7 +1220,7 @@ func (s *server) pollWatchDirs(c *WsClient, seen map[string]time.Time) {
 
 func (c *WsClient) readPump(s *server) {
 	defer c.conn.Close()
-	defer s.tmux.detachAllForUser(c.username)
+	defer s.tmux.detachForClient(c)
 	defer s.hub.unregister(c)
 	defer logf("[ws] disconnect user=%s\n", c.username)
 
