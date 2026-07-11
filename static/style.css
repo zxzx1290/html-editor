@@ -173,6 +173,12 @@ body {
     color: var(--fg);
 }
 
+/* 目前開啟中的檔案（active tab）：即使選取移到別的節點（例如搜尋時展開它所在的資料夾），
+   仍在樹中標出它的位置。選取樣式優先，故僅在未被選取時顯示這個較淡的底色。 */
+.tree-node.open-file:not(.active):not(.active-blur) {
+    background: rgba(9, 71, 113, 0.2);
+}
+
 .tree-node .name {
     flex: 1;
     overflow: hidden;
