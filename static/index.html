@@ -209,6 +209,7 @@
                 }"
                 draggable="true"
                 @click="activateTab(tab.path)"
+                @auxclick.middle.prevent="closeTab(tab.path)"
                 @contextmenu.prevent.stop="onTabContextMenu($event, tab)"
                 @dragstart="onTabDragStart($event, tab)"
                 @dragover.prevent="onTabDragOver($event, tab)"
