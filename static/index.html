@@ -49,6 +49,7 @@
             <div v-for="item in visibleTreeItems" :key="item.path" class="tree-node" :class="{
                     active: selectedPaths.includes(item.path) && treeFocused,
                     'active-blur': selectedPaths.includes(item.path) && !treeFocused,
+                    'open-file': item.path === activeTabPath,
                     'drop-over': item.isDir && item.path === dropOverDir
                 }"
                 :style="{ paddingLeft: (8 + item.depth * 14) + 'px' }" :data-path="item.path"
@@ -1334,6 +1335,8 @@
                     treeItems: [],
                     treeSearchOpen: false,
                     treeSearchQuery: '',
+                    filterRevealedDirs: new Set(), // 過濾中被手動展開的資料夾路徑：其直接子項在過濾清單中照樣顯示；改關鍵字或關閉搜尋即清空
+
                     selectedPath: null,
                     treeFocused: false,
                     treeDragActive: false,
@@ -1397,7 +1400,9 @@
                     mylog('visibleTreeItems', 'filtering treeItems with query', this.treeSearchQuery);
                     const q = this.treeSearchQuery.trim().toLowerCase();
                     if (!q) return this.treeItems;
-                    return this.treeItems.filter(t => t.name.toLowerCase().includes(q));
+                    const revealed = this.filterRevealedDirs;
+                    // 名稱符合關鍵字，或其父資料夾是「過濾中被展開」的節點（讓鑽進去的子項照樣可見）
+                    return this.treeItems.filter(t => t.name.toLowerCase().includes(q) || revealed.has(this.parentOf(t.path)));
                 },
                 activeTab() {
                     return this.tabsList.find(t => t.path === this.activeTabPath) || null;
@@ -1451,9 +1456,18 @@
             },
 
             watch: {
-                // 關掉搜尋框即恢復完整樹，把目前選取節點捲入可見範圍
+                // 關掉搜尋框即恢復完整樹，清掉展開記錄，把目前選取節點捲入可見範圍
                 treeSearchOpen(open) {
-                    if (!open && this.selectedPath) this.scrollToTreeNode(this.selectedPath);
+                    mylog('treeSearchOpen', open);
+                    if (!open) {
+                        this.filterRevealedDirs.clear();
+                        if (this.selectedPath) this.scrollToTreeNode(this.selectedPath);
+                    }
+                },
+                // 改關鍵字視為新的一次搜尋：清掉先前手動展開的資料夾記錄，回到純關鍵字過濾
+                treeSearchQuery() {
+                    mylog('treeSearchQuery');
+                    this.filterRevealedDirs.clear();
                 },
             },
 
@@ -1801,15 +1815,19 @@
                         this.selectedPath = item.path;
                         this.selectedPaths = [item.path];
                         this.anchorPath = item.path;
-                        // 一般單擊即關掉搜尋框停用過濾（保留關鍵字）：展開資料夾的子項才不會被過濾掉，點檔案也回到完整樹。捲入視野交給 treeSearchOpen 的 watcher
-                        this.treeSearchOpen = false;
                         if (item.isDir) {
                             if (expandingPaths.has(item.path)) return; // 展開中，忽略重複點擊
-                            if (item.expanded) this.collapseDir(item);
-                            else await this.expandDir(item);
+                            if (item.expanded) {
+                                this.collapseDir(item);
+                                this.filterRevealedDirs.delete(item.path);
+                            } else {
+                                await this.expandDir(item);
+                                // 過濾中展開：記下此資料夾，讓其子項在過濾清單中照樣顯示（其餘不符關鍵字的仍隱藏），不會整棵樹攤開
+                                if (this.treeSearchOpen && this.treeSearchQuery.trim()) this.filterRevealedDirs.add(item.path);
+                            }
                         } else {
                             mylog('onNodeClick', item.path);
-                            // 單擊開啟但不搶焦點，讓鍵盤停在檔案樹可繼續上下瀏覽。
+                            // 點檔案保留過濾清單，方便連續點多個搜尋結果。單擊開啟但不搶焦點，讓鍵盤停在檔案樹可繼續上下瀏覽。
                             await this.openFile(item.path, false);
                         }
                     }

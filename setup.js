@@ -1,6 +1,12 @@
 const fs = require('fs');
 const esbuild = require('esbuild');
 
+// Vue 3 的 global build（掛成 window.Vue，供 index.html 以 <script> 直接引用）。
+// 用 dev 版保留 runtime 警告；正式部署想瘦身可改 dist/vue.global.prod.js。
+fs.copyFileSync('node_modules/vue/dist/vue.global.js', 'static/vue.global.js');
+console.log('Copied vue → static/vue.global.js');
+
+
 // Monaco Editor 的資源檔（包含核心程式碼、語言定義、編輯器主題等）。
 const src = 'node_modules/monaco-editor/min/vs';
 const dst = 'static/monaco/vs';
