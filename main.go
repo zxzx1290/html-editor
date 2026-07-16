@@ -192,7 +192,7 @@ func (h *Hub) register(c *WsClient) {
 	if old, exists := h.clients[c.username]; exists {
 		// 同帳號已在線：踢掉舊連線、接受新的（last-connection-wins）。
 		// 先送 kick 讓誠實客戶端自行 wsClose 離開；逾時仍在（惡意 hold 住、或持續自動回 pong 讓 read deadline 一直續命）就由 server 強制關閉，回收殘留 socket/goroutine。誠實客戶端此時早已自關，重複 Close 無害。
-		logf("[ws] replace online conn: user=%s\n", c.username)
+		logf("[ws] replace online connection user=%s", c.username)
 		kick, _ := json.Marshal(wsOutMsg{Type: "kick"})
 		safelySend(old.send, kick)
 		oldConn := old.conn
@@ -227,7 +227,7 @@ func (h *Hub) unregister(c *WsClient) {
 			}
 			if inList {
 				closedKeys = append(closedKeys, key)
-				logf("[ws] unregister_clear_file user=%s file=%s\n", c.username, key)
+				logf("[ws] unregister_clear_file user=%s file=%q", c.username, key)
 			}
 		}
 	}
@@ -414,17 +414,17 @@ func main() {
 
 	// 依 config 設定 log 輸出（fmt → stdout、syslog → 本機 syslog，tag=html-editor）。
 	if err := initLogging(cfg.LogMode, cfg.LogTag); err != nil {
-		logf("[log] fallback to stdout: %v\n", err)
+		logf("[log] fallback to stdout err=%v", err)
 	}
 
 	for username, userCfg := range cfg.Users {
 		abs, err := filepath.Abs(userCfg.Workspace)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "invalid workspace for user %s: %v\n", username, err)
+			fmt.Fprintf(os.Stderr, "[config] invalid workspace user=%s err=%v\n", username, err)
 			os.Exit(1)
 		}
 		if err := os.MkdirAll(abs, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to create workspace for user %s: %v\n", username, err)
+			fmt.Fprintf(os.Stderr, "[config] failed to create workspace user=%s err=%v\n", username, err)
 			os.Exit(1)
 		}
 	}
@@ -472,11 +472,11 @@ func main() {
 		totpReplay: newTotpReplay(90 * time.Second),
 		tmux:       newTmuxManager(),
 	}
-	logf("[config] %d user(s) loaded\n", len(cfg.Users))
+	logf("[config] %d user(s) loaded", len(cfg.Users))
 
 	// if notification is enabled, log it on startup
 	if cfg.LoginNotify != nil && cfg.LoginNotify.Host != "" {
-		logf("[config] login notifications enabled\n")
+		logf("[config] login notifications enabled")
 	}
 
 	// goroutines 數量可協助觀察 syscall 卡住時的洩漏狀況：
@@ -486,7 +486,7 @@ func main() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for range t.C {
-			logf("[status] ws_clients=%d watch_dirs=%d goroutines=%d\n", s.hub.clientCount(), s.hub.watchDirCount(), runtime.NumGoroutine())
+			logf("[status] ws_clients=%d watch_dirs=%d goroutines=%d", s.hub.clientCount(), s.hub.watchDirCount(), runtime.NumGoroutine())
 		}
 	}()
 
@@ -523,7 +523,7 @@ func main() {
 			}
 			// len(seen) = 本輪實際 stat 的唯一目錄數（去重後）。
 			if len(seen) > 0 {
-				// logf("[watch] tick observed %d unique dirs across %d clients\n", len(seen), len(clients))
+				// logf("[watch] tick observed %d unique dirs across %d clients", len(seen), len(clients))
 			}
 		}
 	}()
@@ -547,7 +547,7 @@ func main() {
 	mux.HandleFunc("/",             s.checkSession(s.handleIndex))
 
 	addr := fmt.Sprintf("%s:%d", host, port)
-	logf("[server] starting on %s\n", addr)
+	logf("[server] starting on %s", addr)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -565,12 +565,12 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
-	logf("[main] shutting down...\n")
+	logf("[main] shutting down...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err == nil {
-		logf("[http] shutdown complete\n")
+		logf("[http] shutdown complete")
 	} else {
 		fmt.Fprintln(os.Stderr, "http shutdown:", err)
 	}
@@ -585,7 +585,7 @@ func (s *server) checkSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := s.clientIP(r)
 		if s.limiter.isBlocked(ip) {
-			logf("[rate-limit] ip=%s blocked\n", ip)
+			logf("[rate-limit] blocked ip=%s", ip)
 			p := r.URL.Path
 			if strings.HasPrefix(p, "/api/") || p == "/check" {
 				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
@@ -602,7 +602,7 @@ func (s *server) checkSession(next http.HandlerFunc) http.HandlerFunc {
 		username, ok := s.validateSession(cookie.Value)
 		if !ok {
 			s.limiter.record(ip)
-			logf("[session] invalid token ip=%s\n", ip)
+			logf("[session] invalid token ip=%s", ip)
 			s.redirectOrUnauth(w, r, "expired")
 			return
 		}
@@ -716,7 +716,6 @@ func (s *server) extendSession(tokenStr string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	logf("[session] extending session for user=%s\n", username)
 	return s.newSession(username), true
 }
 
@@ -777,13 +776,13 @@ var validUsernameRe = regexp.MustCompile(`^[A-Za-z0-9]{1,16}$`)
 func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
 	if s.limiter.isBlocked(ip) {
-		logf("[login] ip=%s blocked\n", ip)
+		logf("[login] blocked ip=%s", ip)
 		http.Redirect(w, r, "/login?reason=blocked", http.StatusFound)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
-		logf("[login] failed to parse form ip=%s\n", ip)
+		logf("[login] failed to parse form ip=%s", ip)
 		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
 		return
 	}
@@ -793,7 +792,7 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 		// 格式不合的帳號不可能是合法使用者，直接擋下並計入速率限制，
 		// 避免惡意字元（換行、標頭注入等）流入通知信件與 log
 		s.limiter.record(ip)
-		logf("[login] invalid username format ip=%s\n", ip)
+		logf("[login] invalid username ip=%s", ip)
 		http.Redirect(w, r, "/login?reason=invalid", http.StatusFound)
 		return
 	}
@@ -806,7 +805,7 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	valid := totp.Validate(code, secret)
 	if !ok || !valid {
 		justBanned := s.limiter.record(ip)
-		logf("[login] invalid credentials ip=%s\n", ip)
+		logf("[login] invalid credentials ip=%s", ip)
 		if justBanned {
 			s.notifyLogin("failure", username, ip, "blocked")
 		} else {
@@ -817,7 +816,7 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.totpReplay.checkAndRecord(username, code) {
 		justBanned := s.limiter.record(ip)
-		logf("[login] totp replay user=%s ip=%s\n", username, ip)
+		logf("[login] totp replay user=%s ip=%s", username, ip)
 		if justBanned {
 			s.notifyLogin("failure", username, ip, "blocked")
 		} else {
@@ -831,7 +830,7 @@ func (s *server) processLogin(w http.ResponseWriter, r *http.Request) {
 		Name: "editorToken", Value: token, MaxAge: int(s.sessionTTL().Seconds()),
 		Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.isSecureRequest(r),
 	})
-	logf("[login] user=%s ip=%s\n", username, ip)
+	logf("[login] user=%s ip=%s", username, ip)
 	s.notifyLogin("success", username, ip, "")
 	http.Redirect(w, r, "/", http.StatusFound)
 }
@@ -898,7 +897,7 @@ func (s *server) sendLoginNotify(cfg *LoginNotifyConfig, event, username, ip, re
 	from := notifyExpand(cfg.From, vars)
 	rcpts := notifySplitAddrs(notifyExpand(cfg.To, vars))
 	if from == "" || len(rcpts) == 0 {
-		logf("[notify] missing from/to; skip event=%s user=%s\n", event, username)
+		logf("[notify] missing from/to; skip event=%s user=%s", event, username)
 		return
 	}
 
@@ -918,10 +917,10 @@ func (s *server) sendLoginNotify(cfg *LoginNotifyConfig, event, username, ip, re
 	}
 
 	if err := notifySMTPSend(net.JoinHostPort(cfg.Host, strconv.Itoa(port)), cfg.Host, mode, timeout, auth, from, rcpts, msg); err != nil {
-		logf("[notify] send failed event=%s user=%s: %v\n", event, username, err)
+		logf("[notify] send failed event=%s user=%s err=%v", event, username, err)
 		return
 	}
-	logf("[notify] sent event=%s user=%s to=%s\n", event, username, strings.Join(rcpts, ","))
+	logf("[notify] sent event=%s user=%s to=%s", event, username, strings.Join(rcpts, ","))
 }
 
 // notifySplitAddrs splits a comma/semicolon/space separated address list.
@@ -1011,7 +1010,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	default:
 		reason = "manual"
 	}
-	logf("[logout] user=%s ip=%s reason=%s\n", username, s.clientIP(r), reason)
+	logf("[logout] user=%s ip=%s reason=%s", username, s.clientIP(r), reason)
 	http.SetCookie(w, &http.Cookie{
 		Name: "editorToken", Value: "", MaxAge: -1, Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: s.isSecureRequest(r),
@@ -1045,7 +1044,7 @@ func (s *server) handleCheck(w http.ResponseWriter, r *http.Request) {
 			})
 			ttl = int64(s.sessionTTL() / time.Second)
 			extended = true
-			logf("[session] extended user=%s\n", claims.Username)
+			logf("[session] extended user=%s", claims.Username)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": ttl, "extended": extended})
@@ -1108,7 +1107,7 @@ func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 
 	s.hub.register(client)
 
-	logf("[ws] connect user=%s\n", username)
+	logf("[ws] connect user=%s", username)
 	s.hub.broadcast(wsOutMsg{Type: "user_online", Payload: map[string]string{"user": username}}, username)
 	go client.writePump()
 	client.readPump(s)
@@ -1202,7 +1201,7 @@ func (s *server) pollWatchDirs(c *WsClient, seen map[string]time.Time) {
 			seen[abs] = mt
 		}
 		if mt.IsZero() { // stat 失敗（真實目錄 mtime 不可能是零值）
-			logf("[watch] stat_failed user=%s path=%s\n", c.username, rel)
+			logf("[watch] stat_failed user=%s path=%q", c.username, rel)
 			continue
 		}
 		c.watchMu.Lock()
@@ -1222,7 +1221,7 @@ func (c *WsClient) readPump(s *server) {
 	defer c.conn.Close()
 	defer s.tmux.detachForClient(c)
 	defer s.hub.unregister(c)
-	defer logf("[ws] disconnect user=%s\n", c.username)
+	defer logf("[ws] disconnect user=%s", c.username)
 
 	c.conn.SetReadLimit(wsMaxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
@@ -1235,13 +1234,13 @@ func (c *WsClient) readPump(s *server) {
 		_, data, err := c.conn.ReadMessage()
 		if err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
-				logf("[ws] read_error user=%s err=%v\n", c.username, err)
+				logf("[ws] read_error user=%s err=%v", c.username, err)
 			}
 			break
 		}
 		var msg wsInMsg
 		if err := json.Unmarshal(data, &msg); err != nil {
-			logf("[ws] bad_json user=%s err=%v\n", c.username, err)
+			logf("[ws] bad_json user=%s err=%v", c.username, err)
 			continue
 		}
 
@@ -1252,13 +1251,13 @@ func (c *WsClient) readPump(s *server) {
 				File string `json:"file"`
 			}
 			if err := json.Unmarshal(msg.Payload, &p); err != nil {
-				logf("[ws] file_on_open bad_payload user=%s err=%v\n", c.username, err)
+				logf("[ws] file_on_open bad_payload user=%s err=%v", c.username, err)
 				continue
 			}
-			logf("[ws] file_on_open user=%s path=%s file=%s\n", c.username, p.Path, p.File)
+			logf("[ws] file_on_open user=%s path=%q file=%q", c.username, p.Path, p.File)
 			others := s.hub.fileOpen(c.username, p.Path, p.File)
 			for _, u := range others {
-				logf("[ws] same_file_open path=%s file=%s opener=%s existing=%s\n", p.Path, p.File, c.username, u)
+				logf("[ws] same_file_open path=%q file=%q opener=%s existing=%s", p.Path, p.File, c.username, u)
 				s.hub.sendTo(c.username, wsOutMsg{Type: "same_file_open", Payload: map[string]string{
 					"user": u, "path": p.Path, "file": p.File,
 				}})
@@ -1276,10 +1275,10 @@ func (c *WsClient) readPump(s *server) {
 				File string `json:"file"`
 			}
 			if err := json.Unmarshal(msg.Payload, &p); err != nil {
-				logf("[ws] file_on_close bad_payload user=%s err=%v\n", c.username, err)
+				logf("[ws] file_on_close bad_payload user=%s err=%v", c.username, err)
 				continue
 			}
-			logf("[ws] file_on_close user=%s path=%s file=%s\n", c.username, p.Path, p.File)
+			logf("[ws] file_on_close user=%s path=%q file=%q", c.username, p.Path, p.File)
 			s.hub.fileClose(c.username, p.Path, p.File)
 			s.hub.broadcast(wsOutMsg{Type: "file_closed", Payload: map[string]string{
 				"user": c.username, "path": p.Path, "file": p.File,
@@ -1290,7 +1289,7 @@ func (c *WsClient) readPump(s *server) {
 				Paths []string `json:"paths"`
 			}
 			if err := json.Unmarshal(msg.Payload, &p); err != nil {
-				logf("[ws] watch_dirs bad_payload user=%s err=%v\n", c.username, err)
+				logf("[ws] watch_dirs bad_payload user=%s err=%v", c.username, err)
 				continue
 			}
 			s.updateWatchDirs(c, p.Paths)
@@ -1301,7 +1300,7 @@ func (c *WsClient) readPump(s *server) {
 			}
 			names, err := s.tmux.listSessions(c.username)
 			if err != nil {
-				logf("[ws] term_list err user=%s err=%v\n", c.username, err)
+				logf("[ws] term_list err user=%s err=%v", c.username, err)
 				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_list: " + err.Error()})
 				continue
 			}
@@ -1322,17 +1321,17 @@ func (c *WsClient) readPump(s *server) {
 			_ = json.Unmarshal(msg.Payload, &p)
 			name, err := s.tmux.createSession(c.username, p.Cols, p.Rows)
 			if err != nil {
-				logf("[ws] term_open create_err user=%s err=%v\n", c.username, err)
+				logf("[ws] term_open create_err user=%s err=%v", c.username, err)
 				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_open: " + err.Error()})
 				continue
 			}
 			if _, err := s.tmux.attach(c, name, p.Cols, p.Rows); err != nil {
-				logf("[ws] term_open attach_err user=%s name=%s err=%v\n", c.username, name, err)
+				logf("[ws] term_open attach_err user=%s name=%s err=%v", c.username, name, err)
 				_ = s.tmux.kill(name)
 				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_open attach: " + err.Error()})
 				continue
 			}
-			logf("[ws] term_open user=%s name=%s\n", c.username, name)
+			logf("[ws] term_open user=%s name=%s", c.username, name)
 			s.hub.sendTo(c.username, wsOutMsg{Type: "term_opened", Payload: map[string]string{"name": name}})
 
 		case "term_attach":
@@ -1345,14 +1344,15 @@ func (c *WsClient) readPump(s *server) {
 				Rows uint16 `json:"rows"`
 			}
 			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				logf("[ws] term_attach bad_payload user=%s err=%v", c.username, err)
 				continue
 			}
 			if _, err := s.tmux.attach(c, p.Name, p.Cols, p.Rows); err != nil {
-				logf("[ws] term_attach err user=%s name=%s err=%v\n", c.username, p.Name, err)
+				logf("[ws] term_attach err user=%s err=%v", c.username, err)
 				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_attach: " + err.Error()})
 				continue
 			}
-			logf("[ws] term_attach user=%s name=%s\n", c.username, p.Name)
+			logf("[ws] term_attach user=%s name=%s", c.username, p.Name)
 			s.hub.sendTo(c.username, wsOutMsg{Type: "term_opened", Payload: map[string]string{"name": p.Name}})
 
 		case "term_input":
@@ -1364,14 +1364,16 @@ func (c *WsClient) readPump(s *server) {
 				Data string `json:"data"`
 			}
 			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				logf("[ws] term_input bad_payload user=%s err=%v", c.username, err)
 				continue
 			}
 			raw, err := base64.StdEncoding.DecodeString(p.Data)
 			if err != nil {
+				logf("[ws] term_input decode_err user=%s err=%v", c.username, err)
 				continue
 			}
 			if err := s.tmux.write(p.Name, raw); err != nil {
-				logf("[ws] term_input err user=%s name=%s err=%v\n", c.username, p.Name, err)
+				logf("[ws] term_input err user=%s err=%v", c.username, err)
 			}
 
 		case "term_resize":
@@ -1384,10 +1386,11 @@ func (c *WsClient) readPump(s *server) {
 				Rows uint16 `json:"rows"`
 			}
 			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				logf("[ws] term_resize bad_payload user=%s err=%v", c.username, err)
 				continue
 			}
 			if err := s.tmux.resize(p.Name, p.Cols, p.Rows); err != nil {
-				logf("[ws] term_resize err user=%s name=%s err=%v\n", c.username, p.Name, err)
+				logf("[ws] term_resize err user=%s err=%v", c.username, err)
 			}
 
 		case "term_kill":
@@ -1398,6 +1401,7 @@ func (c *WsClient) readPump(s *server) {
 				Name string `json:"name"`
 			}
 			if err := json.Unmarshal(msg.Payload, &p); err != nil {
+				logf("[ws] term_kill bad_payload user=%s err=%v", c.username, err)
 				continue
 			}
 			if !strings.HasPrefix(p.Name, c.username+"-") {
@@ -1406,15 +1410,15 @@ func (c *WsClient) readPump(s *server) {
 			}
 			s.tmux.detach(p.Name)
 			if err := s.tmux.kill(p.Name); err != nil {
-				logf("[ws] term_kill err user=%s name=%s err=%v\n", c.username, p.Name, err)
+				logf("[ws] term_kill err user=%s err=%v", c.username, err)
 				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_kill: " + err.Error()})
 				continue
 			}
-			logf("[ws] term_kill user=%s name=%s\n", c.username, p.Name)
+			logf("[ws] term_kill user=%s name=%s", c.username, p.Name)
 			s.hub.sendTo(c.username, wsOutMsg{Type: "term_closed", Payload: map[string]string{"name": p.Name}})
 
 		default:
-			logf("[ws] unknown_type user=%s type=%s\n", c.username, msg.Type)
+			logf("[ws] unknown_type user=%s type=%q", c.username, msg.Type)
 		}
 	}
 }
@@ -1580,7 +1584,7 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "is a directory")
 		return
 	}
-	logf("[file-open] user=%s %s\n", usernameFromCtx(r), rel)
+	logf("[file-open] user=%s path=%q", usernameFromCtx(r), rel)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
@@ -1618,7 +1622,7 @@ func (s *server) writeFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	logf("[file-save] user=%s %s\n", usernameFromCtx(r), rel)
+	logf("[file-save] user=%s path=%q", usernameFromCtx(r), rel)
 	writeOK(w)
 }
 
@@ -1658,7 +1662,7 @@ func (s *server) deleteFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	logf("[file-del] user=%s %s\n", usernameFromCtx(r), rel)
+	logf("[file-del] user=%s path=%q", usernameFromCtx(r), rel)
 	writeOK(w)
 }
 
@@ -1714,7 +1718,7 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel, _ := filepath.Rel(ws, dstResolved)
-	logf("[file-upload] user=%s %s\n", usernameFromCtx(r), filepath.ToSlash(rel))
+	logf("[file-upload] user=%s path=%q", usernameFromCtx(r), filepath.ToSlash(rel))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": filepath.ToSlash(rel)})
 }
 
@@ -1808,11 +1812,11 @@ func (s *server) downloadDirAsZip(w http.ResponseWriter, r *http.Request, dir st
 	})
 	switch {
 	case errors.Is(walkErr, errZipTooManyFiles):
-		logf("[zip] reject user=%s path=%s reason=too_many_files\n", usernameFromCtx(r), filepath.Base(dir))
+		logf("[zip] reject reason=too_many_files user=%s path=%q", usernameFromCtx(r), filepath.Base(dir))
 		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("too many files (limit %d)", zipMaxFileCount))
 		return
 	case errors.Is(walkErr, errZipTooLarge):
-		logf("[zip] reject user=%s path=%s reason=too_large\n", usernameFromCtx(r), filepath.Base(dir))
+		logf("[zip] reject reason=too_large user=%s path=%q", usernameFromCtx(r), filepath.Base(dir))
 		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("total size exceeds limit %d bytes", zipMaxTotalSize))
 		return
 	case errors.Is(walkErr, context.Canceled), errors.Is(walkErr, context.DeadlineExceeded):
@@ -1880,14 +1884,14 @@ func (s *server) downloadDirAsZip(w http.ResponseWriter, r *http.Request, dir st
 	})
 	// header 已送出，中途失敗只能中斷連線；client 端會拿到一個壞掉的 zip。
 	if writeErr != nil {
-		logf("[zip] err user=%s path=%s err=%v\n", usernameFromCtx(r), filepath.Base(dir), writeErr)
+		logf("[zip] err user=%s path=%q err=%v", usernameFromCtx(r), filepath.Base(dir), writeErr)
 		return
 	}
 	if err := zw.Close(); err != nil {
-		logf("[zip] err user=%s path=%s err=%v\n", usernameFromCtx(r), filepath.Base(dir), err)
+		logf("[zip] err user=%s path=%q err=%v", usernameFromCtx(r), filepath.Base(dir), err)
 		return
 	}
-	logf("[zip] ok user=%s path=%s files=%d size=%d\n", usernameFromCtx(r), filepath.Base(dir), fileCount, totalSize)
+	logf("[zip] ok user=%s path=%q files=%d size=%d", usernameFromCtx(r), filepath.Base(dir), fileCount, totalSize)
 }
 
 func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
@@ -1949,7 +1953,7 @@ func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
 	}
 	relTo, _ := filepath.Rel(ws, absTo)
 	relTo = filepath.ToSlash(relTo)
-	logf("[file-rename] user=%s %s -> %s\n", usernameFromCtx(r), from, relTo)
+	logf("[file-rename] user=%s from=%q to=%q", usernameFromCtx(r), from, relTo)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "to": relTo})
 }
 
@@ -1980,7 +1984,7 @@ func (s *server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	logf("[file-mkdir] user=%s %s\n", usernameFromCtx(r), rel)
+	logf("[file-mkdir] user=%s path=%q", usernameFromCtx(r), rel)
 	writeOK(w)
 }
 
@@ -2022,7 +2026,7 @@ func (s *server) handleCopy(w http.ResponseWriter, r *http.Request) {
 	}
 	relTo, _ := filepath.Rel(ws, absTo)
 	relTo = filepath.ToSlash(relTo)
-	logf("[file-copy] user=%s %s -> %s\n", usernameFromCtx(r), from, relTo)
+	logf("[file-copy] user=%s from=%q to=%q", usernameFromCtx(r), from, relTo)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": relTo})
 }
 
@@ -2132,6 +2136,7 @@ func stripCtrl(s string) string {
 }
 
 func logf(format string, args ...any) {
+	format += "\n"
 	for i, a := range args {
 		switch v := a.(type) {
 		case string:
@@ -2410,7 +2415,7 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		Timeout:      timedOut,
 	})
 
-	logf("[search] user=%s root=%s q=%q matches=%d files_matched=%d files_scanned=%d elapsed=%dms truncated=%v\n",
+	logf("[search] user=%s root=%q q=%q matches=%d files_matched=%d files_scanned=%d elapsed=%dms truncated=%v",
 		user, root, keyword, totalMatches, filesMatched, filesScanned, time.Since(start).Milliseconds(), truncated)
 }
 

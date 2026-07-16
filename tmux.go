@@ -26,7 +26,8 @@ const (
 	maxTermRows = 1000
 )
 
-var sessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+// session name 固定為 createSession 產的 <user>-<6碼小寫base32>。
+var sessionNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+-[a-z0-9]{6}$`)
 
 type tmuxManager struct {
 	mu       sync.Mutex
@@ -50,12 +51,12 @@ func newTmuxManager() *tmuxManager {
 	m := &tmuxManager{attaches: make(map[string]*tmuxAttach)}
 	bin, err := exec.LookPath("tmux")
 	if err != nil {
-		logf("[tmux] disabled (tmux binary not found in PATH)\n")
+		logf("[tmux] disabled reason=binary_not_found")
 		return m
 	}
 	m.binary = bin
 	m.enabled = true
-	logf("[tmux] enabled socket=%s binary=%s os=%s\n", tmuxSocketName, bin, runtime.GOOS)
+	logf("[tmux] enabled socket=%s binary=%q os=%s", tmuxSocketName, bin, runtime.GOOS)
 	return m
 }
 
@@ -158,7 +159,7 @@ func (m *tmuxManager) createSession(user string, cols, rows uint16) (string, err
 	if out, err := c.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("tmux new-session: %v: %s", err, string(out))
 	}
-	logf("[tmux] created user=%s session=%s\n", user, name)
+	logf("[tmux] created user=%s session=%s", user, name)
 	return name, nil
 }
 
@@ -174,7 +175,7 @@ func (m *tmuxManager) kill(name string) error {
 	if out, err := c.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux kill-session: %v: %s", err, string(out))
 	}
-	logf("[tmux] killed session=%s\n", name)
+	logf("[tmux] killed session=%s", name)
 	return nil
 }
 
@@ -224,7 +225,7 @@ func (m *tmuxManager) attach(client *WsClient, name string, cols, rows uint16) (
 	m.mu.Unlock()
 
 	go m.pump(a)
-	logf("[tmux] attached user=%s session=%s pid=%d\n", client.username, name, cmd.Process.Pid) // pid 是 attach 進程的，不是 tmux session 的
+	logf("[tmux] attached user=%s session=%s pid=%d", client.username, name, cmd.Process.Pid) // pid 是 attach 進程的，不是 tmux session 的
 	return a, nil
 }
 
@@ -242,7 +243,7 @@ func (m *tmuxManager) pump(a *tmuxAttach) {
 		if err != nil {
 			// EOF 與 fs.ErrClosed 都是 PTY 正常關閉（exit / detach / kill），不必 log
 			if err != io.EOF && !errors.Is(err, os.ErrClosed) {
-				logf("[tmux] pump_read_err session=%s err=%v\n", a.name, err)
+				logf("[tmux] pump_read_err session=%s err=%v", a.name, err)
 			}
 			break
 		}
@@ -262,7 +263,7 @@ func (m *tmuxManager) pump(a *tmuxAttach) {
 			Type:    "term_closed",
 			Payload: map[string]string{"name": a.name},
 		})
-		logf("[tmux] pump_exit session=%s reason=session_gone\n", a.name)
+		logf("[tmux] pump_exit session=%s reason=session_gone", a.name)
 	}
 }
 
@@ -290,7 +291,7 @@ func (m *tmuxManager) detach(name string) {
 	if ok {
 		a.close()
 	}
-	logf("[tmux] detached session=%s\n", name)
+	logf("[tmux] detached session=%s", name)
 }
 
 // detachForClient 只清掉「這條連線自己建立」的 attach。用連線身分（指標）而非 username
@@ -308,7 +309,7 @@ func (m *tmuxManager) detachForClient(c *WsClient) {
 	for _, v := range victims {
 		v.close()
 	}
-	logf("[tmux] detached sessions for user=%s count=%d\n", c.username, len(victims))
+	logf("[tmux] detach_all user=%s count=%d", c.username, len(victims))
 }
 
 func (m *tmuxManager) resize(name string, cols, rows uint16) error {
@@ -346,7 +347,7 @@ func (m *tmuxManager) shutdown() {
 	}
 	// Give pump goroutines a moment to drain.
 	time.Sleep(50 * time.Millisecond)
-	logf("[tmux] shutdown complete\n")
+	logf("[tmux] shutdown_complete")
 }
 
 func isValidUsernamePart(u string) bool {

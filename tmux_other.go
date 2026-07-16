@@ -14,7 +14,7 @@ type tmuxManager struct {
 type tmuxAttach struct{}
 
 func newTmuxManager() *tmuxManager {
-	logf("[tmux] disabled (unsupported OS=%s)\n", runtime.GOOS)
+	logf("[tmux] disabled reason=unsupported_os os=%s", runtime.GOOS)
 	return &tmuxManager{enabled: false}
 }
 
