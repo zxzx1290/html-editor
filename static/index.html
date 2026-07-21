@@ -248,6 +248,8 @@
                 @click.stop="openIndentMenu" title="選取縮排">{{ indentLabel }}</span>
             <span class="status-enc" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTab.isAnonymous"
                 @click.stop="openEncodingMenu" title="選取編碼">{{ currentEncodingLabel }}</span>
+            <span class="status-eol" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal"
+                @click.stop="openEolMenu" title="選取行尾序列">{{ currentEol }}</span>
             <span class="status-lang" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal"
                 @click.stop="openLangPicker" title="選擇語法高亮語言">{{ currentLangLabel }}</span>
         </div>
@@ -1374,6 +1376,7 @@
                     toasts: [],
                     ctxMenu: { visible: false, x: 0, y: 0, items: [] },
                     indentInfo: null, // { insertSpaces, tabSize, indentSize }，來自當前 model.getOptions()
+                    currentEol: 'LF', // 狀態列行尾序列，來自 model.getEndOfLineSequence()
                     imagePreviewSrc: '',
                     editorReady: false,
                     uploads: [],
@@ -1633,6 +1636,28 @@
                         { label: '將縮排轉換成空格', action: () => runAction('editor.action.indentationToSpaces') },
                         { label: '將縮排轉換成 Tab', action: () => runAction('editor.action.indentationToTabs') },
                     ]);
+                },
+
+                // ──── EOL（比照 VSCode：點狀態列 LF/CRLF → 切換整份文件的行尾序列）
+                refreshEolInfo() {
+                    const m = monacoEditor && monacoEditor.getModel();
+                    this.currentEol = m && m.getEndOfLineSequence() === 1 ? 'CRLF' : 'LF';
+                },
+                openEolMenu(e) {
+                    const m = monacoEditor && monacoEditor.getModel();
+                    if (!m) return;
+                    this.showCtxMenu(e.clientX, e.clientY, ['LF', 'CRLF'].map(eol => ({
+                        label: (eol === this.currentEol ? '● ' : '   ') + eol,
+                        action: () => this.setEol(eol),
+                    })));
+                },
+                setEol(eol) {
+                    const m = monacoEditor && monacoEditor.getModel();
+                    if (!m || eol === this.currentEol) return;
+                    // pushEOL 而非 setEOL：進 undo stack，且會標記 dirty（存檔用 getValue() 會套用新 EOL）
+                    m.pushEOL(eol === 'CRLF' ? 1 : 0);
+                    this.refreshEolInfo();
+                    updateEolDecorations();
                 },
 
                 // ──── Encoding（比照 VSCode：點狀態列編碼 → 以該編碼重新開檔；之後存檔也用該編碼）
@@ -4157,6 +4182,7 @@
                         updateEolDecorations();
                         this.refreshCurrentLang();
                         this.refreshIndentInfo();
+                        this.refreshEolInfo();
                         // 新 model 的預設是 enabled:true，切到它時把目前設定補套上，避免一閃
                         const m = monacoEditor.getModel();
                         if (m) m.updateOptions({ bracketColorizationOptions: {
