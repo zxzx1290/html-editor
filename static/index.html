@@ -381,7 +381,7 @@
         const openingPaths = new Map(); // path -> focusMonaco（開檔併發鎖；值可被稍後的雙擊改成 true 以要求聚焦）
         const expandingPaths = new Set(); // 目錄正在展開中（避免快速重複點擊造成 state 不一致／重複 request）
         const uploadXhrs = new Map(); // upload id → XMLHttpRequest（供取消用，存在 Vue 響應式之外）
-        const UPLOAD_CONCURRENCY = 3; // 上傳併行上限
+        const UPLOAD_CONCURRENCY = 2; // 上傳併行上限
         // xterm instances stored outside Vue reactivity. name → { term, fitAddon, paneEl, name }
         const termInstances = new Map();
         const termPathPrefix = 'tmux://';
@@ -2703,7 +2703,8 @@
                             );
                             if (!ok) continue;
                         }
-                        const entry = { id: Date.now() + Math.random(), name: f.name, progress: 0, error: false, status: 'queued', canceled: false };
+                        // reactive()：entry 本身即 proxy，改 progress/status 才會觸發重繪
+                        const entry = Vue.reactive({ id: Date.now() + Math.random(), name: f.name, progress: 0, error: false, status: 'queued', canceled: false });
                         this.uploads.push(entry);
                         tasks.push({ file: f, entry });
                     }
@@ -2719,6 +2720,7 @@
                             if (t.entry.canceled) continue;
                             try {
                                 await this.uploadFile(t.file, targetDir, t.entry);
+                                mylog('uploadFiles', 'uploaded', t.file.name, 'to', targetDir);
                                 successCount++;
                                 lastSuccessPath = targetDir ? targetDir + '/' + t.file.name : t.file.name;
                             } catch (e) {
