@@ -20,7 +20,7 @@
         </circle>
     </svg>
 </div>
-<div id="app" v-cloak>
+<div id="app">
     <div id="sidebar-backdrop" :class="{ visible: !sidebarCollapsed }" @click="sidebarCollapsed = true"></div>
     <aside id="sidebar" :class="{ collapsed: sidebarCollapsed }"
         :style="{ width: sidebarWidth + 'px', flex: '0 0 ' + sidebarWidth + 'px', marginLeft: sidebarCollapsed ? (-sidebarWidth) + 'px' : null }">

@@ -57,10 +57,6 @@ body {
     overflow: hidden;
 }
 
-[v-cloak] {
-    display: none;
-}
-
 #app {
     display: flex;
     /* 100dvh：手機瀏覽器 UI chrome 動態高度，避免底部 statusbar 被網址列遮住 */
@@ -769,7 +765,7 @@ button.btn:disabled {
     border: 1px solid var(--border);
     border-radius: 4px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-    z-index: 10000;
+    z-index: 1000;
     display: flex;
     flex-direction: column;
 }
