@@ -30,19 +30,19 @@ func (m *tmuxManager) attach(client *WsClient, name string, cols, rows uint16) (
 	return nil, errors.New("tmux disabled")
 }
 
-func (m *tmuxManager) detach(name string) {}
+func (m *tmuxManager) detach(user, name string) {}
 
 func (m *tmuxManager) detachForClient(c *WsClient) {}
 
-func (m *tmuxManager) resize(name string, cols, rows uint16) error {
+func (m *tmuxManager) resize(user, name string, cols, rows uint16) error {
 	return errors.New("tmux disabled")
 }
 
-func (m *tmuxManager) write(name string, data []byte) error {
+func (m *tmuxManager) write(user, name string, data []byte) error {
 	return errors.New("tmux disabled")
 }
 
-func (m *tmuxManager) kill(name string) error {
+func (m *tmuxManager) kill(user, name string) error {
 	return errors.New("tmux disabled")
 }
 

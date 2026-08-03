@@ -462,10 +462,10 @@ func main() {
 	secret := []byte(cfg.JwtSecret)
 
 	s := &server{
-		config:     &cfg,
-		jwtSecret:  secret,
-		hub:        newHub(),
-		limiter:    newRateLimiter(rlWindow, rlMax, rlBan),
+		config:    &cfg,
+		jwtSecret: secret,
+		hub:       newHub(),
+		limiter:   newRateLimiter(rlWindow, rlMax, rlBan),
 		// 誠實客戶端最壞約 6 次/分（重連退避 1,3,5,10,20,30s）＋重新整理，抓 20/分留足餘裕；
 		// 超過就 ban 5 分鐘。key 為 username（見 handleWs）。
 		wsLimiter:  newRateLimiter(time.Minute, 20, 5*time.Minute),
@@ -529,22 +529,24 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/login",        s.handleLogin)
-	mux.HandleFunc("/logout",       s.handleLogout)
-	mux.HandleFunc("/check",        s.checkSession(s.handleCheck))
-	mux.HandleFunc("/ws",           s.checkSession(s.handleWs))
-	mux.HandleFunc("/api/config",   s.handleApiConfig)
-	mux.HandleFunc("/api/files",    s.sessionAndWorkspace(s.handleListFiles))
-	mux.HandleFunc("/api/file",     s.sessionAndWorkspace(s.handleFile))
-	mux.HandleFunc("/api/upload",   s.sessionAndWorkspace(s.handleUpload))
+	mux.HandleFunc("/login", s.handleLogin)
+	mux.HandleFunc("/logout", s.handleLogout)
+	mux.HandleFunc("/check", s.checkSession(s.handleCheck))
+	mux.HandleFunc("/ws", s.checkSession(s.handleWs))
+	mux.HandleFunc("/api/config", s.handleApiConfig)
+	mux.HandleFunc("/api/files", s.sessionAndWorkspace(s.handleListFiles))
+	mux.HandleFunc("/api/file", s.sessionAndWorkspace(s.handleFile))
+	mux.HandleFunc("/api/upload", s.sessionAndWorkspace(s.handleUpload))
 	mux.HandleFunc("/api/download", s.sessionAndWorkspace(s.handleDownload))
-	mux.HandleFunc("/api/mkdir",    s.sessionAndWorkspace(s.handleMkdir))
-	mux.HandleFunc("/api/rename",   s.sessionAndWorkspace(s.handleRename))
-	mux.HandleFunc("/api/copy",     s.sessionAndWorkspace(s.handleCopy))
-	mux.HandleFunc("/api/search",   s.sessionAndWorkspace(s.handleSearch))
-	mux.Handle("/static/",          http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-	mux.HandleFunc("/favicon.ico",  func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, filepath.Join("static", "favicon.ico")) })
-	mux.HandleFunc("/",             s.checkSession(s.handleIndex))
+	mux.HandleFunc("/api/mkdir", s.sessionAndWorkspace(s.handleMkdir))
+	mux.HandleFunc("/api/rename", s.sessionAndWorkspace(s.handleRename))
+	mux.HandleFunc("/api/copy", s.sessionAndWorkspace(s.handleCopy))
+	mux.HandleFunc("/api/search", s.sessionAndWorkspace(s.handleSearch))
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join("static", "favicon.ico"))
+	})
+	mux.HandleFunc("/", s.checkSession(s.handleIndex))
 
 	addr := fmt.Sprintf("%s:%d", host, port)
 	logf("[server] starting on %s", addr)
@@ -1116,7 +1118,7 @@ func (s *server) handleWs(w http.ResponseWriter, r *http.Request) {
 const (
 	wsPingInterval    = 30 * time.Second
 	wsReadDeadline    = 70 * time.Second
-	wsMaxMessageSize  = 64 * 1024 // 單位：bytes， 單一 ws 訊息上限，擋超大 payload 吃記憶體/灌爆 log
+	wsMaxMessageSize  = 64 * 1024       // 單位：bytes， 單一 ws 訊息上限，擋超大 payload 吃記憶體/灌爆 log
 	watchPollInterval = 3 * time.Second // tree view 目錄變動輪詢預設間隔（config 未設時）
 	maxWatchDirs      = 500             // 單一 client 最多監看的目錄數，防濫用
 )
@@ -1327,7 +1329,7 @@ func (c *WsClient) readPump(s *server) {
 			}
 			if _, err := s.tmux.attach(c, name, p.Cols, p.Rows); err != nil {
 				logf("[ws] term_open attach_err user=%s name=%s err=%v", c.username, name, err)
-				_ = s.tmux.kill(name)
+				_ = s.tmux.kill(c.username, name)
 				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_open attach: " + err.Error()})
 				continue
 			}
@@ -1372,7 +1374,7 @@ func (c *WsClient) readPump(s *server) {
 				logf("[ws] term_input decode_err user=%s err=%v", c.username, err)
 				continue
 			}
-			if err := s.tmux.write(p.Name, raw); err != nil {
+			if err := s.tmux.write(c.username, p.Name, raw); err != nil {
 				logf("[ws] term_input err user=%s err=%v", c.username, err)
 			}
 
@@ -1389,7 +1391,7 @@ func (c *WsClient) readPump(s *server) {
 				logf("[ws] term_resize bad_payload user=%s err=%v", c.username, err)
 				continue
 			}
-			if err := s.tmux.resize(p.Name, p.Cols, p.Rows); err != nil {
+			if err := s.tmux.resize(c.username, p.Name, p.Cols, p.Rows); err != nil {
 				logf("[ws] term_resize err user=%s err=%v", c.username, err)
 			}
 
@@ -1404,12 +1406,8 @@ func (c *WsClient) readPump(s *server) {
 				logf("[ws] term_kill bad_payload user=%s err=%v", c.username, err)
 				continue
 			}
-			if !strings.HasPrefix(p.Name, c.username+"-") {
-				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_kill: forbidden session"})
-				continue
-			}
-			s.tmux.detach(p.Name)
-			if err := s.tmux.kill(p.Name); err != nil {
+			s.tmux.detach(c.username, p.Name)
+			if err := s.tmux.kill(c.username, p.Name); err != nil {
 				logf("[ws] term_kill err user=%s err=%v", c.username, err)
 				s.hub.sendTo(c.username, wsOutMsg{Type: "error", Payload: "term_kill: " + err.Error()})
 				continue
@@ -1443,7 +1441,6 @@ func (c *WsClient) writePump() {
 		}
 	}
 }
-
 
 // ─── File handlers ────────────────────────────────────────────────────────────
 
@@ -1538,6 +1535,8 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// 開檔大小的把關放在前端（見 index.html 的 maxOpenFileSize）：由使用者在確認框
+// 決定要不要開這份大檔，後端不代為攔截，需要時仍開得起來。
 func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 	rel := r.URL.Query().Get("path")
 	if rel == "" {
@@ -1693,6 +1692,15 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid filename")
 		return
 	}
+	// filepath.Base 不解析 dot-dot：".." 會被原樣回傳（mime/multipart 依 RFC 7578
+	// 先做的那次 Base 同樣擋不住），Join 之後就跳到上層目錄——dir 正好是 workspace
+	// 根時就跳出了 workspace。"." 則會指向目錄本身。下方的 dstResolved 圍籬擋得住
+	// 前者，但這裡先明講一次，意圖才不是靠圍籬的副作用表達。
+	name := filepath.Base(header.Filename)
+	if name == "." || name == ".." || name == string(os.PathSeparator) {
+		writeError(w, http.StatusBadRequest, "invalid filename")
+		return
+	}
 	if header.Size > s.maxUploadSize() {
 		writeError(w, http.StatusRequestEntityTooLarge, "file too large")
 		return
@@ -1701,7 +1709,7 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	dstPath := filepath.Join(dirAbs, filepath.Base(header.Filename))
+	dstPath := filepath.Join(dirAbs, name)
 	dstResolved, err := filepath.Abs(dstPath)
 	if err != nil || (dstResolved != ws && !strings.HasPrefix(dstResolved, ws+string(os.PathSeparator))) {
 		writeError(w, http.StatusForbidden, "invalid path")

@@ -102,11 +102,19 @@ func (m *tmuxManager) sessionExists(name string) bool {
 	return c.Run() == nil
 }
 
-func (m *tmuxManager) ownsSession(user, name string) bool {
+// requireOwn 是所有「吃 session name」的操作共用的授權關卡：驗證名稱格式合法、且該 session 確實屬於 user。
+//
+// name 固定是 createSession 產出的 <user>-<6碼>，所以擁有者就是去掉尾端 7 字元。
+// 不能只比對 "user-" 前綴：使用者名稱本身允許 "-"，那樣 alice 會連 alice-x 的
+// session 一起吃下去。
+func (m *tmuxManager) requireOwn(user, name string) error {
 	if !sessionNameRe.MatchString(name) {
-		return false
+		return errors.New("invalid session name")
 	}
-	return strings.HasPrefix(name, user+"-")
+	if name[:len(name)-7] != user {
+		return errors.New("forbidden session")
+	}
+	return nil
 }
 
 func clampSize(cols, rows uint16) (uint16, uint16) {
@@ -164,7 +172,15 @@ func (m *tmuxManager) createSession(user string, cols, rows uint16) (string, err
 }
 
 // kill terminates the session.
-func (m *tmuxManager) kill(name string) error {
+func (m *tmuxManager) kill(user, name string) error {
+	if err := m.requireOwn(user, name); err != nil {
+		return err
+	}
+	return m.killSession(name)
+}
+
+// killSession 不做授權檢查，僅供 shutdown 這類內部呼叫使用；外部一律走 kill。
+func (m *tmuxManager) killSession(name string) error {
 	if !m.enabled {
 		return errors.New("tmux disabled")
 	}
@@ -186,11 +202,8 @@ func (m *tmuxManager) attach(client *WsClient, name string, cols, rows uint16) (
 	if !m.enabled {
 		return nil, errors.New("tmux disabled")
 	}
-	if !sessionNameRe.MatchString(name) {
-		return nil, errors.New("invalid session name")
-	}
-	if !m.ownsSession(client.username, name) {
-		return nil, errors.New("forbidden session")
+	if err := m.requireOwn(client.username, name); err != nil {
+		return nil, err
 	}
 	if !m.sessionExists(name) {
 		return nil, errors.New("session not found")
@@ -281,7 +294,18 @@ func (a *tmuxAttach) close() {
 	})
 }
 
-func (m *tmuxManager) detach(name string) {
+// detach 關掉 user 自己對 name 的 attach（tmux session 本身保留）。
+// 這是清理操作、失敗不需回報 client，因此拒絕時只記 log 不回傳 error。
+func (m *tmuxManager) detach(user, name string) {
+	if err := m.requireOwn(user, name); err != nil {
+		logf("[tmux] detach_rejected user=%s session=%s err=%v", user, name, err)
+		return
+	}
+	m.detachSession(name)
+}
+
+// detachSession 不做授權檢查，僅供 shutdown 這類內部呼叫使用；外部一律走 detach。
+func (m *tmuxManager) detachSession(name string) {
 	m.mu.Lock()
 	a, ok := m.attaches[name]
 	if ok {
@@ -312,25 +336,35 @@ func (m *tmuxManager) detachForClient(c *WsClient) {
 	logf("[tmux] detach_all user=%s count=%d", c.username, len(victims))
 }
 
-func (m *tmuxManager) resize(name string, cols, rows uint16) error {
-	cols, rows = clampSize(cols, rows)
+// lookupAttach 取出 user 自己的 attach。
+func (m *tmuxManager) lookupAttach(user, name string) (*tmuxAttach, error) {
+	if err := m.requireOwn(user, name); err != nil {
+		return nil, err
+	}
 	m.mu.Lock()
 	a, ok := m.attaches[name]
 	m.mu.Unlock()
 	if !ok {
-		return errors.New("not attached")
+		return nil, errors.New("not attached")
+	}
+	return a, nil
+}
+
+func (m *tmuxManager) resize(user, name string, cols, rows uint16) error {
+	cols, rows = clampSize(cols, rows)
+	a, err := m.lookupAttach(user, name)
+	if err != nil {
+		return err
 	}
 	return pty.Setsize(a.pty, &pty.Winsize{Cols: cols, Rows: rows})
 }
 
-func (m *tmuxManager) write(name string, data []byte) error {
-	m.mu.Lock()
-	a, ok := m.attaches[name]
-	m.mu.Unlock()
-	if !ok {
-		return errors.New("not attached")
+func (m *tmuxManager) write(user, name string, data []byte) error {
+	a, err := m.lookupAttach(user, name)
+	if err != nil {
+		return err
 	}
-	_, err := a.pty.Write(data)
+	_, err = a.pty.Write(data)
 	return err
 }
 
@@ -342,8 +376,8 @@ func (m *tmuxManager) shutdown() {
 	}
 	m.mu.Unlock()
 	for _, name := range names {
-		m.detach(name)
-		_ = m.kill(name)
+		m.detachSession(name)
+		_ = m.killSession(name)
 	}
 	// Give pump goroutines a moment to drain.
 	time.Sleep(50 * time.Millisecond)

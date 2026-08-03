@@ -1363,6 +1363,9 @@
                     },
                     currentUser: '',
                     canTerminal: false,
+                    // 超過此大小就先問過使用者再開，大檔會讓分頁卡頓。
+                    // 純屬前端的體感門檻，後端不擋，使用者確認後照樣開得起來。
+                    maxOpenFileSize: 10 * 1024 * 1024,
                     newTabMenuOpen: false,
                     newTabMenuStyle: {},
                     dragSourceTab: null,
@@ -1725,7 +1728,12 @@
                     mylog('fetchBytes', path);
                     const res = await fetch('/api/file?path=' + encodeURIComponent(path));
                     if (!res.ok) {
-                        const err = new Error(res.statusText);
+                        // 後端的錯誤訊息
+                        let msg = res.statusText;
+                        if ((res.headers.get('content-type') || '').includes('application/json')) {
+                            try { msg = (await res.json()).error || msg; } catch (e) { myerr('fetchBytes', 'error body parse failed', e); }
+                        }
+                        const err = new Error(msg);
                         err.status = res.status;
                         throw err;
                     }
@@ -1941,6 +1949,16 @@
                     openingPaths.set(path, focusMonaco);
 
                     try {
+                        // 大檔確認要在下載之前：等 fetchBytes 回來才問，bytes 已經過網路了。
+                        // 檔案樹沒載入該節點時（session 還原）size 未知，就直接開。
+                        const node = this.treeItems.find(i => i.path === path);
+                        if (node && !node.isDir && node.size > this.maxOpenFileSize) {
+                            const ok = await this.dlgConfirm(
+                                `「${path}」大小 ${formatSize(node.size)}，超過 ${formatSize(this.maxOpenFileSize)}，開啟可能造成分頁卡頓或無回應。仍要開啟嗎？`,
+                                { confirmText: '仍要開啟', cancelText: '取消', danger: true }
+                            );
+                            if (!ok) return; // finally 會釋放開檔鎖
+                        }
                         if (isImagePath(path)) {
                             tabsData.set(path, { model: null, originalContent: '', viewState: null });
                             this.tabsList.push(this.makeTab(path, { tabType: 'image' }));
