@@ -1755,7 +1755,7 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if info.IsDir() {
-		s.downloadDirAsZip(w, r, abs)
+		s.downloadDirAsZip(w, r, abs, rel)
 		return
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(abs)))
@@ -1784,7 +1784,7 @@ var (
 // 不額外套 runWithTimeout：大目錄壓縮本來就慢，逾時應由 client 取消連線
 // （r.Context() 會被 net/http 在 client 關閉時 cancel）驅動，而不是 server
 // 端硬截斷。
-func (s *server) downloadDirAsZip(w http.ResponseWriter, r *http.Request, dir string) {
+func (s *server) downloadDirAsZip(w http.ResponseWriter, r *http.Request, dir, rel string) {
 	ctx := r.Context()
 	var totalSize int64
 	var fileCount int
@@ -1820,11 +1820,11 @@ func (s *server) downloadDirAsZip(w http.ResponseWriter, r *http.Request, dir st
 	})
 	switch {
 	case errors.Is(walkErr, errZipTooManyFiles):
-		logf("[zip] reject reason=too_many_files user=%s path=%q", usernameFromCtx(r), filepath.Base(dir))
+		logf("[zip] reject reason=too_many_files user=%s path=%q", usernameFromCtx(r), rel)
 		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("too many files (limit %d)", zipMaxFileCount))
 		return
 	case errors.Is(walkErr, errZipTooLarge):
-		logf("[zip] reject reason=too_large user=%s path=%q", usernameFromCtx(r), filepath.Base(dir))
+		logf("[zip] reject reason=too_large user=%s path=%q", usernameFromCtx(r), rel)
 		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("total size exceeds limit %d bytes", zipMaxTotalSize))
 		return
 	case errors.Is(walkErr, context.Canceled), errors.Is(walkErr, context.DeadlineExceeded):
@@ -1892,14 +1892,14 @@ func (s *server) downloadDirAsZip(w http.ResponseWriter, r *http.Request, dir st
 	})
 	// header 已送出，中途失敗只能中斷連線；client 端會拿到一個壞掉的 zip。
 	if writeErr != nil {
-		logf("[zip] err user=%s path=%q err=%v", usernameFromCtx(r), filepath.Base(dir), writeErr)
+		logf("[zip] err user=%s path=%q err=%v", usernameFromCtx(r), rel, writeErr)
 		return
 	}
 	if err := zw.Close(); err != nil {
-		logf("[zip] err user=%s path=%q err=%v", usernameFromCtx(r), filepath.Base(dir), err)
+		logf("[zip] err user=%s path=%q err=%v", usernameFromCtx(r), rel, err)
 		return
 	}
-	logf("[zip] ok user=%s path=%q files=%d size=%d", usernameFromCtx(r), filepath.Base(dir), fileCount, totalSize)
+	logf("[zip] ok user=%s path=%q files=%d size=%d", usernameFromCtx(r), rel, fileCount, totalSize)
 }
 
 func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
