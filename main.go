@@ -1008,7 +1008,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	reason := r.URL.Query().Get("reason")
 	switch reason {
-	case "duplicate_connect", "kick":
+	case "kick":
 	default:
 		reason = "manual"
 	}
