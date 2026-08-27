@@ -4,80 +4,23 @@
 
 ## 功能
 
-- Monaco Editor（VS Code 編輯器核心），語法高亮對應：
-
-  | 副檔名 | 語言 |
-  |--------|------|
-  | `.html` `.htm` | HTML |
-  | `.css` | CSS |
-  | `.js` | JavaScript |
-  | `.json` | JSON |
-  | `.md` | Markdown |
-  | `.txt` | Plain Text |
-  | `.svg` | XML |
-  | `.php` | PHP |
-  | `.vue` | Vue |
-  | 其他 | Plain Text |
-
-- TextMate 語法引擎：以 `vscode-textmate` + `vscode-oniguruma` 取代 Monaco 內建的 Monarch 分詞器（HTML / CSS / JavaScript / JSON / PHP / Python / Go / Rust / Ruby / Shell / Markdown / C++ / Java / Dockerfile / YAML / SQL / TypeScript / Vue），各語言以 `monaco.languages.onLanguage` 在首次開檔時 lazy 載入對應 grammar，分詞粒度與 VS Code 一致，搭配 VS Code 原版主題顏色／斜體完全對齊
-
-- 多 tab 開檔，支援同時編輯多個檔案；tab 標題顯示圓點代表有未儲存變更
-- UI icon 採用 Lucide icon font；資料夾、檔案、圖片於樹狀目錄分色顯示，會依目前主題切換
-- 符號連結顯示：偵測 Unix symlink 與 Windows directory junction，於樹狀目錄使用 `folder-symlink` / `file-symlink` 圖示，hover 該節點可看到 `→ 目標路徑`（另存對話框同樣支援）
-- Tab bar 右側 `+` 按鈕可新增空白匿名檔案（Untitled），儲存時自動彈出「另存為」對話框選擇目錄與檔名
-- 底部狀態列右側顯示目前 tab 的語言（取自 Monaco aliases），點擊可彈出語言選擇器手動指定語法高亮
-- 儲存按鈕：有未儲存變更時才可點擊；儲存中顯示「儲存中…」並阻擋重複觸發
-- 圖片預覽（`.png` `.jpg` `.jpeg` `.gif` `.webp` `.ico`）
-- 懶載入樹狀目錄，點擊展開子目錄；建立新目錄後自動展開並捲動到位
-- 側邊欄寬度可拖曳調整（拖曳分隔線），設定持久化於 localStorage
-- 拖曳上傳（可拖入側邊欄或指定目錄）、上傳進度條顯示；上傳前若目的地已有同名檔案，詢問是否覆蓋；多檔上傳併行上限 3（完成一個補一個，其餘顯示「等待中」），上傳中或佇列中的檔案可逐一取消
-- 多選支援：
-  - Ctrl+Click 逐一選取 / 取消
-  - Shift+Click 範圍選取
-  - 多選後可統一剪下、複製、刪除；選取的子項目若已被選取的父目錄涵蓋，自動過濾不重複操作
-- 右鍵選單：
-  - 空白處：新增檔案、新增目錄、上傳檔案、貼上（有剪貼板內容時）、搜尋、重新整理
-  - 目錄：新增檔案、新增目錄、上傳到此處、剪下、複製、建立副本、貼上（有剪貼板內容時）、重新命名、搜尋、重新整理、刪除目錄
-  - 檔案：新增檔案（同層）、開啟、下載、剪下、複製、建立副本、貼上（有剪貼板內容時，貼至父目錄）、重新命名、刪除
-  - 多選：剪下 N 個、複製 N 個、刪除 N 個
-  - Tab：關閉、關閉全部（只關一般檔案分頁、不關終端機；未儲存的檔案逐一詢問確認，取消則保留該分頁並繼續處理下一個）
-- 鍵盤快捷鍵：Ctrl+S 儲存（匿名檔案則彈出另存為）、Delete 刪除選取的檔案或目錄；Ctrl+/ 切換註解（HTML/PHP 自訂註解開啟時走特製邏輯）
-- 「建立副本」：對檔案或資料夾自動產生 `name copy`、`name copy 2`… 序號副本；資料夾較大時會先詢問確認
-- 資料夾搜尋（regex）：右鍵目錄或空白處選「搜尋」，輸入 regex（如 `(?i)foo`、`\bbar\b`），結果以新分頁串流呈現；對命中行 Ctrl+Click 可跳到該檔該行；後端為 NDJSON streaming，逾時 30 秒、單檔上限 5 MB、單檔最多 200 筆、總筆數上限 1000；自動略過隱藏目錄與 `node_modules` / `vendor` / `dist`；同一使用者一次只允許一個搜尋進行中
-- 重新命名對話框自動反白主檔名（不含副檔名），方便直接輸入新名稱
-- IndexedDB session 還原：重新整理後自動恢復上次開啟的 tab 與未儲存草稿；session 還原後自動展開樹狀目錄至 active 檔案所在位置
-- 快取衝突偵測：session 還原時若檔案已被他人修改，提示選擇保留草稿或使用伺服器版本
-- 編輯器設定（儲存於 localStorage）：
-  - **主題**：Dark+、Light+（VS Code 預設）；Monokai、Dracula、Nord、Tokyo Night、One Dark Pro、Solarized Dark、GitHub Dark（深色）；Solarized Light（淺色）。全部來自 `tm-themes`，經 vscode-textmate 引擎以 VS Code 原版 scope selector 算色，預設 Dark+
-  - **字體**：預設、Consolas、Menlo、Courier New
-  - **字體大小**：10–32 px
-  - **自動換行**：開（預設）／關切換
-  - **Sticky Scroll**：開（預設）／關切換；捲動時把目前 scope 的父層宣告固定在編輯器頂部
-  - **括號配對上色**：開／關切換（預設關）
-  - **顯示隱形字元**：開／關切換；同時顯示行尾 LF / CRLF 符號與控制字元
-  - **儲存移除空白**：開（預設）／關切換；儲存時移除每行行尾空白
-  - **HTML/PHP 自訂註解**：開／關切換（預設關）。開啟時 Ctrl+/ 走自訂邏輯：HTML 用 `<!-- -->` 行註解（跳過已註解行）；PHP 依游標位置自動判斷 —— 在 `<?php`/`<script>` 區段內走 `//`、`<style>` 區段走 block comment、其他則用 `<!-- -->`
-  - **終端機字體 / 字體大小**：僅在帳號有開放終端機時顯示
-- HTML / PHP / Vue 模式自動補全閉合標籤（輸入 `>` 後自動插入對應的 `</tag>`，void element 除外）
-- TOTP 二步驟登入：以 `config.json` 設定帳號，每位使用者擁有獨立 workspace
-- Session 以 JWT（HS256）儲存於 `editorToken` cookie，無伺服器端 session 記錄；`jwtSecret` 必須於 `config.json` 設定，否則程式拒絕啟動
-- Session 驗證時同時確認帳號仍存在於 `config.json`，從 config 移除的帳號下次請求即自動失效
-- Session 自動延長：前端每 60 秒呼叫 `/check`；TTL 不足 `sessionTTL / 2` 時伺服器自動延長並回傳新 JWT cookie，回應中 `extended: true` 時顯示提示
-- WebSocket 即時協作：
-  - 使用者上下線廣播（`user_online` / `user_offline`）
-  - 檔案開啟與關閉廣播（`file_opened` / `file_closed`）
-  - 多人同時開啟同一檔案時互相通知（`same_file_open`）
-  - 每位使用者限一條連線；斷線後 30 秒自動重連
-- tmux 終端機（僅 Linux/macOS）：
-  - 啟動時建立共享 socket（寫死 `html-editor`）；伺服器重啟不會殺掉現有 session
-  - 設定 `users.<name>.terminal: true` 才開放此功能；`+` 按鈕點擊時改為下拉選單（新增空白檔案 / 新增終端機）
-  - 終端機混入既有 tab-bar，可同時多開；以 xterm.js + WebGL renderer（GPU 加速）呈現，啟用標準 Unicode 11 寬字元
-  - 終端機 tab 標題加上「終端機」前綴，並顯示 tmux session 名末段以利辨識
-  - 終端機 tab 可拖曳排序，順序持久化於 localStorage
-  - WebSocket 斷線重連時自動列出該使用者所有 tmux session 並全部還原為 tab
-  - 關閉終端機 tab（X 或右鍵「關閉」）會先跳確認，確認後 `kill-session`；重新整理或斷線僅 detach、session 保留
-- Plugin 系統：啟動時自動載入 `static/plugins/plugins.json` 列出的插件
-- 響應式版面，行動裝置支援側邊欄遮罩
+- **編輯器**：Monaco Editor 搭配 TextMate 語法引擎（`vscode-textmate` + `vscode-oniguruma`），支援 HTML / CSS / JavaScript / TypeScript / JSON / PHP / Vue / Python / Go / Rust / Ruby / Shell / Markdown / C++ / Java / Dockerfile / YAML / SQL，分詞粒度與配色皆與 VS Code 原版一致
+- **多分頁**：可拖曳排序、中鍵關閉、未儲存以圓點標示；`+` 按鈕新增空白檔案（Untitled，儲存時彈出「另存為」）或終端機
+- **狀態列**：縮排、編碼、行尾序列（LF / CRLF）、語言，皆可點擊切換
+- **編碼**：開檔自動偵測（jschardet），支援 UTF-8 / UTF-8 BOM / UTF-16 LE、BE / Big5 / GBK / GB18030 / Shift_JIS / EUC-JP / EUC-KR / Latin-1，也可手動指定重新載入
+- **檔案樹**：懶載入、拖曳上傳（進度條、佇列、可取消）、多選（Ctrl / Shift + Click）、剪下／複製／貼上／建立副本／重新命名／刪除、關鍵字過濾、目錄 mtime 輪詢自動刷新、symlink 標示與目標提示
+- **搜尋**：資料夾遞迴 regex 搜尋，結果以新分頁串流呈現，對命中行 Ctrl+Click 可跳到該檔該行
+- **下載**：檔案直接下載；目錄自動打包成 zip（上限 10000 檔 / 500 MB）
+- **圖片預覽**：`.png` `.jpg` `.jpeg` `.gif` `.webp` `.ico`
+- **開檔防護**：超過 10 MB 或內容疑似二進位時，先詢問是否仍要開啟
+- **快捷鍵**：Ctrl+S 儲存、Ctrl+/ 切換註解、Delete 刪除選取項目
+- **設定**（存於 localStorage）：主題（10 種 VS Code 原版配色）、字體與大小、自動換行、Sticky Scroll、括號配對上色、顯示隱形字元、儲存移除行尾空白、HTML/PHP 自訂註解、終端機字體
+- **Session 還原**：IndexedDB 保存分頁與未儲存草稿，重整後自動還原；若檔案已被他人修改會提示選擇保留草稿或使用伺服器版本
+- **登入**：TOTP 二步驟驗證 + JWT cookie，每個帳號擁有獨立 workspace，登入失敗有 IP rate limit，並可選用 SMTP 登入通知
+- **即時協作**：WebSocket 廣播使用者上下線、檔案開啟／關閉，多人開啟同一檔案時互相提示
+- **終端機**（Linux / macOS，需帳號開放）：tmux 共享 session，xterm.js + WebGL 呈現，可多開；重新整理或斷線只 detach、重連自動還原，關閉分頁才 kill-session
+- **Plugin 系統**：載入 `static/plugins/plugins.json` 列出的插件，詳見下方 [Plugin 系統](#plugin-系統)
+- 響應式版面，行動裝置支援側邊欄遮罩；全部資源本機提供，可離線運作
 
 ## 環境需求
 
@@ -96,10 +39,12 @@ npm install
 
 `postinstall` 腳本（`setup.js`）會自動完成以下事情：
 
+- 將 Vue 3 global build 複製到 `static/vue.global.js`
 - 將 Monaco 靜態檔案複製到 `static/monaco/vs/`
 - 將 VS Code 原版語法高亮主題（`tm-themes`）複製到 `static/themes/`
 - 將 xterm.js（含 fit addon、unicode11 addon、WebGL addon）複製到 `static/xterm/`
 - 以 esbuild 將 `vscode-textmate` + `vscode-oniguruma` 打包為 IIFE，連同 `onig.wasm` 與 TextMate grammar（HTML、HTML derivative、CSS、JavaScript、JSON、PHP `source.php`、Python、Go、Rust、Ruby、Shell（`shellscript`）、Markdown、C++、Java、Dockerfile（`docker`）、YAML、SQL、TypeScript、Vue 來自 `tm-grammars`；`.php` 檔的入口 grammar `text.html.php` vendored 自 vscode `extensions/php/syntaxes/html.tmLanguage.json`）一起輸出到 `static/textmate/`
+- 以 esbuild 將 `@vscode/iconv-lite-umd`（編解碼）+ `jschardet`（偵測）打包為 IIFE 輸出到 `static/encoding/`
 - 將 Lucide icon font（`lucide-static`）的 `lucide.woff2` 與精簡版 CSS（只引用 woff2）複製到 `static/lucide/`
 
 ### 2. 建立 config.json
@@ -148,6 +93,7 @@ Windows：
   "port": 8080,
   "sessionTTL": 86400,
   "maxUploadSize": 52428800,
+  "watchPollInterval": 3,
   "title": "HTML Editor",
   "rateLimitWindow": 300,
   "rateLimitMaxAttempts": 5,
@@ -176,6 +122,7 @@ Windows：
 | `port` | 監聽 port（預設 `8080`） |
 | `sessionTTL` | session 有效期（秒）；預設 86400（24 小時） |
 | `maxUploadSize` | 單檔上傳上限（bytes）；預設 52428800（50 MB） |
+| `watchPollInterval` | 檔案樹目錄變更輪詢間隔（秒）；預設 3 |
 | `title` | 瀏覽器標籤與頁面顯示名稱；預設 `HTML Editor` |
 | `rateLimitWindow` | 失敗次數計算的時間視窗（秒）；預設 300 |
 | `rateLimitMaxAttempts` | 視窗內最大失敗次數；達到後觸發封鎖；預設 5 |
@@ -254,10 +201,11 @@ html-editor/
 │   ├── index.html        # 前端（Vue 3 + Monaco，單一 HTML 檔案）
 │   ├── login.html        # 登入頁面
 │   ├── style.css         # 前端樣式
-│   ├── vue.global.js     # Vue 3 runtime
+│   ├── vue.global.js     # Vue 3 runtime（由 npm install 產生，不進 git）
 │   ├── monaco/           # Monaco 靜態檔案（由 npm install 產生，不進 git）
 │   ├── themes/           # 語法高亮主題 JSON（由 npm install 產生，不進 git）
 │   ├── textmate/         # TextMate 引擎、grammar、onig.wasm（由 npm install 產生，不進 git）
+│   ├── encoding/         # 編碼偵測／轉換 bundle（由 npm install 產生，不進 git）
 │   ├── xterm/            # xterm.js 與 addon（由 npm install 產生，不進 git）
 │   ├── lucide/           # Lucide icon font（由 npm install 產生，不進 git）
 │   └── plugins/          # Plugin 目錄（不進 git，依環境各自部署）
@@ -344,6 +292,7 @@ static/
   monaco/
   themes/
   textmate/
+  encoding/
   lucide/
   xterm/      ← 若有開放終端機則一併部署
   plugins/    ← 若有 plugin 則一併部署
@@ -362,7 +311,7 @@ static/
 | `PUT` | `/api/file?path=` | 寫入檔案（body 為純文字） |
 | `DELETE` | `/api/file?path=` | 刪除檔案或目錄 |
 | `POST` | `/api/upload` | 上傳檔案（multipart/form-data，上限 50 MB） |
-| `GET` | `/api/download?path=` | 下載檔案（含 Content-Disposition） |
+| `GET` | `/api/download?path=` | 下載檔案；path 為目錄時串流打包成 zip（超過 10000 個檔或未壓縮總和 500 MB 回 413），symlink 一律略過不跟隨 |
 | `POST` | `/api/mkdir?path=` | 建立目錄（含巢狀） |
 | `POST` | `/api/rename?from=&to=` | 重新命名或移動；目的地已存在回傳 409（`?auto=1` 時自動加序號） |
 | `POST` | `/api/copy?from=&to=` | 複製檔案或目錄（遞迴）；目的地已存在自動加序號 |
@@ -371,7 +320,7 @@ static/
 | `POST` | `/login` | 登入（form: username, code） |
 | `GET` | `/logout` | 登出並清除 `editorToken` cookie |
 | `GET` | `/check` | 回傳 `{ "data": <剩餘秒數>, "extended": bool }`；TTL 不足 `sessionTTL / 2` 時自動延長並寫入新 JWT cookie；無效 token 回傳 401 |
-| `GET` | `/ws` | WebSocket 連線；用於使用者上下線與同檔案開啟互相通知 |
+| `GET` | `/ws` | WebSocket 連線；使用者上下線、同檔案開啟互相通知、目錄變更推播（`dir_changed`）與 tmux 終端機 I/O |
 
 所有路徑均以 workspace 為根目錄，後端會阻擋路徑逃逸（`../` 等）。
 
