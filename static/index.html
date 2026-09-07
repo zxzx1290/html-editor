@@ -3941,8 +3941,11 @@
                         e.preventDefault();
                         this.saveCurrent();
                     }
-                    // 檔案刪除
-                    if (this.treeFocused && e.key === 'Delete' && !e.ctrlKey && !e.metaKey) {
+                    // 檔案刪除：與 F2 一樣，樹上有高亮（含 active-blur）就能按 Delete。
+                    // 編輯器內的 Delete 會被 Monaco 的 deleteRight 攔掉不會冒泡到這，
+                    // 其餘輸入元素與終端機則明確排除。
+                    if (e.key === 'Delete' && !e.ctrlKey && !e.metaKey
+                        && !e.target.closest?.('#terminal-host, input, textarea, [contenteditable]')) {
                         const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
                         const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
                         if (selItems.length > 1) {
@@ -3956,7 +3959,7 @@
                     // 重新命名：只要樹上有高亮（含焦點已移到編輯器的 active-blur）就能按 F2，
                     // 但終端機內的 F2 要留給終端程式。本專案沒接 LSP，Monaco 的 rename symbol
                     // 因為沒有 provider 不會攔截 F2，事件照樣冒泡到這裡。
-                    if (e.key === 'F2' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest('#terminal-host')) {
+                    if (e.key === 'F2' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('#terminal-host')) {
                         const selItems = this.selectedPaths.map(p => this.treeItems.find(t => t.path === p)).filter(Boolean);
                         const selItem = selItems.find(t => t.path === this.selectedPath) || selItems[0] || null;
                         if (selItem) {
