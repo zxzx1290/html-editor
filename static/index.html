@@ -2196,7 +2196,8 @@
                         return;
                     }
 
-                    const data = tabsData.get(this.activeTabPath);
+                    const path = this.activeTabPath;
+                    const data = tabsData.get(path);
                     if (!data || !monacoEditor) return;
                     this.isSaving = true;
                     if (this.settings.trimOnSave) {
@@ -2213,23 +2214,26 @@
                         if (edits.length > 0) model.pushEditOperations([], edits, () => null);
                     }
                     const content = monacoEditor.getValue();
-                    pluginBus.emit('fileBeforeSave', { value: content, path: this.activeTabPath });
+                    pluginBus.emit('fileBeforeSave', { value: content, path });
                     const encoding = data.encoding || 'utf8';
                     try {
-                        await this.api('/api/file?path=' + encodeURIComponent(this.activeTabPath), {
+                        await this.api('/api/file?path=' + encodeURIComponent(path), {
                             method: 'PUT',
                             headers: { 'Content-Type': 'application/octet-stream' },
                             body: encoding === 'utf8' ? content : encodeText(content, encoding),
                         });
                         data.originalContent = content;
-                        const tab = this.tabsList.find(t => t.path === this.activeTabPath);
-                        if (tab) tab.dirty = false;
-                        this.clearDirtyEntry(this.activeTabPath);
-                        this.setStatus('已儲存：' + this.activeTabPath);
+                        // await 期間可能已換分頁或又打了字：依「該分頁 model 的當下內容」判定圓點。
+                        // 無條件清掉會清錯分頁（圓點留在剛存好的分頁上），也會蓋掉存檔中新打的字。
+                        const stillDirty = !!data.model && data.model.getValue() !== content;
+                        if (activeTab) activeTab.dirty = stillDirty;
+                        if (stillDirty) this.scheduleDirtySave(path);
+                        else this.clearDirtyEntry(path);
+                        this.setStatus('已儲存：' + path);
                         this.showToast('儲存成功');
                         pluginBus.emit('fileAfterSave', {
-                            path: this.activeTabPath,
-                            document: { title: this.activeTabPath.split('/').pop() },
+                            path,
+                            document: { title: path.split('/').pop() },
                             value: content,
                         });
                     } catch (e) {
