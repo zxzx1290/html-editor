@@ -269,6 +269,8 @@
         <div v-for="t in toasts" :key="t.id" class="toast-item" :class="{ error: t.error }">{{ t.msg }}</div>
     </div>
 
+    <div id="suspend-overlay" v-show="wsSuspended">連線已中斷，重新連線中…</div>
+
     <div id="modal-overlay" v-show="dlg.visible" :style="dlg.visible ? { zIndex: 9998 } : {}">
         <div id="modal-box">
             <div class="modal-title">{{ dlg.title }}</div>
@@ -1218,8 +1220,9 @@
                 socket = new WebSocket(wsUrl);
 
                 socket.onopen = function () {
-                    const isReconnect = reconnectAttempt > 0;
+                    const isReconnect = reconnectAttempt > 0 || app.wsSuspended;
                     reconnectAttempt = 0;
+                    app.wsSuspended = false;
                     app.showToast('已上線');
                     app.tabsList.forEach(t => fileOnOpen(t.path));
                     if (app.canTerminal) wsSend({ type: 'term_list' });
@@ -1298,6 +1301,13 @@
                 socket.onclose = function (e) {
                     socket = null;
                     if (closing) return;   // 故意關閉（登出），不重連
+                    // 分頁在背景被 Chrome 凍結／進 bfcache 時，瀏覽器會直接砍掉 ws（code 1006）。
+                    // 此時重連毫無意義（連上後馬上又被砍，每分鐘空轉一輪），改成掛遮罩等回到分頁再連。
+                    if (document.visibilityState === 'hidden') {
+                        app.wsSuspended = true;
+                        mylog('ws-collab', `closed while hidden, code=${e.code}, waiting for tab visible`);
+                        return;
+                    }
                     const base = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)];
                     reconnectAttempt++;
                     // 加上 ±20% jitter，錯開多客戶端在伺服器恢復瞬間同時重連（避免驚群效應）
@@ -1307,6 +1317,16 @@
                     setTimeout(connect, delay * 1000);
                 };
             }
+
+            // 回到分頁就立刻重連（connect() 內有 socket 狀態守衛，和 backoff timer 撞在一起也不會開兩條）。
+            // pageshow 是 bfcache 還原的保險：萬一該情境沒補送 visibilitychange，遮罩會永遠拿不掉。
+            function resumeWs() {
+                if (document.visibilityState !== 'visible' || closing) return;
+                if (app.wsSuspended) reconnectAttempt = 0;
+                connect();
+            }
+            document.addEventListener('visibilitychange', resumeWs);
+            window.addEventListener('pageshow', resumeWs);
 
             connect();
         }
@@ -1376,6 +1396,7 @@
                     settingsOpen: false,
                     statusMsg: '',
                     isSaving: false,
+                    wsSuspended: false, // 分頁被 Chrome 凍結導致 ws 斷線，等回到分頁才重連
                     toasts: [],
                     ctxMenu: { visible: false, x: 0, y: 0, items: [] },
                     indentInfo: null, // { insertSpaces, tabSize, indentSize }，來自當前 model.getOptions()
@@ -3860,7 +3881,7 @@
 
             // ──── mounted: Monaco init & editor wiring
             mounted() {
-                window._editorApp = this;
+                window._editorApp = this; // Vue component proxy
 
                 if (window.matchMedia('(max-width: 700px)').matches) {
                     this.sidebarCollapsed = true;

@@ -850,13 +850,20 @@ button.btn:disabled {
 }
 
 #modal-overlay,
-#saveas-overlay {
+#saveas-overlay,
+#suspend-overlay {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.55);
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+#suspend-overlay {
+    z-index: 9997;
+    color: var(--fg);
+    font-size: 13px;
 }
 
 #modal-box,

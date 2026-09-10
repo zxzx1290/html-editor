@@ -261,6 +261,7 @@ Plugin 為 IIFE，全部 API 收斂在單一命名空間 `window.editor`：
     // 直接存取編輯器實體（除錯 / 進階用）
     // window.editor.monaco      — Monaco editor 實體
     // window.editor.terminals   — 終端機實體 Map
+    // window._editorApp         — Vue component proxy（非契約，僅供除錯）
 })();
 ```
 
