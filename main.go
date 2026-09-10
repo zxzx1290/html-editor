@@ -615,18 +615,19 @@ func (s *server) checkSession(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // redirectOrUnauth sends 401 for API / session endpoints; redirects browser routes.
-// reason is appended as ?reason=<reason> when non-empty.
+// A non-empty reason means a cookie was present but rejected: route through /logout instead of straight to /login, so the dead cookie is cleared in the one place that knows how (the deleting Set-Cookie must match the four attributes used when issuing it, so that logic is not worth a second copy) and the session end gets logged. Otherwise the dead cookie lingers in the jar and costs another limiter.record on every later request.
+// An empty reason means there was no cookie at all: nothing to clear, so go straight to /login.
 func (s *server) redirectOrUnauth(w http.ResponseWriter, r *http.Request, reason string) {
 	p := r.URL.Path
 	if strings.HasPrefix(p, "/api/") || p == "/check" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-	} else {
-		target := "/login"
-		if reason != "" {
-			target += "?reason=" + reason
-		}
-		http.Redirect(w, r, target, http.StatusFound)
+		return
 	}
+	target := "/login"
+	if reason != "" {
+		target = "/logout?reason=" + reason
+	}
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 // withWorkspaceH resolves the user's workspace directory from config and injects
@@ -1008,7 +1009,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	reason := r.URL.Query().Get("reason")
 	switch reason {
-	case "kick":
+	case "expired":
 	default:
 		reason = "manual"
 	}

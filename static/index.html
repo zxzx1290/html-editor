@@ -271,6 +271,14 @@
 
     <div id="suspend-overlay" v-show="wsSuspended">連線已中斷，重新連線中…</div>
 
+    <div id="kick-overlay" v-show="kicked">
+        <div id="kick-box">
+            <div class="kick-title">此分頁的連線已被新分頁取代</div>
+            <div class="kick-desc">同一個帳號同時間只保留一條連線。<br>請改用新開的分頁；若要改回這個分頁，重新整理即可取回連線。</div>
+            <button class="btn primary" @click="reloadPage">在此分頁重新連線</button>
+        </div>
+    </div>
+
     <div id="modal-overlay" v-show="dlg.visible" :style="dlg.visible ? { zIndex: 9998 } : {}">
         <div id="modal-box">
             <div class="modal-title">{{ dlg.title }}</div>
@@ -421,6 +429,7 @@
         // 讓更早被呼叫的地方安全略過。
         let wsSend = () => {};
         let wsClose = () => {};
+        let stopSessionCheck = () => {};
         let fileOnOpen = () => {};
         let fileOnClose = () => {};
         // 開 / 關檔的單一入口：先做協作 WS 通知，再廣播給 plugin。
@@ -1164,7 +1173,7 @@
                     const r = await fetch('/check');
                     if (r.status === 401) {
                         clearInterval(timer);
-                        window.location.href = '/login?reason=expired';
+                        window.location.href = '/logout?reason=expired';
                         return;
                     }
                     if (!r.ok) return;
@@ -1174,6 +1183,7 @@
                     app.showError('連線失敗，無法確認 session 狀態');
                 }
             }, 60000);
+            stopSessionCheck = function () { clearInterval(timer); };
         }
 
         function initWs(app) {
@@ -1245,8 +1255,9 @@
                             app.showToast(msg.payload);
                             break;
                         case 'kick':
-                            wsClose();   // 先主動關 socket 並停重連，避免導頁被 beforeunload 擋住時 socket 殘留
-                            window.location.href = '/logout?reason=kick';
+                            // 這裡不能導去 /logout：cookie 是整個瀏覽器 profile 共用的，一清掉連新分頁也會在下次 /check 被登出。
+                            wsClose();
+                            app.enterKickedState();
                             break;
                         case 'same_file_open': {
                             const info = msg.payload;
@@ -1397,6 +1408,7 @@
                     statusMsg: '',
                     isSaving: false,
                     wsSuspended: false, // 分頁被 Chrome 凍結導致 ws 斷線，等回到分頁才重連
+                    kicked: false,      // 連線被同帳號的新分頁取代，本頁進入唯讀凍結狀態
                     toasts: [],
                     ctxMenu: { visible: false, x: 0, y: 0, items: [] },
                     indentInfo: null, // { insertSpaces, tabSize, indentSize }，來自當前 model.getOptions()
@@ -1949,6 +1961,7 @@
                     wsSend({ type: 'watch_dirs', payload: { paths } });
                 },
                 scheduleWatchReport() {
+                    if (this.kicked) return;
                     clearTimeout(this._watchTimer);
                     this._watchTimer = setTimeout(() => this.reportWatchDirs(), 150);
                 },
@@ -3480,6 +3493,7 @@
 
                 // 把目前分頁狀態（順序、作用中分頁、匿名分頁、viewState）寫入 IndexedDB meta
                 saveMeta() {
+                    if (this.kicked) return;
                     // 任一次實際寫入都涵蓋完整 meta（含 viewState），所以把兩個 debounce
                     // 計時器一起清掉，避免結構性寫入後又被 viewState 計時器重複寫一次。
                     clearTimeout(this._metaTimer);
@@ -3499,7 +3513,7 @@
                 // 還原階段不寫：restoreSession 的 await 抓檔常超過 debounce，
                 // 否則會在半還原狀態下反覆寫入無謂的 meta，全部還原完再寫一次即可。
                 scheduleMetaSave() {
-                    if (this._restoring) return;
+                    if (this._restoring || this.kicked) return;
                     clearTimeout(this._metaTimer);
                     this._metaTimer = setTimeout(() => this.saveMeta(), 300);
                 },
@@ -3507,7 +3521,7 @@
                 // 游標移動／捲動只更新 viewState，不需要即時持久化，用較長的 debounce
                 // 大幅降低高頻寫入；結構性變更（開關／移動分頁）仍走 scheduleMetaSave。
                 scheduleViewStateSave() {
-                    if (this._restoring) return;
+                    if (this._restoring || this.kicked) return;
                     clearTimeout(this._viewTimer);
                     this._viewTimer = setTimeout(() => this.saveMeta(), 1500);
                 },
@@ -3522,6 +3536,7 @@
                 },
 
                 scheduleDirtySave(path) {
+                    if (this.kicked) return;
                     if (!this._dirtyTimers) this._dirtyTimers = {};
                     clearTimeout(this._dirtyTimers[path]);
                     this._dirtyTimers[path] = setTimeout(() => {
@@ -3845,6 +3860,53 @@
                     persistSettings({ customPhpHtmlComment: this.settings.customPhpHtmlComment });
                 },
 
+                // ──── Kick / 背景寫入收斂
+
+                // 清掉所有會在背景繼續寫 IndexedDB / 送 WS 的 debounce 計時器。
+                // 登出與被踢都要用：這兩種情況本頁都不再是使用者操作中的分頁。
+                stopBackgroundTimers() {
+                    clearTimeout(this._metaTimer);
+                    clearTimeout(this._viewTimer);
+                    clearTimeout(this._watchTimer);
+                    if (this._dirtyTimers) {
+                        Object.values(this._dirtyTimers).forEach(clearTimeout);
+                        this._dirtyTimers = {};
+                    }
+                },
+
+                enterKickedState() {
+                    if (this.kicked) return;
+                    mylog('kick', 'connection replaced by another tab, freezing this tab');
+                    this.flushDirtyFiles();
+                    this.stopBackgroundTimers();
+                    stopSessionCheck();
+                    this.kicked = true;
+                    if (monacoEditor) {
+                        monacoEditor.updateOptions({ readOnly: true });
+                    }
+                    if (document.activeElement && document.activeElement.blur) {
+                        document.activeElement.blur();
+                    }
+                },
+
+                reloadPage() {
+                    location.reload();
+                },
+
+                // 把還在 debounce 中的髒檔內容立刻寫入 IndexedDB。
+                flushDirtyFiles() {
+                    if (!this._dirtyTimers) return;
+                    for (const [path, timer] of Object.entries(this._dirtyTimers)) {
+                        clearTimeout(timer);
+                        const d = tabsData.get(path);
+                        if (d && d.model) {
+                            saveDirtyFile(path, d.model.getValue());
+                            if (d.baseHash !== undefined) saveBaseHash(path, d.baseHash);
+                        }
+                    }
+                    this._dirtyTimers = {};
+                },
+
                 // ──── Logout
                 async doLogout() {
                     const hasDirty = this.tabsList.some(t => t.dirty);
@@ -3857,11 +3919,8 @@
                     }
                     // 先設旗標、清 timer，避免 async 過程中 IDB 被重新寫入
                     this._loggingOut = true;
-                    clearTimeout(this._metaTimer);
-                    if (this._dirtyTimers) {
-                        Object.values(this._dirtyTimers).forEach(clearTimeout);
-                        this._dirtyTimers = {};
-                    }
+                    this.stopBackgroundTimers();
+                    stopSessionCheck();
                     try {
                         localStorage.removeItem(SETTINGS_KEY);
                         await new Promise((resolve) => {
@@ -3951,6 +4010,7 @@
                 });
 
                 document.addEventListener('keydown', (e) => {
+                    if (this.kicked) return;
                     // modal關閉
                     if (this.saveAsDlg.visible) {
                         if (e.key === 'Escape') { e.preventDefault(); this.saveAsDlgCancel(); }
@@ -4016,25 +4076,14 @@
                 });
 
                 const flushSession = () => {
-                    if (this._loggingOut) return;
+                    if (this._loggingOut || this.kicked) return;
                     // saveMeta 內部會清掉 _metaTimer / _viewTimer，這裡直接 flush 即可。
                     this.saveMeta();
-                    if (this._dirtyTimers) {
-                        for (const [path, timer] of Object.entries(this._dirtyTimers)) {
-                            clearTimeout(timer);
-                            const d = tabsData.get(path);
-                            if (d && d.model) saveDirtyFile(path, d.model.getValue());
-                        }
-                        this._dirtyTimers = {};
-                    }
+                    this.flushDirtyFiles();
                 };
 
                 document.addEventListener('visibilitychange', () => {
                     if (document.visibilityState === 'hidden') flushSession();
-                });
-
-                window.addEventListener('beforeunload', () => {
-                    flushSession();
                 });
 
                 // 檔案拖曳上傳
