@@ -265,13 +265,13 @@
         </div>
     </div>
 
-    <div id="toast-container" :style="toasts.length ? { zIndex: 9999 } : {}">
+    <div id="toast-container" :style="toasts.length ? { zIndex: 9997 } : {}">
         <div v-for="t in toasts" :key="t.id" class="toast-item" :class="{ error: t.error }">{{ t.msg }}</div>
     </div>
 
-    <div id="suspend-overlay" v-show="wsSuspended">連線已中斷，重新連線中…</div>
+    <div id="suspend-overlay" v-show="wsSuspended" :style="kicked ? { zIndex: 9996 } : {}">連線已中斷，重新連線中…</div>
 
-    <div id="kick-overlay" v-show="kicked">
+    <div id="kick-overlay" v-show="kicked" :style="kicked ? { zIndex: 10000 } : {}">
         <div id="kick-box">
             <div class="kick-title">此分頁的連線已被新分頁取代</div>
             <div class="kick-desc">同一個帳號同時間只保留一條連線。<br>請改用新開的分頁；若要改回這個分頁，重新整理即可取回連線。</div>
@@ -279,7 +279,7 @@
         </div>
     </div>
 
-    <div id="modal-overlay" v-show="dlg.visible" :style="dlg.visible ? { zIndex: 9998 } : {}">
+    <div id="modal-overlay" v-show="dlg.visible" :style="dlg.visible ? { zIndex: 9995 } : {}">
         <div id="modal-box">
             <div class="modal-title">{{ dlg.title }}</div>
             <input v-if="dlg.inputMode" class="modal-input" v-model="dlg.inputValue" :placeholder="dlg.placeholder"
@@ -292,7 +292,7 @@
         </div>
     </div>
 
-    <div id="saveas-overlay" v-show="saveAsDlg.visible" :style="saveAsDlg.visible ? { zIndex: 9995 } : {}">
+    <div id="saveas-overlay" v-show="saveAsDlg.visible" :style="saveAsDlg.visible ? { zIndex: 9990 } : {}">
         <div id="saveas-box">
             <div id="saveas-title">另存為</div>
             <div id="saveas-tree">
