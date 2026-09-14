@@ -1178,7 +1178,10 @@
                     }
                     if (!r.ok) return;
                     const data = await r.json();
-                    if (data.extended) app.showToast('延長登入時間成功');
+                    if (data.extended) {
+                        app.showToast('延長登入時間成功');
+                        mylog('initSessionCheck', 'session extended');
+                    }
                 } catch {
                     app.showError('連線失敗，無法確認 session 狀態');
                 }
