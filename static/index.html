@@ -279,7 +279,8 @@
         </div>
     </div>
 
-    <div id="modal-overlay" v-show="dlg.visible" :style="dlg.visible ? { zIndex: 9995 } : {}">
+    <!-- visible要比app-loading的z-index高，避免loading時彈出的modal顯示不出來，例如hash mismatch -->
+    <div id="modal-overlay" v-show="dlg.visible" :style="dlg.visible ? { zIndex: 9998 } : {}">
         <div id="modal-box">
             <div class="modal-title">{{ dlg.title }}</div>
             <input v-if="dlg.inputMode" class="modal-input" v-model="dlg.inputValue" :placeholder="dlg.placeholder"
