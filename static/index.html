@@ -2265,6 +2265,7 @@
                         // 無條件清掉會清錯分頁（圓點留在剛存好的分頁上），也會蓋掉存檔中新打的字。
                         const stillDirty = !!data.model && data.model.getValue() !== content;
                         if (activeTab) activeTab.dirty = stillDirty;
+                        mylog('saveCurrent', path, 'stillDirty=' + stillDirty);
                         if (stillDirty) this.scheduleDirtySave(path);
                         else this.clearDirtyEntry(path);
                         this.setStatus('已儲存：' + path);
