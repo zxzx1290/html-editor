@@ -353,8 +353,14 @@
         const ts = `${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}.${p(t.getMilliseconds(), 3)}`;
         return [`[${ts}]`, `[${src}]`];
     }
-    function mylog(src, ...args) { console.log(..._logparts(src), ...args); }
-    function myerr(src, ...args) { console.error(..._logparts(src), ...args); }
+    // 物件轉成當下的 JSON 字串，console 直接看得到內容（不用手動展開，也不會之後才讀到新值）
+    // Error / DOM / 循環參照等無法序列化的維持原物件
+    function _snap(a) {
+        if (a === null || typeof a !== 'object' || a instanceof Error || a instanceof Node) return a;
+        try { return JSON.stringify(a); } catch { return a; }
+    }
+    function mylog(src, ...args) { console.log(..._logparts(src), ...args.map(_snap)); }
+    function myerr(src, ...args) { console.error(..._logparts(src), ...args.map(_snap)); }
 
     (function () {
         // ──── Constants & shared state
