@@ -1346,8 +1346,18 @@
                 if (app.wsSuspended) reconnectAttempt = 0;
                 connect();
             }
-            document.addEventListener('visibilitychange', resumeWs);
-            window.addEventListener('pageshow', resumeWs);
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    mylog('initWs', 'tab visible, resuming ws');
+                    resumeWs();
+                }
+            });
+
+            window.addEventListener('pageshow', () => {
+                mylog('initWs', 'pageshow, resuming ws');
+                resumeWs();
+            });
 
             connect();
         }
