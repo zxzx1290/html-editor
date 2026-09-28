@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1536,6 +1538,17 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// errFileModifiedSince 是 writeFile 的 If-Match 前置條件失敗（檔案在前端開檔後已被改動或刪除），
+// 用哨兵錯誤從 runWithTimeout 的 closure 裡帶出來，好跟真正的 I/O 錯誤區分開。
+var errFileModifiedSince = errors.New("file modified since open")
+
+// fileETag 以內容的 SHA-256 前 64 bit 當版本指紋，回答「這還是我當初開的那一版嗎」。不用 VSCode 那種 mtime+size，是因為檔案常放在 sshfs 上：SFTP v3 的 mtime 只有秒解析度，且 stat 走 FUSE attr 快取、可能跟內容不同步。附帶好處是內容沒變就不會變，touch / git checkout 寫回相同內容不會誤報衝突。
+// readFile 本來就把 bytes 讀進來了，算雜湊不多一次 I/O；成本只在 writeFile 帶 If-Match 時要多讀一次舊檔。取 64 bit 足夠分辨同一個檔案的不同版本，這裡不是要防碰撞攻擊。
+func fileETag(data []byte) string {
+	sum := sha256.Sum256(data)
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
+}
+
 // 開檔大小的把關放在前端（見 index.html 的 maxOpenFileSize）：由使用者在確認框
 // 決定要不要開這份大檔，後端不代為攔截，需要時仍開得起來。
 func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
@@ -1586,6 +1599,7 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 	}
 	logf("[file-open] user=%s path=%q", usernameFromCtx(r), rel)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("ETag", fileETag(data))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
@@ -1607,15 +1621,43 @@ func (s *server) writeFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// body 已收完再開始落盤；MkdirAll + WriteFile 都可能因底層 FS 卡住，一起包 timeout。
+	// If-Match 帶的是前端開檔時拿到的 ETag：不符就擋下來，避免蓋掉別人在這期間存的內容。
+	// 沒帶就維持原本的無條件覆寫（新建檔、另存新檔等情境本來就沒有「原本那一版」）。
+	ifMatch := r.Header.Get("If-Match")
+
+	// body 已收完再開始落盤；讀舊檔 + MkdirAll + WriteFile 都可能因底層 FS 卡住，一起包 timeout。
+	// 註：比對與 WriteFile 之間仍有極小的空窗，沒有檔案鎖無法完全消除（VSCode 的 etag 也是這個程度的保證），目的是擋掉「開著檔案幾分鐘後才存」這類真正會發生的覆蓋，不是做嚴格互斥。
+	var newETag string
 	err = runWithTimeout(r.Context(), fileOpIOTimeout, func() error {
+		if ifMatch != "" {
+			old, rerr := os.ReadFile(abs) // 指紋是內容雜湊，比對就得把舊檔讀回來
+			if rerr != nil {
+				if os.IsNotExist(rerr) {
+					return errFileModifiedSince // 檔案已被刪除，同樣不該悄悄重建
+				}
+				return rerr
+			}
+			if fileETag(old) != ifMatch {
+				return errFileModifiedSince
+			}
+		}
 		if ferr := os.MkdirAll(filepath.Dir(abs), 0o755); ferr != nil {
 			return ferr
 		}
-		return os.WriteFile(abs, body, 0o644)
+		if ferr := os.WriteFile(abs, body, 0o644); ferr != nil {
+			return ferr
+		}
+		// 寫進去的就是 body，新 ETag 直接算得出來；前端存完檔就能更新，不必為了拿 ETag 再抓一次檔案。
+		newETag = fileETag(body)
+		return nil
 	})
 	if errors.Is(err, context.DeadlineExceeded) {
 		writeTimeoutError(w, "write file")
+		return
+	}
+	if errors.Is(err, errFileModifiedSince) {
+		logf("[file-save-conflict] user=%s path=%q if-match=%s", usernameFromCtx(r), rel, ifMatch)
+		writeError(w, http.StatusPreconditionFailed, "file modified since open")
 		return
 	}
 	if err != nil {
@@ -1623,7 +1665,7 @@ func (s *server) writeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logf("[file-save] user=%s path=%q", usernameFromCtx(r), rel)
-	writeOK(w)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "etag": newETag})
 }
 
 func (s *server) deleteFile(w http.ResponseWriter, r *http.Request) {

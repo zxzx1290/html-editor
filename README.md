@@ -342,3 +342,7 @@ static/
 前端圖片預覽支援（點擊後顯示預覽而非開啟編輯器）：`.png` `.jpg` `.jpeg` `.gif` `.webp` `.ico`
 
 單檔上傳上限：50 MB（可透過 config.json `maxUploadSize` 調整）。
+
+## 第三方元件與授權
+
+本專案使用並散佈多個第三方元件（Monaco Editor、Vue、xterm.js、vscode-textmate、TextMate grammar 與主題等），其中 `php-html.tmLanguage.json` 直接收錄自 VS Code。各元件的授權與著作權聲明見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

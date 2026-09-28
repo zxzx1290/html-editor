@@ -394,7 +394,18 @@
         };
         const SETTINGS_KEY = 'html-editor-settings';
         // Monaco models and view states stored outside Vue reactivity
-        const tabsData = new Map(); // path → { model, originalContent, viewState, baseHash }
+        const tabsData = new Map(); // path → { model, savedVersionId, viewState, etag }
+
+        // 未儲存判斷沿用 VSCode 作法：比對 model 的 alternativeVersionId 與存檔（或開檔）當下記下的值，
+        // 不必每次變動都把整份內容組成字串再比；undo 回到存檔時的狀態也會自動變回未修改。
+        // savedVersionId 為 undefined 表示這個 model 沒有「已存檔」的基準（例如還原回來、內容非空的匿名分頁），一律視為未儲存。
+        function markSaved(data) {
+            data.savedVersionId = data.model ? data.model.getAlternativeVersionId() : undefined;
+        }
+
+        function isModelDirty(data) {
+            return !!data.model && data.model.getAlternativeVersionId() !== data.savedVersionId;
+        }
         const openingPaths = new Map(); // path -> focusMonaco（開檔併發鎖；值可被稍後的雙擊改成 true 以要求聚焦）
         const expandingPaths = new Set(); // 目錄正在展開中（避免快速重複點擊造成 state 不一致／重複 request）
         const uploadXhrs = new Map(); // upload id → XMLHttpRequest（供取消用，存在 Vue 響應式之外）
@@ -555,11 +566,12 @@
         // ──── IndexedDB session persistence
         // meta  store: key='tabs' → { tabs:[...paths], activeTab:'...' }
         // dirty store: key=filePath → file content (string)
+        // etag  store: key=filePath → 開檔時後端回的 ETag（判斷離開期間檔案是否被他人改過）
         const IDB_NAME = 'html-editor-db';
-        const IDB_VER = 2;
+        const IDB_VER = 3;
         const STORE_META = 'meta';
         const STORE_DIRTY = 'dirty';
-        const STORE_HASH = 'basehash';
+        const STORE_ETAG = 'baseetag';
 
         function openDB() {
             return new Promise((resolve, reject) => {
@@ -568,7 +580,9 @@
                     const db = e.target.result;
                     if (!db.objectStoreNames.contains(STORE_META)) db.createObjectStore(STORE_META);
                     if (!db.objectStoreNames.contains(STORE_DIRTY)) db.createObjectStore(STORE_DIRTY);
-                    if (!db.objectStoreNames.contains(STORE_HASH)) db.createObjectStore(STORE_HASH);
+                    // v3：basehash（前端內容雜湊）改為 baseetag（後端 ETag），舊資料不相容，直接刪除
+                    if (db.objectStoreNames.contains('basehash')) db.deleteObjectStore('basehash');
+                    if (!db.objectStoreNames.contains(STORE_ETAG)) db.createObjectStore(STORE_ETAG);
                 };
                 req.onsuccess = e => resolve(e.target.result);
                 req.onerror = e => reject(e.target.error);
@@ -595,21 +609,15 @@
             }));
         }
 
-        function simpleHash(str) {
-            let h = 0;
-            for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
-            return h.toString(36);
-        }
-
         async function loadSession() {
             mylog('loadSession', 'loading session');
             try {
-                const [meta, dirtyContents, baseHashes] = await Promise.all([
+                const [meta, dirtyContents, baseEtags] = await Promise.all([
                     idbOp(STORE_META, 'readonly', s => s.get('tabs')),
                     idbAllEntries(STORE_DIRTY),
-                    idbAllEntries(STORE_HASH),
+                    idbAllEntries(STORE_ETAG),
                 ]);
-                return meta ? { ...meta, dirtyContents, baseHashes } : null;
+                return meta ? { ...meta, dirtyContents, baseEtags } : null;
             } catch (e) {
                 myerr('loadSession', 'failed to load session', e); return null;
             }
@@ -625,14 +633,14 @@
                 .catch(err => myerr('deleteDirtyFile', 'failed to delete dirty file:', path, err));
         }
 
-        function saveBaseHash(path, hash) {
-            idbOp(STORE_HASH, 'readwrite', s => s.put(hash, path))
-                .catch(err => myerr('saveBaseHash', 'failed to persist base hash:', path, err));
+        function saveBaseEtag(path, etag) {
+            idbOp(STORE_ETAG, 'readwrite', s => s.put(etag, path))
+                .catch(err => myerr('saveBaseEtag', 'failed to persist base etag:', path, err));
         }
 
-        function deleteBaseHash(path) {
-            idbOp(STORE_HASH, 'readwrite', s => s.delete(path))
-                .catch(err => myerr('deleteBaseHash', 'failed to delete base hash:', path, err));
+        function deleteBaseEtag(path) {
+            idbOp(STORE_ETAG, 'readwrite', s => s.delete(path))
+                .catch(err => myerr('deleteBaseEtag', 'failed to delete base etag:', path, err));
         }
 
         // ──── Editor state & 雜項 helpers
@@ -1736,12 +1744,12 @@
                         if (!ok) return;
                     }
                     try {
-                        const bytes = await this.fetchBytes(path);
+                        const { bytes, etag } = await this.fetchBytes(path);
                         const text = decodeBytes(bytes, id);
                         data.model.setValue(text);
                         data.encoding = id;
-                        data.originalContent = text;
-                        data.baseHash = simpleHash(text);
+                        markSaved(data);
+                        data.etag = etag;
                         this.currentEncoding = id;
                         const tab = this.tabsList.find(t => t.path === path);
                         if (tab) tab.dirty = false;
@@ -1776,7 +1784,16 @@
                     return await res.text();
                 },
 
+                // 寫檔。帶 ifMatch 時後端會比對 ETag，不符就回 412 不寫入（見 main.go 的 writeFile）；
+                // 回傳值裡的 etag 是寫入後的新版本，呼叫端要記回 tab 上，下一次存檔才擋得住。
+                async putFile(path, body, ifMatch) {
+                    const headers = { 'Content-Type': 'application/octet-stream' };
+                    if (ifMatch) headers['If-Match'] = ifMatch;
+                    return await this.api('/api/file?path=' + encodeURIComponent(path), { method: 'PUT', headers, body });
+                },
+
                 // 抓檔案原始 bytes（給編碼解碼用；後端原樣回傳 bytes，前端自行解碼）
+                // 同時帶回這一版的 ETag，存檔時用 If-Match 擋掉覆蓋他人修改。
                 async fetchBytes(path) {
                     mylog('fetchBytes', path);
                     const res = await fetch('/api/file?path=' + encodeURIComponent(path));
@@ -1790,7 +1807,7 @@
                         err.status = res.status;
                         throw err;
                     }
-                    return new Uint8Array(await res.arrayBuffer());
+                    return { bytes: new Uint8Array(await res.arrayBuffer()), etag: res.headers.get('ETag') || undefined };
                 },
 
                 // ──── File tree
@@ -2014,14 +2031,14 @@
                             if (!ok) return; // finally 會釋放開檔鎖
                         }
                         if (isImagePath(path)) {
-                            tabsData.set(path, { model: null, originalContent: '', viewState: null });
+                            tabsData.set(path, { model: null, viewState: null });
                             this.tabsList.push(this.makeTab(path, { tabType: 'image' }));
                             notifyOpen(path, '');
                         } else {
                             try {
                                 const langId = detectLang(path);
                                 const wirePromise = ensureLangWired(langId);
-                                const bytes = await this.fetchBytes(path);
+                                const { bytes, etag } = await this.fetchBytes(path);
                                 if (!forceText && seemsBinary(bytes)) {
                                     // 先釋放開檔鎖，確認框可能停留很久，且按下確認後要重新進入 openFile
                                     openingPaths.delete(path);
@@ -2036,7 +2053,7 @@
                                 const text = decodeBytes(bytes, encoding);
                                 await wirePromise;
                                 const model = monaco.editor.createModel(text, langId);
-                                tabsData.set(path, { model, originalContent: text, viewState: null, baseHash: simpleHash(text), encoding });
+                                tabsData.set(path, { model, savedVersionId: model.getAlternativeVersionId(), viewState: null, etag, encoding });
                                 this.tabsList.push(this.makeTab(path));
                                 notifyOpen(path, text);
                             } catch (e) {
@@ -2268,18 +2285,37 @@
                         if (edits.length > 0) model.pushEditOperations([], edits, () => null);
                     }
                     const content = monacoEditor.getValue();
+                    // 切斷目前的 undo 群組，存檔後再打字、undo 時才停得在存檔點（VSCode 存檔時同樣這麼做）
+                    data.model.pushStackElement();
+                    const contentVersionId = data.model.getAlternativeVersionId(); // 與 content 同一刻，存檔成功後即為新的基準
                     pluginBus.emit('fileBeforeSave', { value: content, path });
                     const encoding = data.encoding || 'utf8';
+                    const body = encoding === 'utf8' ? content : encodeText(content, encoding);
                     try {
-                        await this.api('/api/file?path=' + encodeURIComponent(path), {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/octet-stream' },
-                            body: encoding === 'utf8' ? content : encodeText(content, encoding),
-                        });
-                        data.originalContent = content;
-                        // await 期間可能已換分頁或又打了字：依「該分頁 model 的當下內容」判定圓點。
+                        // 帶 If-Match，讓後端擋掉「開檔後檔案已被別人改過」的覆寫；要不要蓋交給使用者決定。
+                        // data.etag 不存在時（例如升級前留下的舊 session）維持原本的無條件覆寫。
+                        let res;
+                        try {
+                            res = await this.putFile(path, body, data.etag);
+                        } catch (e) {
+                            if (e.status !== 412) throw e;
+                            mylog('saveCurrent', 'etag conflict:', path, '| if-match:', data.etag);
+                            const ok = await this.dlgConfirm(
+                                `「${path}」在您開啟後已被他人修改。
+繼續儲存會覆蓋對方的修改，要繼續嗎？`,
+                                { confirmText: '覆蓋儲存', cancelText: '取消', danger: true }
+                            );
+                            if (!ok) {
+                                this.setStatus('已取消儲存：' + path);
+                                return; // finally 會解掉 isSaving；圓點與草稿都保留，使用者可自行處理
+                            }
+                            res = await this.putFile(path, body); // 確認要覆蓋，這次不帶 If-Match
+                        }
+                        data.etag = res.etag;
+                        data.savedVersionId = contentVersionId;
+                        // await 期間可能已換分頁或又打了字：依「該分頁 model 的當下版本」判定圓點。
                         // 無條件清掉會清錯分頁（圓點留在剛存好的分頁上），也會蓋掉存檔中新打的字。
-                        const stillDirty = !!data.model && data.model.getValue() !== content;
+                        const stillDirty = isModelDirty(data);
                         if (activeTab) activeTab.dirty = stillDirty;
                         mylog('saveCurrent', path, 'stillDirty=' + stillDirty);
                         if (stillDirty) this.scheduleDirtySave(path);
@@ -2375,21 +2411,21 @@
                         this.showError('已有相同路徑的已開啟檔案');
                         return;
                     }
+                    if (!await this.confirmOverwriteIfExists(targetPath)) return;
                     this.isSaving = true;
                     try {
                         const content = monacoEditor.getValue();
+                        data.model.pushStackElement();
+                        const contentVersionId = data.model.getAlternativeVersionId();
                         pluginBus.emit('fileBeforeSave', { value: content, path: targetPath });
-                        await this.api('/api/file?path=' + encodeURIComponent(targetPath), {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-                            body: content,
-                        });
+                        const res = await this.putFile(targetPath, content);
                         monaco.editor.setModelLanguage(data.model, detectLang(targetPath));
-                        data.originalContent = content;
+                        data.etag = res.etag;
+                        data.savedVersionId = contentVersionId;
                         tabsData.delete(oldPath);
                         tabsData.set(targetPath, data);
                         const tab = this.tabsList.find(t => t.path === oldPath);
-                        if (tab) { tab.path = targetPath; tab.dirty = false; tab.isAnonymous = false; }
+                        if (tab) { tab.path = targetPath; tab.dirty = isModelDirty(data); tab.isAnonymous = false; }
                         this.clearDirtyEntry(oldPath);
                         if (this.activeTabPath === oldPath) this.activeTabPath = targetPath;
                         if (this.selectedPath === oldPath) { this.selectedPath = targetPath; this.selectedPaths = [targetPath]; }
@@ -2418,7 +2454,7 @@
                     while (this.tabsList.find(t => t.path === `untitled:${n}`)) n++;
                     const path = `untitled:${n}`;
                     const model = monaco.editor.createModel('', 'plaintext');
-                    tabsData.set(path, { model, originalContent: '', viewState: null });
+                    tabsData.set(path, { model, savedVersionId: model.getAlternativeVersionId(), viewState: null });
                     this.tabsList.push(this.makeTab(path, { isAnonymous: true }));
                     notifyOpen(path, '');
                     this.activateTab(path);
@@ -2760,26 +2796,38 @@
                     }
                 },
 
-                async uploadFiles(files, targetDir) {
-                    let existing = new Set();
+                // 列出目錄下的檔名（不含子目錄），給寫檔前的撞名檢查用。
+                // 列不到（權限、網路）就回空集合，撞名檢查視同跳過，不擋住操作。
+                async listDirFileNames(dir) {
+                    const names = new Set();
                     try {
-                        const res = await this.api('/api/files?path=' + encodeURIComponent(targetDir || ''));
+                        const res = await this.api('/api/files?path=' + encodeURIComponent(dir || ''));
                         for (const f of (res.files || [])) {
-                            if (!f.isDir) existing.add(f.name);
+                            if (!f.isDir) names.add(f.name);
                         }
                     } catch (e) {
-                        myerr('uploadFiles', 'list target dir failed; overwrite check skipped', e);
+                        myerr('listDirFileNames', 'list dir failed; overwrite check skipped:', dir, e);
                     }
+                    return names;
+                },
+
+                confirmOverwrite(name) {
+                    return this.dlgConfirm('「' + name + '」已存在於目標位置，是否覆蓋？', { confirmText: '覆蓋', danger: true });
+                },
+
+                // 單一路徑的撞名確認：沒撞名或使用者同意覆蓋時回 true。
+                async confirmOverwriteIfExists(path) {
+                    const name = path.split('/').pop();
+                    const existing = await this.listDirFileNames(this.parentOf(path));
+                    return !existing.has(name) || await this.confirmOverwrite(name);
+                },
+
+                async uploadFiles(files, targetDir) {
+                    const existing = await this.listDirFileNames(targetDir);
 
                     const tasks = [];
                     for (const f of files) {
-                        if (existing.has(f.name)) {
-                            const ok = await this.dlgConfirm(
-                                '「' + f.name + '」已存在於目標位置，是否覆蓋？',
-                                { confirmText: '覆蓋', danger: true }
-                            );
-                            if (!ok) continue;
-                        }
+                        if (existing.has(f.name) && !await this.confirmOverwrite(f.name)) continue;
                         // reactive()：entry 本身即 proxy，改 progress/status 才會觸發重繪
                         const entry = Vue.reactive({ id: Date.now() + Math.random(), name: f.name, progress: 0, error: false, status: 'queued', canceled: false });
                         this.uploads.push(entry);
@@ -2908,12 +2956,9 @@
                     const name = await this.dlgPrompt('輸入新檔名（包含副檔名，例如 page.html）：');
                     if (!name) return;
                     const path = this.joinPath(parentDir || '', name);
+                    if (!await this.confirmOverwriteIfExists(path)) return;
                     try {
-                        await this.api('/api/file?path=' + encodeURIComponent(path), {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-                            body: '',
-                        });
+                        await this.putFile(path, '');
                         await this.refreshDir(parentDir || '');
                         await this.openFile(path);
                     } catch (e) {
@@ -3242,7 +3287,7 @@
                     const model = monaco.editor.createModel(header, 'plaintext', uri);
                     tabsData.set(path, {
                         model,
-                        originalContent: header,
+                        savedVersionId: model.getAlternativeVersionId(),
                         viewState: null,
                         searchMeta: { keyword, dirPath },
                         searchAbort: abortCtl,
@@ -3299,7 +3344,7 @@
                     }
                     const tab = this.tabsList.find(t => t.path === tabPath);
                     if (tab) tab.dirty = false;
-                    d.originalContent = d.model.getValue();
+                    markSaved(d);
                 },
 
                 // 把「搜尋中…」placeholder 清掉，保留 "header\n\n"。
@@ -3367,7 +3412,7 @@
                     } else {
                         this._searchAppendText(d, `\n${msg}\n`);
                     }
-                    d.originalContent = d.model.getValue();
+                    markSaved(d);
                     const tab = this.tabsList.find(t => t.path === tabPath);
                     if (tab) tab.dirty = false;
                 },
@@ -3553,7 +3598,7 @@
                         delete this._dirtyTimers[path];
                     }
                     deleteDirtyFile(path);
-                    deleteBaseHash(path);
+                    deleteBaseEtag(path);
                 },
 
                 scheduleDirtySave(path) {
@@ -3564,7 +3609,7 @@
                         const d = tabsData.get(path);
                         if (d && d.model) {
                             saveDirtyFile(path, d.model.getValue());
-                            if (d.baseHash !== undefined) saveBaseHash(path, d.baseHash);
+                            if (d.etag !== undefined) saveBaseEtag(path, d.etag);
                         }
                     }, 1500);
                 },
@@ -3602,32 +3647,33 @@
                                 const saved = dirtyContents[path];
                                 const content = saved !== undefined ? saved : '';
                                 const model = monaco.editor.createModel(content, 'plaintext');
-                                tabsData.set(path, { model, originalContent: '', viewState: viewStates[path] || null });
+                                // 內容非空代表是未存的草稿，沒有已存檔的基準
+                                tabsData.set(path, { model, savedVersionId: content === '' ? model.getAlternativeVersionId() : undefined, viewState: viewStates[path] || null });
                                 this.tabsList.push(this.makeTab(path, { dirty: content !== '', isAnonymous: true }));
                                 notifyOpen(path, content);
                                 continue;
                             }
                             if (isImagePath(path)) {
-                                tabsData.set(path, { model: null, originalContent: '', viewState: null });
+                                tabsData.set(path, { model: null, viewState: null });
                                 this.tabsList.push(this.makeTab(path, { tabType: 'image' }));
                                 notifyOpen(path, '');
                             } else {
                                 const langId = detectLang(path);
                                 const wirePromise = ensureLangWired(langId);
-                                const bytes = await this.fetchBytes(path);
+                                const { bytes, etag } = await this.fetchBytes(path);
                                 const encoding = detectEncoding(bytes);
                                 const text = decodeBytes(bytes, encoding);
                                 await wirePromise;
                                 const model = monaco.editor.createModel(text, langId);
                                 const saved = dirtyContents[path];
                                 let isDirty = saved !== undefined && saved !== text;
-                                tabsData.set(path, { model, originalContent: text, viewState: viewStates[path] || null, baseHash: simpleHash(text), encoding });
+                                tabsData.set(path, { model, savedVersionId: model.getAlternativeVersionId(), viewState: viewStates[path] || null, etag, encoding });
                                 this.tabsList.push(this.makeTab(path));
                                 notifyOpen(path, text);
                                 if (isDirty) {
-                                    const storedHash = (session.baseHashes || {})[path];
-                                    if (storedHash !== undefined && storedHash !== simpleHash(text)) {
-                                        mylog('_restoreSessionInner', 'hash mismatch:', path, '| stored:', storedHash, '| current:', simpleHash(text));
+                                    const storedEtag = (session.baseEtags || {})[path];
+                                    if (storedEtag !== undefined && etag !== undefined && storedEtag !== etag) {
+                                        mylog('_restoreSessionInner', 'etag mismatch:', path, '| stored:', storedEtag, '| current:', etag);
                                         const keep = await this.dlgConfirm(
                                             `「${path}」在您離開後已被他人修改。\n是否仍要載入您的未儲存草稿？（儲存時將覆蓋他人的修改）`,
                                             { confirmText: '載入草稿', cancelText: '使用伺服器版本', danger: true }
@@ -3650,7 +3696,7 @@
                                     const langId = detectLang(path);
                                     await ensureLangWired(langId);
                                     const model = monaco.editor.createModel(saved, langId);
-                                    tabsData.set(path, { model, originalContent: '', viewState: viewStates[path] || null });
+                                    tabsData.set(path, { model, savedVersionId: undefined, viewState: viewStates[path] || null });
                                     this.tabsList.push(this.makeTab(path, { dirty: true, isAnonymous: true }));
                                     notifyOpen(path, saved);
                                 } else {
@@ -3922,7 +3968,7 @@
                         const d = tabsData.get(path);
                         if (d && d.model) {
                             saveDirtyFile(path, d.model.getValue());
-                            if (d.baseHash !== undefined) saveBaseHash(path, d.baseHash);
+                            if (d.etag !== undefined) saveBaseEtag(path, d.etag);
                         }
                     }
                     this._dirtyTimers = {};
@@ -4463,7 +4509,7 @@
                         if (!this.activeTabPath) return;
                         const data = tabsData.get(this.activeTabPath);
                         if (!data || this.activeTabIsImage) return;
-                        const isDirty = monacoEditor.getValue() !== data.originalContent;
+                        const isDirty = isModelDirty(data);
                         const tab = this.tabsList.find(t => t.path === this.activeTabPath);
                         if (tab && isDirty !== tab.dirty) tab.dirty = isDirty;
                         if (isDirty) this.scheduleDirtySave(this.activeTabPath);
