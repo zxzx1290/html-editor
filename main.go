@@ -1665,7 +1665,7 @@ func (s *server) writeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logf("[file-save] user=%s path=%q", usernameFromCtx(r), rel)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "etag": newETag})
+	writeJSON(w, http.StatusOK, map[string]any{"etag": newETag})
 }
 
 func (s *server) deleteFile(w http.ResponseWriter, r *http.Request) {
@@ -1770,7 +1770,7 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	rel, _ := filepath.Rel(ws, dstResolved)
 	logf("[file-upload] user=%s path=%q", usernameFromCtx(r), filepath.ToSlash(rel))
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": filepath.ToSlash(rel)})
+	writeJSON(w, http.StatusOK, map[string]any{"path": filepath.ToSlash(rel)})
 }
 
 func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -2005,7 +2005,7 @@ func (s *server) handleRename(w http.ResponseWriter, r *http.Request) {
 	relTo, _ := filepath.Rel(ws, absTo)
 	relTo = filepath.ToSlash(relTo)
 	logf("[file-rename] user=%s from=%q to=%q", usernameFromCtx(r), from, relTo)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "to": relTo})
+	writeJSON(w, http.StatusOK, map[string]any{"to": relTo})
 }
 
 func (s *server) handleMkdir(w http.ResponseWriter, r *http.Request) {
@@ -2078,7 +2078,7 @@ func (s *server) handleCopy(w http.ResponseWriter, r *http.Request) {
 	relTo, _ := filepath.Rel(ws, absTo)
 	relTo = filepath.ToSlash(relTo)
 	logf("[file-copy] user=%s from=%q to=%q", usernameFromCtx(r), from, relTo)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": relTo})
+	writeJSON(w, http.StatusOK, map[string]any{"path": relTo})
 }
 
 func copyPath(src, dst string) error {
@@ -2214,7 +2214,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 func writeOK(w http.ResponseWriter) {
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func resolvePath(workspace, rel string) (string, error) {
