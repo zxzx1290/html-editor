@@ -2811,15 +2811,16 @@
                     return names;
                 },
 
-                confirmOverwrite(name) {
-                    return this.dlgConfirm('「' + name + '」已存在於目標位置，是否覆蓋？', { confirmText: '覆蓋', danger: true });
+                confirmOverwrite(name, dir) {
+                    return this.dlgConfirm('「' + name + '」已存在於「' + (dir || '/') + '」，是否覆蓋？', { confirmText: '覆蓋', danger: true });
                 },
 
                 // 單一路徑的撞名確認：沒撞名或使用者同意覆蓋時回 true。
                 async confirmOverwriteIfExists(path) {
                     const name = path.split('/').pop();
-                    const existing = await this.listDirFileNames(this.parentOf(path));
-                    return !existing.has(name) || await this.confirmOverwrite(name);
+                    const dir = this.parentOf(path);
+                    const existing = await this.listDirFileNames(dir);
+                    return !existing.has(name) || await this.confirmOverwrite(name, dir);
                 },
 
                 async uploadFiles(files, targetDir) {
@@ -2827,7 +2828,7 @@
 
                     const tasks = [];
                     for (const f of files) {
-                        if (existing.has(f.name) && !await this.confirmOverwrite(f.name)) continue;
+                        if (existing.has(f.name) && !await this.confirmOverwrite(f.name, targetDir)) continue;
                         // reactive()：entry 本身即 proxy，改 progress/status 才會觸發重繪
                         const entry = Vue.reactive({ id: Date.now() + Math.random(), name: f.name, progress: 0, error: false, status: 'queued', canceled: false });
                         this.uploads.push(entry);
