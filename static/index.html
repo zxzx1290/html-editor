@@ -2151,7 +2151,9 @@
                     }
 
                     const displayName = this.tabLabel(tab);
-                    if (tab.dirty && !await this.dlgConfirm(`「${displayName}」有未儲存的變更，確定要關閉嗎？`)) return;
+                    const data0 = tabsData.get(path);
+                    const emptyAnon = tab.isAnonymous && tab.tabType === 'file' && !(data0 && data0.model && data0.model.getValueLength());
+                    if (tab.dirty && !emptyAnon && !await this.dlgConfirm(`「${displayName}」有未儲存的變更，確定要關閉嗎？`)) return;
 
                     notifyClose(path);
                     const data = tabsData.get(path);
