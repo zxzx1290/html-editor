@@ -234,7 +234,8 @@
 
         <div id="editor-host">
             <div id="empty-hint" v-show="tabsList.length === 0">從左側選擇檔案開始編輯</div>
-            <div id="editor" ref="editorEl" v-show="activeTabPath && !activeTabIsImage && !activeTabIsTerminal"></div>
+            <div id="editor" ref="editorEl" v-show="activeTabPath && !activeTabIsImage && !activeTabIsTerminal && !activeTabIsHex"></div>
+            <div id="hex-view" ref="hexEl" v-show="activeTabIsHex"></div>
             <div id="image-preview" v-show="activeTabIsImage">
                 <img :src="imagePreviewSrc" @load="onImgLoad" />
             </div>
@@ -244,14 +245,16 @@
         <div id="status">
             <span class="status-msg">{{ statusMsg }}</span>
             <span class="status-right" v-if="statusRight">{{ statusRight }}</span>
-            <span class="status-indent" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && indentInfo"
+            <span class="status-indent" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTabIsHex && indentInfo"
                 @click.stop="openIndentMenu" title="選取縮排">{{ indentLabel }}</span>
-            <span class="status-enc" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTab.isAnonymous"
+            <span class="status-enc" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTabIsHex && !activeTab.isAnonymous"
                 @click.stop="openEncodingMenu" title="選取編碼">{{ currentEncodingLabel }}</span>
-            <span class="status-eol" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal"
+            <span class="status-eol" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTabIsHex"
                 @click.stop="openEolMenu" title="選取行尾序列">{{ currentEol }}</span>
-            <span class="status-lang" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal"
+            <span class="status-lang" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTabIsHex"
                 @click.stop="openLangPicker" title="選擇語法高亮語言">{{ currentLangLabel }}</span>
+            <span class="status-hex" :class="{ active: activeTabIsHex }" v-if="activeTab && activeTab.tabType === 'file'"
+                @click.stop="toggleHex" title="切換 Hex 檢視">Hex</span>
         </div>
 
         <div id="lang-picker" v-show="langPicker.open" @click.stop>
@@ -645,7 +648,27 @@
 
         // ──── Editor state & 雜項 helpers
         let monacoEditor = null;
+        let hexEditor = null; // 唯讀 hex 檢視，第一次切到 Hex 才建立
         let updateEolDecorations = () => {};
+
+        // 比照 Notepad++ hex 檢視：位址 | 16 bytes（8 個一組）| ASCII，不可印字元顯示為 '.'
+        const HEX_BYTE = Array.from({ length: 256 }, (_, i) => i.toString(16).toUpperCase().padStart(2, '0'));
+        function hexDump(bytes) {
+            const lines = [];
+            for (let off = 0; off < bytes.length; off += 16) {
+                let hex = '', asc = '';
+                for (let i = 0; i < 16; i++) {
+                    if (off + i < bytes.length) {
+                        const b = bytes[off + i];
+                        hex += HEX_BYTE[b] + ' ';
+                        asc += b >= 0x20 && b < 0x7F ? String.fromCharCode(b) : '.';
+                    } else hex += '   ';
+                    if (i === 7) hex += ' ';
+                }
+                lines.push(off.toString(16).toUpperCase().padStart(8, '0') + '  ' + hex + ' ' + asc);
+            }
+            return lines.join('\n');
+        }
         const loadedThemes = new Set();
         const themeCache = new Map(); // themeId → raw VS Code theme JSON
         const DEFAULT_THEME = 'dark-plus';
@@ -1472,6 +1495,9 @@
                 activeTabIsTerminal() {
                     return this.activeTab ? this.activeTab.tabType === 'terminal' : false;
                 },
+                activeTabIsHex() {
+                    return this.activeTab ? !!this.activeTab.hexView : false;
+                },
                 activeTabDirty() {
                     return this.activeTab ? this.activeTab.dirty : false;
                 },
@@ -1499,7 +1525,7 @@
                     if (this.activeTabIsImage) {
                         return this.imageDim + (this.imageBytes ? '   ' + formatSize(this.imageBytes) : '');
                     }
-                    if (this.activeTab && !this.activeTabIsTerminal) {
+                    if (this.activeTab && !this.activeTabIsTerminal && !this.activeTabIsHex) {
                         // 字串比照 VSCode 繁中在地化（editorStatus singleSelection / multiSelection）
                         if (this.selRanges > 1) {
                             return this.selCount
@@ -1515,6 +1541,10 @@
             },
 
             watch: {
+                // 離開 hex（切回文字、換分頁、關分頁）就清掉 dump，免得大檔的 dump 一直佔著記憶體；回到 hex 時 renderHex 本來就會重新產生
+                activeTabIsHex(v) {
+                    if (!v && hexEditor) hexEditor.setValue('');
+                },
                 // 關掉搜尋框即恢復完整樹，清掉展開記錄，把目前選取節點捲入可見範圍
                 treeSearchOpen(open) {
                     mylog('treeSearchOpen', open);
@@ -1535,7 +1565,7 @@
                 formatSize,
                 // 統一建立 tab 物件，確保欄位架構一致。tabType: 'file' | 'image' | 'search' | 'terminal'
                 makeTab(path, extra = {}) {
-                    return { path, dirty: false, tabType: 'file', ...extra };
+                    return { path, dirty: false, tabType: 'file', hexView: false, ...extra };
                 },
                 // 分頁顯示名：一律從 path/termName/searchLabel 衍生，改名只改 path 即自動更新
                 tabLabel(tab) {
@@ -1934,7 +1964,7 @@
                     if (item.isDir || isImagePath(item.path)) return;
                     mylog('onNodeDblClick', item.path);
                     await this.openFile(item.path);
-                    if (this.activeTabPath === item.path && monacoEditor) monacoEditor.focus();
+                    if (this.activeTabPath === item.path && monacoEditor && !this.activeTabIsHex) monacoEditor.focus();
                 },
 
                 parentOf(path) {
@@ -2075,7 +2105,8 @@
 
                     if (this.activeTabPath) {
                         const cur = tabsData.get(this.activeTabPath);
-                        if (cur && monacoEditor && !this.activeTabIsImage) cur.viewState = monacoEditor.saveViewState();
+                        // hex 模式下 Monaco 是隱藏的，viewState 已在切進 hex 時存好，這裡別用被夾過的狀態蓋掉
+                        if (cur && monacoEditor && !this.activeTabIsImage && !this.activeTabIsHex) cur.viewState = monacoEditor.saveViewState();
                     }
 
                     this.activeTabPath = path;
@@ -2096,30 +2127,34 @@
                         }
                         if (newTab.tabType === 'image') {
                             this.setStatus('圖片預覽：' + path);
-                            const url = '/api/file?path=' + encodeURIComponent(path) + '&t=' + Date.now();
                             try {
-                                const blob = await (await fetch(url)).blob();
-                                this.imageBytes = blob.size;
+                                const { bytes } = await this.fetchBytes(path, true);
+                                this.imageBytes = bytes.length;
                                 if (this._imgObjUrl) URL.revokeObjectURL(this._imgObjUrl);
-                                this._imgObjUrl = URL.createObjectURL(blob);
+                                this._imgObjUrl = URL.createObjectURL(new Blob([bytes]));
                                 this.imagePreviewSrc = this._imgObjUrl;
                             } catch (e) {
-                                myerr('openTab', 'image blob fetch failed, fallback to direct url', e);
                                 this.imageBytes = 0;
-                                this.imagePreviewSrc = url; // 退回直連
+                                this.imagePreviewSrc = '';
+                                this.showError('圖片載入失敗: ' + e.message);
                             }
                         } else {
                             monacoEditor.setModel(data.model);
                             this.currentEncoding = data.encoding || 'utf8';
-                            this.setStatus('已開啟：' + path);
-                            // restoreViewState 必須等 editor 真正可見且 layout 過再做：
-                            // 從圖片/終端機分頁切回時 editor 還是 v-show display:none（height 0），
-                            // 此時還原捲動會被 Monaco 夾到底部（誤捲到最後一行）。
-                            this.$nextTick(() => {
-                                monacoEditor.layout();
-                                if (data.viewState) monacoEditor.restoreViewState(data.viewState);
-                                if (focusMonaco) monacoEditor.focus();
-                            });
+                            if (newTab.hexView) {
+                                // Monaco 隱藏中，viewState 留到切回文字時再還原
+                                await this.renderHex(path);
+                            } else {
+                                this.setStatus('已開啟：' + path);
+                                // restoreViewState 必須等 editor 真正可見且 layout 過再做：
+                                // 從圖片/終端機分頁切回時 editor 還是 v-show display:none（height 0），
+                                // 此時還原捲動會被 Monaco 夾到底部（誤捲到最後一行）。
+                                this.$nextTick(() => {
+                                    monacoEditor.layout();
+                                    if (data.viewState) monacoEditor.restoreViewState(data.viewState);
+                                    if (focusMonaco) monacoEditor.focus();
+                                });
+                            }
                         }
                     }
 
@@ -2130,6 +2165,58 @@
                         if (tabEl) tabEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
                     });
                     if (!(newTab && newTab.tabType === 'terminal')) this.scrollToTreeNode(path);
+                },
+
+                // 文字 ↔ hex 檢視切換。具名檔從磁碟重抓（未儲存的變更不會出現在 hex 裡）；
+                // 匿名檔沒有磁碟檔，改用 buffer 依分頁編碼轉出的 bytes，即存檔後會寫出的內容。
+                async toggleHex() {
+                    const tab = this.activeTab;
+                    const data = tab && tabsData.get(tab.path);
+                    if (!data) return;
+                    if (!tab.hexView) {
+                        data.viewState = monacoEditor.saveViewState();
+                        tab.hexView = true;
+                        await this.renderHex(tab.path);
+                    } else {
+                        tab.hexView = false;
+                        this.setStatus('已開啟：' + tab.path);
+                        this.$nextTick(() => {
+                            monacoEditor.layout();
+                            if (data.viewState) monacoEditor.restoreViewState(data.viewState);
+                            monacoEditor.focus();
+                        });
+                    }
+                },
+
+                async renderHex(path) {
+                    mylog('renderHex', path);
+                    try {
+                        const tab = this.activeTab;
+                        const data = tabsData.get(path);
+                        if (hexEditor) hexEditor.setValue(''); // 抓檔期間別留著上一個檔案的 hex
+                        const bytes = tab.isAnonymous
+                            ? encodeText(data.model.getValue(), data.encoding || 'utf8')
+                            : (await this.fetchBytes(path, true)).bytes;
+                        await this.$nextTick(); // 匿名檔不經 await 就到這，等 v-show 讓容器可見再建 editor
+                        if (this.activeTabPath !== path || !this.activeTabIsHex) return; // 抓檔期間已切走
+                        if (!hexEditor) {
+                            hexEditor = monaco.editor.create(this.$refs.hexEl, {
+                                value: '', language: 'plaintext', readOnly: true, automaticLayout: true,
+                                lineNumbers: 'off', minimap: { enabled: false }, wordWrap: 'off',
+                                unicodeHighlight: { ambiguousCharacters: false },
+                            });
+                            // 同主編輯器：聚焦時清掉 treeFocused，免得 Ctrl+C 被當成複製檔案
+                            hexEditor.onDidFocusEditorText(() => { this.treeFocused = false; });
+                        }
+                        // 字型跟著主編輯器走（設定改了下次切 hex 就套上）
+                        const o = monacoEditor.getRawOptions();
+                        hexEditor.updateOptions({ fontFamily: o.fontFamily, fontSize: o.fontSize });
+                        hexEditor.setValue(hexDump(bytes));
+                        const note = tab.isAnonymous ? '' : tab.dirty ? '；顯示的是磁碟內容，不含未儲存的變更' : '';
+                        this.setStatus('Hex 檢視（唯讀）：' + this.tabLabel(tab) + '，' + formatSize(bytes.length) + note);
+                    } catch (e) {
+                        this.showError('Hex 檢視失敗: ' + e.message);
+                    }
                 },
 
                 async closeTab(path) {
@@ -2319,6 +2406,7 @@
                         else this.clearDirtyEntry(path);
                         this.setStatus('已儲存：' + path);
                         this.showToast('儲存成功');
+                        if (this.activeTabPath === path && this.activeTabIsHex) this.renderHex(path); // hex 顯示的是磁碟內容，存檔後要跟著更新
                         pluginBus.emit('fileAfterSave', {
                             path,
                             document: { title: path.split('/').pop() },
@@ -3478,6 +3566,12 @@
                     await this.openFile(path);
                     const m = monacoEditor.getModel();
                     if (!m) return;
+                    if (this.activeTabIsHex) {
+                        // 要跳到某一行就得看文字；直接跳到目標行，不必還原 viewState
+                        this.activeTab.hexView = false;
+                        await this.$nextTick();
+                        monacoEditor.layout();
+                    }
                     monacoEditor.revealLineInCenter(line);
                     monacoEditor.setPosition({ lineNumber: line, column: 1 });
                 },
@@ -3543,7 +3637,7 @@
                 // 收集各分頁的 Monaco viewState（含游標位置與捲動），供持久化還原用。
                 // 作用中分頁的 viewState 平時不會寫回 tabsData，這裡先即時補抓。
                 collectViewStates() {
-                    if (this.activeTabPath && monacoEditor && !this.activeTabIsImage && !this.activeTabIsTerminal) {
+                    if (this.activeTabPath && monacoEditor && !this.activeTabIsImage && !this.activeTabIsTerminal && !this.activeTabIsHex) {
                         const cur = tabsData.get(this.activeTabPath);
                         if (cur) cur.viewState = monacoEditor.saveViewState();
                     }

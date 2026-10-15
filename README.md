@@ -7,6 +7,7 @@
 - **編輯器**：Monaco Editor 搭配 TextMate 語法引擎（`vscode-textmate` + `vscode-oniguruma`），支援 HTML / CSS / JavaScript / TypeScript / JSON / PHP / Vue / Python / Go / Rust / Ruby / Shell / Markdown / C++ / Java / Dockerfile / YAML / SQL，分詞粒度與配色皆與 VS Code 原版一致
 - **多分頁**：可拖曳排序、中鍵關閉、未儲存以圓點標示；`+` 按鈕新增空白檔案（Untitled，儲存時彈出「另存為」）或終端機
 - **狀態列**：縮排、編碼、行尾序列（LF / CRLF）、語言，皆可點擊切換
+- **Hex 檢視**：狀態列「Hex」切換唯讀 hex dump（位址／16 bytes／ASCII）；具名檔顯示磁碟內容，匿名檔顯示依目前編碼轉出的 bytes
 - **編碼**：開檔自動偵測（jschardet），支援 UTF-8 / UTF-8 BOM / UTF-16 LE、BE / Big5 / GBK / GB18030 / Shift_JIS / EUC-JP / EUC-KR / Latin-1，也可手動指定重新載入
 - **檔案樹**：懶載入、拖曳上傳（進度條、佇列、可取消）、多選（Ctrl / Shift + Click）、剪下／複製／貼上／建立副本／重新命名／刪除、關鍵字過濾、目錄 mtime 輪詢自動刷新、symlink 標示與目標提示
 - **搜尋**：資料夾遞迴 regex 搜尋，結果以新分頁串流呈現，對命中行 Ctrl+Click 可跳到該檔該行
@@ -308,7 +309,7 @@ static/
 | 方法 | 路徑 | 說明 |
 |------|------|------|
 | `GET` | `/api/files?path=` | 列出目錄內容；回傳 `{ files: [{ path, name, isDir, size, isSymlink?, linkTarget? }] }`，目錄排在前，同層按名稱排序；`isSymlink` 涵蓋 Unix symlink 與 Windows directory junction，`linkTarget` 為 `os.Readlink` 結果（以 `/` 分隔） |
-| `GET` | `/api/file?path=` | 讀取檔案 |
+| `GET` | `/api/file?path=` | 讀取檔案，回應帶內容雜湊 `ETag`；檔頭 512 bytes 內含 NUL（帶 BOM 的 UTF-16 除外）視為 binary 回 415，加 `&force=1` 才回傳內容 |
 | `PUT` | `/api/file?path=` | 寫入檔案（body 為純文字） |
 | `DELETE` | `/api/file?path=` | 刪除檔案或目錄 |
 | `POST` | `/api/upload` | 上傳檔案（multipart/form-data，上限 50 MB） |

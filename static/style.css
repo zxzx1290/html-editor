@@ -676,7 +676,8 @@ button.btn:disabled {
     min-height: 0;
 }
 
-#editor {
+#editor,
+#hex-view {
     position: absolute;
     inset: 0;
 }
@@ -739,7 +740,8 @@ button.btn:disabled {
 #status .status-enc,
 #status .status-eol,
 #status .status-indent,
-#status .status-lang {
+#status .status-lang,
+#status .status-hex {
     cursor: pointer;
     padding: 0 10px;
     align-self: stretch;
@@ -751,7 +753,9 @@ button.btn:disabled {
 #status .status-enc:hover,
 #status .status-eol:hover,
 #status .status-indent:hover,
-#status .status-lang:hover {
+#status .status-lang:hover,
+#status .status-hex:hover,
+#status .status-hex.active {
     background: var(--bg-statusbar-hover);
 }
 
