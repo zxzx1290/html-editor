@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -1549,6 +1550,15 @@ func fileETag(data []byte) string {
 	return `"` + hex.EncodeToString(sum[:8]) + `"`
 }
 
+// 比照 VSCode：檔頭 512 bytes 內出現 NUL(0x00) 即視為 binary。
+// 帶 BOM 的 UTF-16 例外（開頭 FF FE / FE FF 之後常有 0x00，卻是合法文字）。
+func seemsBinary(data []byte) bool {
+	if bytes.HasPrefix(data, []byte{0xFF, 0xFE}) || bytes.HasPrefix(data, []byte{0xFE, 0xFF}) {
+		return false
+	}
+	return bytes.IndexByte(data[:min(len(data), 512)], 0) >= 0
+}
+
 // 開檔大小的把關放在前端（見 index.html 的 maxOpenFileSize）：由使用者在確認框
 // 決定要不要開這份大檔，後端不代為攔截，需要時仍開得起來。
 func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
@@ -1595,6 +1605,11 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 	}
 	if info.IsDir() {
 		writeError(w, http.StatusBadRequest, "is a directory")
+		return
+	}
+	// binary 擋在後端，不必整份傳到前端才發現；前端確認後帶 force=1 重抓。
+	if r.URL.Query().Get("force") != "1" && seemsBinary(data) {
+		writeError(w, http.StatusUnsupportedMediaType, "binary file")
 		return
 	}
 	logf("[file-open] user=%s path=%q", usernameFromCtx(r), rel)

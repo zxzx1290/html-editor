@@ -84,6 +84,43 @@ func TestReadFileNoSizeLimit(t *testing.T) {
 	}
 }
 
+// binary 檔沒帶 force=1 要回 415 且不送內容；帶 force=1 照常回傳。帶 BOM 的 UTF-16 雖含 NUL 仍算文字。
+func TestReadFileBinary(t *testing.T) {
+	ws := t.TempDir()
+	files := map[string][]byte{
+		"bin.dat":   {'a', 0, 'b'},
+		"u16le.txt": {0xFF, 0xFE, 'a', 0},
+		"u16be.txt": {0xFE, 0xFF, 0, 'a'},
+		"text.txt":  []byte("hello"),
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(ws, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &server{config: &Config{}}
+	cases := []struct {
+		query string
+		code  int
+	}{
+		{"path=bin.dat", http.StatusUnsupportedMediaType},
+		{"path=bin.dat&force=1", http.StatusOK},
+		{"path=u16le.txt", http.StatusOK},
+		{"path=u16be.txt", http.StatusOK},
+		{"path=text.txt", http.StatusOK},
+	}
+	for _, c := range cases {
+		w := httptest.NewRecorder()
+		s.readFile(w, withWorkspace(httptest.NewRequest(http.MethodGet, "/api/file?"+c.query, nil), ws))
+		if w.Code != c.code {
+			t.Errorf("%s: 期望 %d，得到 %d", c.query, c.code, w.Code)
+		}
+		if c.code == http.StatusUnsupportedMediaType && bytes.Contains(w.Body.Bytes(), []byte{0}) {
+			t.Errorf("%s: 415 不該送出檔案內容", c.query)
+		}
+	}
+}
+
 // readFile 要回 ETag，writeFile 帶對的 If-Match 要能寫入並回新 ETag；
 // 帶舊 ETag（檔案已被別人改過）要回 412 且原檔案內容不能被動到。
 // ETag 是內容雜湊，所以 mtime 變了但內容沒變（touch、git checkout 寫回同樣內容）不該算衝突。

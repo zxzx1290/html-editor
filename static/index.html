@@ -716,15 +716,6 @@
             return 'utf8';
         }
 
-        // 比照 VSCode：檔頭 512 bytes 內出現 NUL(0x00) 即視為 binary，擋下不進文字編輯器。
-        // 帶 BOM 的 UTF-16 例外（開頭 FF FE / FE FF 之後常有 0x00，卻是合法文字）。
-        function seemsBinary(bytes) {
-            if (bytes.length >= 2 && ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF))) return false;
-            const n = Math.min(bytes.length, 512);
-            for (let i = 0; i < n; i++) if (bytes[i] === 0) return true;
-            return false;
-        }
-
         // bytes → 字串（依 id；utf8/utf16 會先剝掉 BOM）
         function decodeBytes(bytes, id) {
             if (id === 'utf8' || id === 'utf8bom') {
@@ -1744,7 +1735,7 @@
                         if (!ok) return;
                     }
                     try {
-                        const { bytes, etag } = await this.fetchBytes(path);
+                        const { bytes, etag } = await this.fetchBytes(path, true);
                         const text = decodeBytes(bytes, id);
                         data.model.setValue(text);
                         data.encoding = id;
@@ -1794,9 +1785,10 @@
 
                 // 抓檔案原始 bytes（給編碼解碼用；後端原樣回傳 bytes，前端自行解碼）
                 // 同時帶回這一版的 ETag，存檔時用 If-Match 擋掉覆蓋他人修改。
-                async fetchBytes(path) {
-                    mylog('fetchBytes', path);
-                    const res = await fetch('/api/file?path=' + encodeURIComponent(path));
+                // binary 檔後端回 415（見 main.go seemsBinary），force=true 才強制回傳內容
+                async fetchBytes(path, force = false) {
+                    mylog('fetchBytes', path, force ? '(force)' : '');
+                    const res = await fetch('/api/file?path=' + encodeURIComponent(path) + (force ? '&force=1' : ''));
                     if (!res.ok) {
                         // 後端的錯誤訊息
                         let msg = res.statusText;
@@ -2038,8 +2030,11 @@
                             try {
                                 const langId = detectLang(path);
                                 const wirePromise = ensureLangWired(langId);
-                                const { bytes, etag } = await this.fetchBytes(path);
-                                if (!forceText && seemsBinary(bytes)) {
+                                let bytes, etag;
+                                try {
+                                    ({ bytes, etag } = await this.fetchBytes(path, forceText));
+                                } catch (e) {
+                                    if (e.status !== 415) throw e;
                                     // 先釋放開檔鎖，確認框可能停留很久，且按下確認後要重新進入 openFile
                                     openingPaths.delete(path);
                                     const ok = await this.dlgConfirm(
@@ -3663,7 +3658,7 @@
                             } else {
                                 const langId = detectLang(path);
                                 const wirePromise = ensureLangWired(langId);
-                                const { bytes, etag } = await this.fetchBytes(path);
+                                const { bytes, etag } = await this.fetchBytes(path, true);
                                 const encoding = detectEncoding(bytes);
                                 const text = decodeBytes(bytes, encoding);
                                 await wirePromise;
