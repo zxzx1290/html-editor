@@ -418,6 +418,8 @@
         const termPathPrefix = 'tmux://';
         // 還原中（由 term_sessions 觸發）的 session name；用來避免重連時搶走 focus
         const restoringTerms = new Set();
+        // restoreSession 跑完才向伺服器要終端機清單，確保 _pendingActiveTab / _restoreTabOrder 已設好
+        let sessionRestored = false;
 
         // window resize 100ms debounce 後對所有 terminal fit（避免拖視窗時每 frame reflow + 送 WS）
         let _fitAllTimer = null;
@@ -1267,7 +1269,8 @@
                     app.wsSuspended = false;
                     app.showToast('已上線');
                     app.tabsList.forEach(t => fileOnOpen(t.path));
-                    if (app.canTerminal) wsSend({ type: 'term_list' });
+                    // 首次連線若 session 還在還原，留給 onmount 還原完再要；重連時 sessionRestored 已是 true
+                    if (app.canTerminal && sessionRestored) wsSend({ type: 'term_list' });
                     if (isReconnect) app.loadTree();
                     else app.reportWatchDirs();
                 };
@@ -3709,7 +3712,10 @@
                 async restoreSession() {
                     mylog('restoreSession', 'restoring session');
                     const session = await loadSession();
-                    if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) return;
+                    if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) {
+                        mylog('restoreSession', 'nothing to restore:', session ? `tabs=${JSON.stringify(session.tabs)}` : 'no meta');
+                        return;
+                    }
                     this._restoring = true;
                     try {
                         await this._restoreSessionInner(session);
@@ -4639,6 +4645,9 @@
 
                     // Restore session (tabs, active tab, unsaved contents)
                     await this.restoreSession();
+                    // ws 已連上就現在要；還沒連上（或還原中斷線）則 wsSend 不做事，交給之後的 onopen 送
+                    sessionRestored = true;
+                    if (this.canTerminal) wsSend({ type: 'term_list' });
 
                     // hide loading screen
                     document.getElementById('app-loading').style.display = 'none';
