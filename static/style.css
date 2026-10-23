@@ -107,6 +107,30 @@ body {
     justify-content: space-between;
 }
 
+#sidebar-title {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#sidebar-title .sidebar-user,
+#sidebar-title .ws-status {
+    font-weight: normal;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+#sidebar-title .sidebar-user { color: var(--fg); }
+
+#sidebar-title .ws-status { color: var(--danger-fg); }
+
+/* 分隔點放在偽元素裡，才會跟著連線狀態變色 */
+#sidebar-title .ws-status::before { content: '· '; }
+
+#sidebar-title .ws-status.online { color: #89D185; }
+
 #file-tree {
     flex: 1;
     overflow: auto;

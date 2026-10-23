@@ -25,8 +25,9 @@
     <aside id="sidebar" :class="{ collapsed: sidebarCollapsed }"
         :style="{ width: sidebarWidth + 'px', flex: '0 0 ' + sidebarWidth + 'px', marginLeft: sidebarCollapsed ? (-sidebarWidth) + 'px' : null }">
         <div id="sidebar-header">
-            <span>WORKSPACE
-                <template v-if="currentUser"> · <span style="font-weight:normal;text-transform:none;letter-spacing:0;color:var(--fg);">{{ currentUser }}</span></template>
+            <span id="sidebar-title">WORKSPACE
+                <template v-if="currentUser"> · <span class="sidebar-user">{{ currentUser }}</span> <span class="ws-status" :class="{ online: wsConnected }"
+                        :title="wsConnected ? 'WebSocket 已連線' : 'WebSocket 已離線'">{{ wsConnected ? '已連線' : '已離線' }}</span></template>
             </span>
             <div style="display:flex;gap:3px;">
                 <button class="btn" @click="toggleTreeSearch" :class="{ active: treeSearchOpen }" title="搜尋" style="padding:2px 6px;"><i class="icon-search"></i></button>
@@ -1266,6 +1267,7 @@
                 socket.onopen = function () {
                     const isReconnect = reconnectAttempt > 0 || app.wsSuspended;
                     reconnectAttempt = 0;
+                    app.wsConnected = true;
                     app.wsSuspended = false;
                     app.showToast('已上線');
                     app.tabsList.forEach(t => fileOnOpen(t.path));
@@ -1346,6 +1348,7 @@
 
                 socket.onclose = function (e) {
                     socket = null;
+                    app.wsConnected = false;
                     if (closing) return;   // 故意關閉（登出），不重連
                     // 分頁在背景被 Chrome 凍結／進 bfcache 時，瀏覽器會直接砍掉 ws（code 1006）。
                     // 此時重連毫無意義（連上後馬上又被砍，每分鐘空轉一輪），改成掛遮罩等回到分頁再連。
@@ -1452,6 +1455,7 @@
                     settingsOpen: false,
                     statusMsg: '',
                     isSaving: false,
+                    wsConnected: false,
                     wsSuspended: false, // 分頁被 Chrome 凍結導致 ws 斷線，等回到分頁才重連
                     kicked: false,      // 連線被同帳號的新分頁取代，本頁進入唯讀凍結狀態
                     toasts: [],
