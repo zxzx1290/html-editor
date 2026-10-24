@@ -26,8 +26,7 @@
         :style="{ width: sidebarWidth + 'px', flex: '0 0 ' + sidebarWidth + 'px', marginLeft: sidebarCollapsed ? (-sidebarWidth) + 'px' : null }">
         <div id="sidebar-header">
             <span id="sidebar-title">WORKSPACE
-                <template v-if="currentUser"> · <span class="sidebar-user">{{ currentUser }}</span> <span class="ws-status" :class="{ online: wsConnected }"
-                        :title="wsConnected ? 'WebSocket 已連線' : 'WebSocket 已離線'">{{ wsConnected ? '已連線' : '已離線' }}</span></template>
+                <template v-if="currentUser"> · <span class="sidebar-user">{{ currentUser }}</span> <span v-if="!wsConnected" class="ws-status" title="WebSocket 已離線">已離線</span></template>
             </span>
             <div style="display:flex;gap:3px;">
                 <button class="btn" @click="toggleTreeSearch" :class="{ active: treeSearchOpen }" title="搜尋" style="padding:2px 6px;"><i class="icon-search"></i></button>
@@ -453,6 +452,8 @@
         // 讓更早被呼叫的地方安全略過。
         let wsSend = () => {};
         let wsClose = () => {};
+        // 首次 ws 連上才 resolve
+        let wsReady = null;
         let stopSessionCheck = () => {};
         let fileOnOpen = () => {};
         let fileOnClose = () => {};
@@ -1230,6 +1231,8 @@
             // 連線成功後 reconnectAttempt 歸零，下次斷線重新從 1 秒起算。
             const RECONNECT_DELAYS = [1, 3, 5, 10, 20, 30];
             let reconnectAttempt = 0;
+            let resolveWsReady;
+            wsReady = new Promise(r => resolveWsReady = r);
 
             wsSend = function (data) {
                 if (!socket || socket.readyState !== WebSocket.OPEN) return;
@@ -1269,6 +1272,7 @@
                     reconnectAttempt = 0;
                     app.wsConnected = true;
                     app.wsSuspended = false;
+                    resolveWsReady();
                     app.showToast('已上線');
                     app.tabsList.forEach(t => fileOnOpen(t.path));
                     // 首次連線若 session 還在還原，留給 onmount 還原完再要；重連時 sessionRestored 已是 true
@@ -1396,12 +1400,13 @@
             try {
                 cfg = await fetch('/api/config').then(r => r.json());
             } catch (e) {
-                myerr('initBuiltins', 'config fetch failed', e); return;
+                myerr('initBuiltins', 'config fetch failed', e); return false;
             }
             app.currentUser = cfg.username || '';
             app.canTerminal = cfg.terminal === true;
             initSessionCheck(app);
             initWs(app);
+            return true;
         }
 
         // ──── Vue app (createApp)
@@ -4644,14 +4649,23 @@
 
                     mylog('onmount', 'initBuiltins start');
                     // Init built-in session check + WS collaboration
-                    await initBuiltins(this);
+                    // 拿不到 config 就沒有 ws／session 檢查，留著遮罩不讓使用者在半殘狀態下操作
+                    if (!await initBuiltins(this)) {
+                        await this.dlgAlert('無法取得設定，按確定重新整理頁面');
+                        this.reloadPage();
+                        return;
+                    }
                     mylog('onmount', 'initBuiltins done');
 
                     // Restore session (tabs, active tab, unsaved contents)
                     await this.restoreSession();
+
                     // ws 已連上就現在要；還沒連上（或還原中斷線）則 wsSend 不做事，交給之後的 onopen 送
                     sessionRestored = true;
                     if (this.canTerminal) wsSend({ type: 'term_list' });
+
+                    // ws 連上才拔遮罩；連不上時重連的錯誤 toast 疊在遮罩上方，使用者看得到原因
+                    await wsReady;
 
                     // hide loading screen
                     document.getElementById('app-loading').style.display = 'none';
