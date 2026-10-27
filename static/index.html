@@ -970,7 +970,11 @@
                         }
                     }
                 }
-                grammar = await tmRegistry.loadGrammarWithConfiguration(scope, encodedLanguageId, { embeddedLanguages });
+                try {
+                    grammar = await tmRegistry.loadGrammarWithConfiguration(scope, encodedLanguageId, { embeddedLanguages });
+                } catch (e) {
+                    myerr('wireTextMateLanguage', 'grammar load failed', langId, e);
+                }
                 if (!grammar) return;
                 tmGrammarCache.set(langId, grammar);
             }
@@ -981,7 +985,11 @@
             // Monaco 只負責照 encodedTokensColors 取色，不再經過 Monaco 自己的
             // string-token prefix matching。
             monaco.languages.setTokensProvider(langId, {
-                getInitialState: () => new TextMateState(TM.textmate.INITIAL),
+                getInitialState: () => {
+                    // model 開始（重新）tokenize 時才呼叫，可確認實際上色的是 TextMate 而非 Monarch
+                    mylog('wireTextMateLanguage', 'tokenize start', langId);
+                    return new TextMateState(TM.textmate.INITIAL);
+                },
                 tokenizeEncoded: (line, state) => {
                     const result = grammar.tokenizeLine2(line, state.ruleStack);
                     // Monaco 的 bracket pair tree 只掃 metadata 帶 BALANCED_BRACKETS_MASK
@@ -1005,7 +1013,7 @@
         // 帶舊主題的 colorMap index → 顏色錯亂。重新註冊 token provider 會讓
         // TokenizationRegistry 發出變更事件，逼該語言所有 model resetTokenization。
         function retokenizeTextMate() {
-            mylog('TextMate', 'retokenizeTextMate');
+            mylog('retokenizeTextMate', 're-registering token provider for all wired languages');
             for (const langId of tmWiredLangs) wireTextMateLanguage(langId);
         }
 
@@ -4366,6 +4374,12 @@
                     for (const langId of Object.keys(TM_LANG_SCOPE)) {
                         mylog('mounted', 'registering onLanguage for', langId);
                         monaco.languages.onLanguage(langId, () => ensureLangWired(langId));
+                        // basic-languages 用 registerTokensProviderFactory 註冊 Monarch，該語言第一次有 model 就非同步載入；若晚於我們的 setTokensProvider 才 resolve，會蓋掉 TextMate provider → 整檔變回 Monarch 配色（主題像沒套上）。
+                        // 同語言再註冊一個 factory 會 dispose 舊的，disposed factory resolve 後不會 register；回 null 表示 provider 一律由 wireTextMateLanguage 設。
+                        monaco.languages.registerTokensProviderFactory(langId, { create: () => {
+                            mylog('TextMate', 'Monarch factory suppressed', langId);
+                            return null;
+                        } });
                     }
 
                     monacoEditor = monaco.editor.create(this.$refs.editorEl, {
