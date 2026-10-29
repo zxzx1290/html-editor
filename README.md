@@ -4,7 +4,7 @@
 
 ## 功能
 
-- **編輯器**：Monaco Editor 搭配 TextMate 語法引擎（`vscode-textmate` + `vscode-oniguruma`），支援 HTML / CSS / JavaScript / TypeScript / JSON / PHP / Vue / Python / Go / Rust / Ruby / Shell / Markdown / C++ / Java / Dockerfile / YAML / SQL，分詞粒度與配色皆與 VS Code 原版一致
+- **編輯器**：Monaco Editor 搭配 TextMate 語法引擎（`vscode-textmate` + `vscode-oniguruma`），支援 HTML / CSS / SCSS / Less / Sass / JavaScript / TypeScript / JSON / PHP / Vue / Python / Go / Rust / Ruby / Shell / Markdown / C++ / Java / Dockerfile / YAML / SQL，分詞粒度與配色皆與 VS Code 原版一致
 - **多分頁**：可拖曳排序、中鍵關閉、未儲存以圓點標示；`+` 按鈕新增空白檔案（Untitled，儲存時彈出「另存為」）或終端機
 - **狀態列**：縮排、編碼、行尾序列（LF / CRLF）、語言，皆可點擊切換
 - **Hex 檢視**：狀態列「Hex」切換唯讀 hex dump（位址／16 bytes／ASCII）；具名檔顯示磁碟內容，匿名檔顯示依目前編碼轉出的 bytes
@@ -44,7 +44,7 @@ npm install
 - 將 Monaco 靜態檔案複製到 `static/monaco/vs/`
 - 將 VS Code 原版語法高亮主題（`tm-themes`）複製到 `static/themes/`
 - 將 xterm.js（含 fit addon、unicode11 addon、WebGL addon）複製到 `static/xterm/`
-- 以 esbuild 將 `vscode-textmate` + `vscode-oniguruma` 打包為 IIFE，連同 `onig.wasm` 與 TextMate grammar（HTML、HTML derivative、CSS、JavaScript、JSON、PHP `source.php`、Python、Go、Rust、Ruby、Shell（`shellscript`）、Markdown、C++、Java、Dockerfile（`docker`）、YAML、SQL、TypeScript、Vue 來自 `tm-grammars`；`.php` 檔的入口 grammar `text.html.php` vendored 自 vscode `extensions/php/syntaxes/html.tmLanguage.json`）一起輸出到 `static/textmate/`
+- 以 esbuild 將 `vscode-textmate` + `vscode-oniguruma` 打包為 IIFE，連同 `onig.wasm` 與 TextMate grammar（HTML、HTML derivative、CSS、SCSS、Less、Sass、JavaScript、JSON、PHP `source.php`、Python、Go、Rust、Ruby、Shell（`shellscript`）、Markdown、C++、Java、Dockerfile（`docker`）、YAML、SQL、TypeScript、Vue 來自 `tm-grammars`；`.php` 檔的入口 grammar `text.html.php` vendored 自 vscode `extensions/php/syntaxes/html.tmLanguage.json`）一起輸出到 `static/textmate/`
 - 以 esbuild 將 `@vscode/iconv-lite-umd`（編解碼）+ `jschardet`（偵測）打包為 IIFE 輸出到 `static/encoding/`
 - 將 Lucide icon font（`lucide-static`）的 `lucide.woff2` 與精簡版 CSS（只引用 woff2）複製到 `static/lucide/`
 

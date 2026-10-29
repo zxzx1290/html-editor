@@ -46,8 +46,9 @@ tm-grammars 只是彙整，各 grammar 仍依原作者的授權：
 
 | Grammar | 來源 | 授權 | 著作權 |
 |---|---|---|---|
-| html、html-derivative、css、javascript、json、php、python、go、rust、ruby、shellscript、markdown、cpp、java、docker、sql、typescript | microsoft/vscode `extensions/*/syntaxes/` | MIT | Copyright (c) 2015 - present Microsoft Corporation |
+| html、html-derivative、css、scss、less、javascript、json、php、python、go、rust、ruby、shellscript、markdown、cpp、java、docker、sql、typescript | microsoft/vscode `extensions/*/syntaxes/` | MIT | Copyright (c) 2015 - present Microsoft Corporation |
 | vue | [vuejs/language-tools](https://github.com/vuejs/language-tools) | MIT | Copyright (c) 2021-present Johnson Chu |
+| sass | [TheRealSyler/vscode-sass-indented](https://github.com/TheRealSyler/vscode-sass-indented) | MIT | Copyright (c) 2016-2019 Robin Bentley, 2019-present Leonard Grosoli |
 | yaml | [textmate/yaml.tmbundle](https://github.com/textmate/yaml.tmbundle) | TextMate bundle 寬鬆授權（見文末） | — |
 
 ### 編輯器主題（`static/themes/`）

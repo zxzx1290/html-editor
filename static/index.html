@@ -373,6 +373,7 @@
         const LANG_MAP = {
             html: 'html', htm: 'html',
             css: 'css',
+            scss: 'scss', less: 'less', sass: 'sass',
             js: 'javascript', mjs: 'javascript', cjs: 'javascript',
             json: 'json',
             md: 'markdown', markdown: 'markdown',
@@ -821,6 +822,9 @@
             'source.js': 'javascript',
             'source.json': 'json',
             'source.css': 'css',
+            'source.css.scss': 'scss',
+            'source.css.less': 'less',
+            'source.sass': 'sass',
             'text.html.basic': 'html',
             'text.html.derivative': 'html-derivative',
             'source.php': 'php',
@@ -843,6 +847,9 @@
             javascript: 'source.js',
             json: 'source.json',
             css: 'source.css',
+            scss: 'source.css.scss',
+            less: 'source.css.less',
+            sass: 'source.sass',
             html: 'text.html.basic',
             php: 'text.html.php',
             python: 'source.python',
@@ -874,6 +881,9 @@
                 'text.html.derivative': 'html',
                 'text.html.markdown': 'markdown',
                 'source.css': 'css',
+                'source.css.scss': 'scss',
+                'source.css.less': 'less',
+                'source.sass': 'sass',
                 'source.js': 'javascript',
                 'source.ts': 'typescript',
                 'source.json': 'json',
@@ -4302,6 +4312,16 @@
                     // Vue 不在 Monaco basic-languages 內，必須先 register 才能讓
                     // setModelLanguage('vue') 與下方 onLanguage 監聽器生效。
                     monaco.languages.register({ id: 'vue', extensions: ['.vue'], aliases: ['Vue', 'vue'] });
+                    // Sass（縮排語法）同樣不在 basic-languages 內；config 取自 vscode-sass-indented
+                    monaco.languages.register({ id: 'sass', extensions: ['.sass'], aliases: ['Sass', 'sass'] });
+                    monaco.languages.setLanguageConfiguration('sass', {
+                        comments: { lineComment: '//', blockComment: ['/*', '*/'] },
+                        brackets: [['{', '}'], ['[', ']'], ['(', ')']],
+                        autoClosingPairs: [
+                            { open: '{', close: '}' }, { open: '[', close: ']' }, { open: '(', close: ')' },
+                            { open: '"', close: '"', notIn: ['string'] }, { open: "'", close: "'", notIn: ['string'] },
+                        ],
+                    });
                     // language configuration 直接 port 自 Volar
                     // (vuejs/language-tools extensions/vscode/languages/vue-language-configuration.json)。
                     // 範本區的 Ctrl+/ / 自動縮排 / folding 全部對齊 VS Code 行為；<script> /
