@@ -2130,6 +2130,11 @@
                 async activateTab(path, focusMonaco = true) {
                     if (this.activeTabPath === path) return;
                     mylog('activateTab', path, 'focusMonaco=' + focusMonaco);
+                    // 使用者已自己切分頁 → 不再等終端機還原 focus
+                    if (this._pendingActiveTab && this._pendingActiveTab !== path) {
+                        mylog('activateTab', 'cancel pending activeTab due to user switch', this._pendingActiveTab, '→', path);
+                        this._pendingActiveTab = null
+                    }
                     this.selectedPath = path;
                     this.selectedPaths = [path];
 
@@ -2768,6 +2773,7 @@
                         this.activateTab(path);
                     } else if (this._pendingActiveTab === path) {
                         // 還原中、且這個剛好是上次關閉前的 focus tab → 切過去
+                        mylog('onTerminalOpened', 'restored tab is pending active, activating', path);
                         this._pendingActiveTab = null;
                         this.activateTab(path);
                     }
@@ -3689,7 +3695,8 @@
                     idbOp(STORE_META, 'readwrite', s => s.put(
                         {
                             tabs: this.tabsList.map(t => t.path),
-                            activeTab: this.activeTabPath,
+                            // 終端機還沒還原回來前沿用上次的 focus，否則這段空窗重新整理會蓋掉
+                            activeTab: this._pendingActiveTab || this.activeTabPath,
                             anonTabs: this.tabsList.filter(t => t.isAnonymous).map(t => t.path),
                             viewStates: this.collectViewStates(),
                         }, 'tabs'
@@ -3836,13 +3843,14 @@
                     if (typeof session.activeTab === 'string' && session.activeTab.startsWith(termPathPrefix)) {
                         mylog('_restoreSessionInner', 'active tab is terminal, defer activating:', session.activeTab);
                         this._pendingActiveTab = session.activeTab;
+                        return;
                     }
-                    if (this.tabsList.length > 0) {
-                        const target = this.tabsList.find(t => t.path === session.activeTab) || this.tabsList[0];
+                    const target = this.tabsList.find(t => t.path === session.activeTab);
+                    if (target) {
                         mylog('_restoreSessionInner', 'activating tab:', target.path);
                         await this.activateTab(target.path, false);
-                    } else if (this._pendingActiveTab === null) {
-                        mylog('_restoreSessionInner', 'no tabs to restore');
+                    } else {
+                        mylog('_restoreSessionInner', 'active tab not found', session.activeTab);
                     }
                 },
 
