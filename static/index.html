@@ -358,12 +358,18 @@
     }
     // 物件轉成當下的 JSON 字串，console 直接看得到內容（不用手動展開，也不會之後才讀到新值）
     // Error / DOM / 循環參照等無法序列化的維持原物件
-    function _snap(a) {
+    // clone=true 改用 structuredClone：可展開、保留 Map/Set/undefined，仍是當下快照
+    function _snap(a, clone) {
         if (a === null || typeof a !== 'object' || a instanceof Error || a instanceof Node) return a;
-        try { return JSON.stringify(a); } catch { return a; }
+        try { return clone ? structuredClone(a) : JSON.stringify(a); } catch { return a; }
     }
-    function mylog(src, ...args) { console.log(..._logparts(src), ...args.map(_snap)); }
-    function myerr(src, ...args) { console.error(..._logparts(src), ...args.map(_snap)); }
+    // src 可傳字串，或 { src, clone } 帶選項：mylog({ src: 'x', clone: true }, obj)
+    function _log(fn, src, args) {
+        const { src: s, clone } = typeof src === 'object' && src ? src : { src };
+        fn(..._logparts(s), ...args.map(a => _snap(a, clone)));
+    }
+    function mylog(src, ...args) { _log(console.log, src, args); }
+    function myerr(src, ...args) { _log(console.error, src, args); }
 
     (function () {
         // ──── Constants & shared state
@@ -625,6 +631,7 @@
                     idbAllEntries(STORE_DIRTY),
                     idbAllEntries(STORE_ETAG),
                 ]);
+                mylog({ src: 'loadSession', clone: true }, 'session data', { meta, dirtyContents, baseEtags });
                 return meta ? { ...meta, dirtyContents, baseEtags } : null;
             } catch (e) {
                 myerr('loadSession', 'failed to load session', e); return null;
