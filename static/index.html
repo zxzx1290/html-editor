@@ -423,6 +423,13 @@
         // xterm instances stored outside Vue reactivity. name → { term, fitAddon, paneEl, name }
         const termInstances = new Map();
         const termPathPrefix = 'tmux://';
+        // 依 order（上次存檔的完整分頁順序）算出 path 該插進 paths 的哪個位置；order 為空或不含 path 就接在最後
+        function insertPosByOrder(paths, order, path) {
+            const target = order ? order.indexOf(path) : -1;
+            if (target < 0) return paths.length;
+            const i = paths.findIndex(p => order.indexOf(p) > target);
+            return i < 0 ? paths.length : i;
+        }
         // 還原中（由 term_sessions 觸發）的 session name；用來避免重連時搶走 focus
         const restoringTerms = new Set();
         // restoreSession 跑完才向伺服器要終端機清單，確保 _pendingActiveTab / _restoreTabOrder 已設好
@@ -1350,7 +1357,10 @@
                             break;
                         }
                         case 'term_sessions': {
-                            (msg.payload || []).forEach(s => {
+                            // 伺服器已無任何終端機 → 沒有東西要還原，清掉暫存順序
+                            const sessions = msg.payload || [];
+                            if (!sessions.length) app._restoreTabOrder = null;
+                            sessions.forEach(s => {
                                 restoringTerms.add(s.name);
                                 app.attachTerminal(s.name);
                             });
@@ -2364,18 +2374,9 @@
                 },
 
                 _findInsertPos(path) {
-                    // 只有還原階段才需要算插入位置：依上次存檔的完整 tab 順序（含終端機，
-                    // 來自 session.tabs），把非同步回來的終端機 tab 插回原本相對位置。
+                    // 只有還原階段才需要算插入位置：依上次存檔的完整 tab 順序（含終端機，來自 session.tabs），把非同步回來的終端機 tab 插回原本相對位置。
                     // 平時新建的終端機名稱唯一、不在此順序中 → 一律接在最後。
-                    const order = this._restoreTabOrder;
-                    if (!order) return this.tabsList.length;
-                    const target = order.indexOf(path);
-                    if (target < 0) return this.tabsList.length;
-                    for (let i = 0; i < this.tabsList.length; i++) {
-                        const oi = order.indexOf(this.tabsList[i].path);
-                        if (oi > target) return i;
-                    }
-                    return this.tabsList.length;
+                    return insertPosByOrder(this.tabsList.map(t => t.path), this._restoreTabOrder, path);
                 },
 
                 // ──── File operations
@@ -2929,8 +2930,7 @@
                 async listDirFileNames(dir) {
                     const names = new Set();
                     try {
-                        const res = await this.api('/api/files?path=' + encodeURIComponent(dir || ''));
-                        for (const f of (res.files || [])) {
+                        for (const f of await this.fetchDir(dir || '')) {
                             if (!f.isDir) names.add(f.name);
                         }
                     } catch (e) {
@@ -3013,8 +3013,7 @@
                     const selectEnd = dotIdx > 0 ? dotIdx : item.name.length;
                     const newName = await this.dlgPrompt('重新命名：', item.name, '', { selectEnd });
                     if (!newName || newName === item.name) return;
-                    const lastSlash = item.path.lastIndexOf('/');
-                    const parentDir = lastSlash >= 0 ? item.path.slice(0, lastSlash) : '';
+                    const parentDir = this.parentOf(item.path);
                     const newPath = parentDir ? parentDir + '/' + newName : newName;
                     try {
                         await this.api('/api/rename?from=' + encodeURIComponent(item.path) + '&to=' + encodeURIComponent(newPath), { method: 'POST' });
@@ -3638,12 +3637,7 @@
                     e.dataTransfer.dropEffect = 'copy';
                     const node = e.target.closest('.tree-node');
                     if (!node) { this.dropOverDir = ''; return; }
-                    if (node.dataset.isDir === '1') {
-                        this.dropOverDir = node.dataset.path;
-                    } else {
-                        const slash = node.dataset.path.lastIndexOf('/');
-                        this.dropOverDir = slash >= 0 ? node.dataset.path.slice(0, slash) : '';
-                    }
+                    this.dropOverDir = node.dataset.isDir === '1' ? node.dataset.path : this.parentOf(node.dataset.path);
                 },
 
                 onDragLeave() {
@@ -3661,15 +3655,7 @@
                     this.dragCounter = 0;
                     this.treeDragActive = false;
                     const node = e.target.closest('.tree-node');
-                    let targetDir = '';
-                    if (node) {
-                        if (node.dataset.isDir === '1') {
-                            targetDir = node.dataset.path;
-                        } else {
-                            const slash = node.dataset.path.lastIndexOf('/');
-                            targetDir = slash >= 0 ? node.dataset.path.slice(0, slash) : '';
-                        }
-                    }
+                    const targetDir = !node ? '' : node.dataset.isDir === '1' ? node.dataset.path : this.parentOf(node.dataset.path);
                     this.dropOverDir = null;
                     const files = Array.from(e.dataTransfer.files || []);
                     if (files.length) await this.uploadFiles(files, targetDir);
@@ -3699,9 +3685,14 @@
                     // 計時器一起清掉，避免結構性寫入後又被 viewState 計時器重複寫一次。
                     clearTimeout(this._metaTimer);
                     clearTimeout(this._viewTimer);
+                    const tabs = this.tabsList.map(t => t.path);
+                    // 終端機還沒全部還原回來前（_restoreTabOrder 尚未清掉），把還沒回來的終端機照上次順序補回去，否則這段空窗存檔會遺失它們在分頁列的位置。
+                    for (const p of this._restoreTabOrder || []) {
+                        if (p.startsWith(termPathPrefix) && !tabs.includes(p)) tabs.splice(insertPosByOrder(tabs, this._restoreTabOrder, p), 0, p);
+                    }
                     idbOp(STORE_META, 'readwrite', s => s.put(
                         {
-                            tabs: this.tabsList.map(t => t.path),
+                            tabs,
                             // 終端機還沒還原回來前沿用上次的 focus，否則這段空窗重新整理會蓋掉
                             activeTab: this._pendingActiveTab || this.activeTabPath,
                             anonTabs: this.tabsList.filter(t => t.isAnonymous).map(t => t.path),
@@ -3753,7 +3744,8 @@
                 async restoreSession() {
                     mylog('restoreSession', 'restoring session');
                     const session = await loadSession();
-                    if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) {
+                    // tabs 為空也照樣往下跑：舊 meta 可能是 tabs=[]、activeTab=tmux://…，需靠 _restoreSessionInner 設 _pendingActiveTab
+                    if (!session || !Array.isArray(session.tabs)) {
                         mylog('restoreSession', 'nothing to restore:', session ? `tabs=${JSON.stringify(session.tabs)}` : 'no meta');
                         return;
                     }
@@ -3862,16 +3854,7 @@
                 },
 
                 async revealInTree(filePath) {
-                    if (!filePath || !filePath.includes('/')) return;
-                    const parts = filePath.split('/');
-                    parts.pop();
-                    let currentPath = '';
-                    for (const part of parts) {
-                        currentPath = currentPath ? currentPath + '/' + part : part;
-                        const item = this.treeItems.find(t => t.path === currentPath && t.isDir);
-                        if (!item) break;
-                        if (!item.expanded) await this.expandDir(item);
-                    }
+                    if (filePath && filePath.includes('/')) await this.expandToDir(this.parentOf(filePath));
                 },
 
                 // ──── Settings
@@ -4606,10 +4589,9 @@
                     // 自訂 HTML/PHP 註解切換（settings.customPhpHtmlComment 開啟時生效）
                     // open/close 不含空白；dedup=true 時跳過已註解行（HTML / PHP 內 HTML 區段用）
                     const toggleLineComment = (model, editor, open, close = '', dedup = false) => {
-                        const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                         const isCommented = close
-                            ? l => new RegExp(`^\\s*${esc(open)}[\\s\\S]*${esc(close)}\\s*$`).test(l)
-                            : l => new RegExp(`^\\s*${esc(open)}`).test(l);
+                            ? l => new RegExp(`^\\s*${escapeRegex(open)}[\\s\\S]*${escapeRegex(close)}\\s*$`).test(l)
+                            : l => new RegExp(`^\\s*${escapeRegex(open)}`).test(l);
                         const sel = editor.getSelection();
                         const startLine = sel.startLineNumber;
                         const endLine = sel.isEmpty() ? startLine : sel.endLineNumber;
@@ -4621,8 +4603,8 @@
                             const line = lines[i];
                             const lineNum = startLine + i;
                             if (allCommented) {
-                                let text = line.replace(new RegExp(`^(\\s*)${esc(open)}\\s?`), '$1');
-                                if (close) text = text.replace(new RegExp(`\\s?${esc(close)}\\s*$`), '');
+                                let text = line.replace(new RegExp(`^(\\s*)${escapeRegex(open)}\\s?`), '$1');
+                                if (close) text = text.replace(new RegExp(`\\s?${escapeRegex(close)}\\s*$`), '');
                                 edits.push({ range: new monaco.Range(lineNum, 1, lineNum, line.length + 1), text });
                             } else {
                                 if (dedup && (isCommented(line) || line.trim() === '')) continue;
