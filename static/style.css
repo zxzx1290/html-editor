@@ -796,6 +796,11 @@ button.btn:disabled {
     flex-direction: column;
 }
 
+.lang-picker-filter {
+    margin: 6px;
+    width: auto;
+}
+
 .lang-picker-list {
     overflow-y: auto;
     flex: 1;

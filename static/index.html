@@ -258,8 +258,11 @@
         </div>
 
         <div id="lang-picker" v-show="langPicker.open" @click.stop>
+            <input class="modal-input lang-picker-filter" ref="langPickerFilter" v-model="langPicker.q"
+                placeholder="篩選語言…" @keydown.enter.prevent="filteredLangs[0] && selectLang(filteredLangs[0].id)"
+                @keydown.esc.prevent="closeLangPicker(true)" />
             <div class="lang-picker-list" ref="langPickerList">
-                <div v-for="lang in langPicker.langs" :key="lang.id" class="lang-picker-item"
+                <div v-for="lang in filteredLangs" :key="lang.id" class="lang-picker-item"
                     :class="{ active: lang.id === currentLangId }" @click="selectLang(lang.id)">
                     <span>{{ lang.label }}</span>
                     <span class="lang-picker-id">{{ lang.id }}</span>
@@ -1518,7 +1521,7 @@
                     selRanges: 1,
                     imageDim: '',
                     imageBytes: 0,
-                    langPicker: { open: false, langs: [] },
+                    langPicker: { open: false, langs: [], q: '' },
                 };
             },
 
@@ -1547,6 +1550,12 @@
                 },
                 activeTabDirty() {
                     return this.activeTab ? this.activeTab.dirty : false;
+                },
+                // 語言選單依輸入文字篩選（比對 label 與 id，不分大小寫）
+                filteredLangs() {
+                    const q = this.langPicker.q.trim().toLowerCase();
+                    if (!q) return this.langPicker.langs;
+                    return this.langPicker.langs.filter(l => l.label.toLowerCase().includes(q) || l.id.toLowerCase().includes(q));
                 },
                 // 狀態列要顯示的語言名稱（從 Monaco aliases 取，沒有就退 raw id）
                 currentLangLabel() {
@@ -1708,7 +1717,9 @@
                 // 開啟語言選單，並 scroll 到目前語言所在位置
                 openLangPicker() {
                     this.langPicker.open = true;
+                    this.langPicker.q = '';
                     this.$nextTick(() => {
+                        this.$refs.langPickerFilter && this.$refs.langPickerFilter.focus();
                         const idx = this.langPicker.langs.findIndex(l => l.id === this.currentLangId);
                         const el = this.$refs.langPickerList && this.$refs.langPickerList.children[idx];
                         if (el) el.scrollIntoView({ block: 'nearest' });
@@ -1716,8 +1727,9 @@
                 },
 
                 // 關閉語言選單
-                closeLangPicker() {
+                closeLangPicker(refocus = false) {
                     this.langPicker.open = false;
+                    if (refocus && monacoEditor) monacoEditor.focus();
                 },
 
                 // 把目前編輯器 model 的語言改成 langId，並關閉選單
@@ -1729,7 +1741,7 @@
                         monaco.editor.setModelLanguage(m, langId);
                         this.currentLangId = langId;
                     }
-                    this.closeLangPicker();
+                    this.closeLangPicker(true);
                 },
 
                 // ──── Indentation（比照 VSCode editorStatus.ts showIndentationPicker）
@@ -4637,8 +4649,8 @@
                         if (!model) return;
                         const lang = model.getLanguageId();
                         if (this.settings.customPhpHtmlComment) {
-                            if (lang === 'php')  return togglePhpComment(model, monacoEditor);
-                            if (lang === 'html') return toggleLineComment(model, monacoEditor, '<!--', '-->', true);
+                            // html 共用 php 的語境判斷，<script>/<style> 內才不會被包成 <!-- -->
+                            if (lang === 'php' || lang === 'html') return togglePhpComment(model, monacoEditor);
                         }
                         monacoEditor.trigger('', 'editor.action.commentLine', null);
                     });
