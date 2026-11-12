@@ -714,7 +714,8 @@ button.btn:disabled {
     overflow: auto;
 }
 
-#image-preview img {
+#image-preview img,
+#image-preview video {
     max-width: 100%;
     max-height: 100%;
 }

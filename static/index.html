@@ -57,7 +57,7 @@
                 @dblclick="onNodeDblClick(item)"
                 @contextmenu.prevent.stop="onTreeContextMenu($event, item)">
                 <i class="tree-arrow" :class="item.isDir ? (item.expanded ? 'icon-chevron-down' : 'icon-chevron-right') : ''"></i>
-                <i class="tree-icon" :class="item.isSymlink ? (item.isDir ? 'icon-folder-symlink' : 'icon-file-symlink') : (item.isDir ? (item.expanded ? 'icon-folder-open' : 'icon-folder') : (isImagePath(item.path) ? 'icon-image' : 'icon-file'))"></i>
+                <i class="tree-icon" :class="item.isSymlink ? (item.isDir ? 'icon-folder-symlink' : 'icon-file-symlink') : (item.isDir ? (item.expanded ? 'icon-folder-open' : 'icon-folder') : (previewType(item.path) ? 'icon-image' : 'icon-file'))"></i>
                 <span class="name" :title="(item.isSymlink ? item.path + '\n→ ' + (item.linkTarget || '(unknown)') : item.path) + (!item.isDir ? '\n' + formatSize(item.size) : '')">{{ item.name }}</span>
             </div>
         </div>
@@ -194,7 +194,7 @@
                 </div>
             </div>
             <button class="btn primary" style="min-width:4.5rem"
-                :disabled="!activeTabPath || activeTabIsImage || !activeTabDirty || isSaving"
+                :disabled="!activeTabPath || activeTabIsPreview || !activeTabDirty || isSaving"
                 @click="saveCurrent">{{ isSaving ? '儲存中…' : '儲存' }}</button>
         </div>
 
@@ -234,10 +234,15 @@
 
         <div id="editor-host">
             <div id="empty-hint" v-show="tabsList.length === 0">從左側選擇檔案開始編輯</div>
-            <div id="editor" ref="editorEl" v-show="activeTabPath && !activeTabIsImage && !activeTabIsTerminal && !activeTabIsHex"></div>
+            <div id="editor" ref="editorEl" v-show="activeTabPath && !activeTabIsPreview && !activeTabIsTerminal && !activeTabIsHex"></div>
             <div id="hex-view" ref="hexEl" v-show="activeTabIsHex"></div>
-            <div id="image-preview" v-show="activeTabIsImage">
-                <img :src="imagePreviewSrc" @load="onImgLoad" />
+            <div id="image-preview" v-show="activeTabIsPreview">
+                <!-- v-if：切走時銷毀 <video>，避免背景繼續播放聲音 -->
+                <!-- 來源沿用 /api/download：http.ServeFile 原生支援 Range（拖曳進度條 / 分段載入），
+                     且帶 Content-Disposition: attachment，不會讓工作區檔案在本站 origin 下被當網頁渲染 -->
+                <video v-if="activeTabIsVideo" :src="'/api/download?path=' + encodeURIComponent(activeTabPath)"
+                       controls @loadedmetadata="onVideoMeta" @error="showError('影片載入失敗：' + activeTabPath)"></video>
+                <img v-else :src="imagePreviewSrc" @load="onImgLoad" />
             </div>
             <div id="terminal-host" ref="terminalHost" v-show="activeTabIsTerminal"></div>
         </div>
@@ -245,13 +250,13 @@
         <div id="status">
             <span class="status-msg">{{ statusMsg }}</span>
             <span class="status-right" v-if="statusRight">{{ statusRight }}</span>
-            <span class="status-indent" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTabIsHex && indentInfo"
+            <span class="status-indent" v-if="activeTab && !activeTabIsPreview && !activeTabIsTerminal && !activeTabIsHex && indentInfo"
                 @click.stop="openIndentMenu" title="選取縮排">{{ indentLabel }}</span>
-            <span class="status-enc" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTabIsHex && !activeTab.isAnonymous"
+            <span class="status-enc" v-if="activeTab && !activeTabIsPreview && !activeTabIsTerminal && !activeTabIsHex && !activeTab.isAnonymous"
                 @click.stop="openEncodingMenu" title="選取編碼">{{ currentEncodingLabel }}</span>
-            <span class="status-eol" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTabIsHex"
+            <span class="status-eol" v-if="activeTab && !activeTabIsPreview && !activeTabIsTerminal && !activeTabIsHex"
                 @click.stop="openEolMenu" title="選取行尾序列">{{ currentEol }}</span>
-            <span class="status-lang" v-if="activeTab && !activeTabIsImage && !activeTabIsTerminal && !activeTabIsHex"
+            <span class="status-lang" v-if="activeTab && !activeTabIsPreview && !activeTabIsTerminal && !activeTabIsHex"
                 @click.stop="openLangPicker" title="選擇語法高亮語言">{{ currentLangLabel }}</span>
             <span class="status-hex" :class="{ active: activeTabIsHex }" v-if="activeTab && activeTab.tabType === 'file'"
                 @click.stop="toggleHex" title="切換 Hex 檢視">Hex</span>
@@ -378,6 +383,8 @@
         // ──── Constants & shared state
         // 圖片副檔名清單
         const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico'];
+        // 影片副檔名清單（瀏覽器原生 <video> 能播的格式）
+        const VIDEO_EXT = ['mp4', 'webm', 'ogv', 'mov', 'm4v'];
         // 副檔名 → Monaco 語言 id 映射
         const LANG_MAP = {
             html: 'html', htm: 'html',
@@ -700,8 +707,12 @@
             return m ? m[1].toLowerCase() : '';
         }
 
-        function isImagePath(path) {
-            return IMG_EXT.includes(extOf(path));
+        // 預覽型分頁（不進 Monaco）的 tabType：'image' | 'video'；一般文字檔回 null
+        function previewType(path) {
+            const ext = extOf(path);
+            if (IMG_EXT.includes(ext)) return 'image';
+            if (VIDEO_EXT.includes(ext)) return 'video';
+            return null;
         }
 
         // 把 bytes 轉成人類易讀的 KB/MB/GB；小於 1KB 直接顯示 bytes
@@ -1539,8 +1550,13 @@
                 activeTab() {
                     return this.tabsList.find(t => t.path === this.activeTabPath) || null;
                 },
-                activeTabIsImage() {
-                    return this.activeTab ? this.activeTab.tabType === 'image' : false;
+                // 圖片或影片：預覽型分頁，不進 Monaco、不能存檔
+                activeTabIsPreview() {
+                    const t = this.activeTab && this.activeTab.tabType;
+                    return t === 'image' || t === 'video';
+                },
+                activeTabIsVideo() {
+                    return this.activeTab ? this.activeTab.tabType === 'video' : false;
                 },
                 activeTabIsTerminal() {
                     return this.activeTab ? this.activeTab.tabType === 'terminal' : false;
@@ -1578,7 +1594,7 @@
                 },
                 // 狀態列右側：圖片顯示尺寸＋容量，文字檔顯示游標行列（有選取時加選取字數）
                 statusRight() {
-                    if (this.activeTabIsImage) {
+                    if (this.activeTabIsPreview) {
                         return this.imageDim + (this.imageBytes ? '   ' + formatSize(this.imageBytes) : '');
                     }
                     if (this.activeTab && !this.activeTabIsTerminal && !this.activeTabIsHex) {
@@ -1617,9 +1633,9 @@
             },
 
             methods: {
-                isImagePath,
+                previewType,
                 formatSize,
-                // 統一建立 tab 物件，確保欄位架構一致。tabType: 'file' | 'image' | 'search' | 'terminal'
+                // 統一建立 tab 物件，確保欄位架構一致。tabType: 'file' | 'image' | 'video' | 'search' | 'terminal'
                 makeTab(path, extra = {}) {
                     return { path, dirty: false, tabType: 'file', hexView: false, ...extra };
                 },
@@ -1700,6 +1716,9 @@
                 },
                 onImgLoad(e) {
                     this.imageDim = e.target.naturalWidth + ' × ' + e.target.naturalHeight;
+                },
+                onVideoMeta(e) {
+                    this.imageDim = e.target.videoWidth + ' × ' + e.target.videoHeight;
                 },
 
                 // 載入並快取整份 Monaco 已註冊語言清單，依 label 排序
@@ -2020,7 +2039,7 @@
 
                 // 雙擊進入編輯：focusMonaco 用預設 true。若檔案已是 active 分頁，activateTab 會 early-return 而不聚焦，故這裡補一發。
                 async onNodeDblClick(item) {
-                    if (item.isDir || isImagePath(item.path)) return;
+                    if (item.isDir || previewType(item.path)) return;
                     mylog('onNodeDblClick', item.path);
                     await this.openFile(item.path);
                     if (this.activeTabPath === item.path && monacoEditor && !this.activeTabIsHex) monacoEditor.focus();
@@ -2104,16 +2123,16 @@
                         // 大檔確認要在下載之前：等 fetchBytes 回來才問，bytes 已經過網路了。
                         // 檔案樹沒載入該節點時（session 還原）size 未知，就直接開。
                         const node = this.treeItems.find(i => i.path === path);
-                        if (node && !node.isDir && node.size > this.maxOpenFileSize) {
+                        if (node && !node.isDir && previewType(path) !== 'video' && node.size > this.maxOpenFileSize) {
                             const ok = await this.dlgConfirm(
                                 `「${path}」大小 ${formatSize(node.size)}，超過 ${formatSize(this.maxOpenFileSize)}，開啟可能造成分頁卡頓或無回應。仍要開啟嗎？`,
                                 { confirmText: '仍要開啟', cancelText: '取消', danger: true }
                             );
                             if (!ok) return; // finally 會釋放開檔鎖
                         }
-                        if (isImagePath(path)) {
+                        if (previewType(path)) {
                             tabsData.set(path, { model: null, viewState: null });
-                            this.tabsList.push(this.makeTab(path, { tabType: 'image' }));
+                            this.tabsList.push(this.makeTab(path, { tabType: previewType(path) }));
                             notifyOpen(path, '');
                         } else {
                             try {
@@ -2170,7 +2189,7 @@
                     if (this.activeTabPath) {
                         const cur = tabsData.get(this.activeTabPath);
                         // hex 模式下 Monaco 是隱藏的，viewState 已在切進 hex 時存好，這裡別用被夾過的狀態蓋掉
-                        if (cur && monacoEditor && !this.activeTabIsImage && !this.activeTabIsHex) cur.viewState = monacoEditor.saveViewState();
+                        if (cur && monacoEditor && !this.activeTabIsPreview && !this.activeTabIsHex) cur.viewState = monacoEditor.saveViewState();
                     }
 
                     this.activeTabPath = path;
@@ -2189,10 +2208,17 @@
                             myerr('activateTab', '找不到 tabsData 項目，tabsList/tabsData 可能不同步:', path);
                             return;
                         }
-                        if (newTab.tabType === 'image') {
+                        if (newTab.tabType === 'video') {
+                            // 影片由 <video> 直接向 /api/download 串流，不預先下載
+                            this.setStatus('影片預覽：' + path);
+                            this.imageDim = '';
+                            this.imageBytes = 0;
+                        } else if (newTab.tabType === 'image') {
                             this.setStatus('圖片預覽：' + path);
                             try {
                                 const { bytes } = await this.fetchBytes(path, true);
+                                // 下載期間使用者已切到別的分頁：別把這張圖的尺寸/內容蓋到新分頁上
+                                if (this.activeTabPath !== path) return;
                                 this.imageBytes = bytes.length;
                                 if (this._imgObjUrl) URL.revokeObjectURL(this._imgObjUrl);
                                 this._imgObjUrl = URL.createObjectURL(new Blob([bytes]));
@@ -2394,7 +2420,7 @@
                 // ──── File operations
 
                 async saveCurrent() {
-                    if (!this.activeTabPath || this.activeTabIsImage || this.isSaving || !this.activeTabDirty) return;
+                    if (!this.activeTabPath || this.activeTabIsPreview || this.isSaving || !this.activeTabDirty) return;
 
                     const activeTab = this.tabsList.find(t => t.path === this.activeTabPath);
 
@@ -3678,7 +3704,7 @@
                 // 收集各分頁的 Monaco viewState（含游標位置與捲動），供持久化還原用。
                 // 作用中分頁的 viewState 平時不會寫回 tabsData，這裡先即時補抓。
                 collectViewStates() {
-                    if (this.activeTabPath && monacoEditor && !this.activeTabIsImage && !this.activeTabIsTerminal && !this.activeTabIsHex) {
+                    if (this.activeTabPath && monacoEditor && !this.activeTabIsPreview && !this.activeTabIsTerminal && !this.activeTabIsHex) {
                         const cur = tabsData.get(this.activeTabPath);
                         if (cur) cur.viewState = monacoEditor.saveViewState();
                     }
@@ -3796,9 +3822,9 @@
                                 notifyOpen(path, content);
                                 continue;
                             }
-                            if (isImagePath(path)) {
+                            if (previewType(path)) {
                                 tabsData.set(path, { model: null, viewState: null });
-                                this.tabsList.push(this.makeTab(path, { tabType: 'image' }));
+                                this.tabsList.push(this.makeTab(path, { tabType: previewType(path) }));
                                 notifyOpen(path, '');
                             } else {
                                 const langId = detectLang(path);
@@ -4539,7 +4565,7 @@
                     // 這樣即使沒有切換分頁，重開網頁也能回到最後的游標位置與捲動。
                     monacoEditor.onDidChangeCursorPosition((e) => {
                         this.cursorPos = { line: e.position.lineNumber, col: e.position.column };
-                        if (!this.activeTabPath || this.activeTabIsImage || this.activeTabIsTerminal) return;
+                        if (!this.activeTabPath || this.activeTabIsPreview || this.activeTabIsTerminal) return;
                         this.scheduleViewStateSave();
                     });
 
@@ -4556,7 +4582,7 @@
                     });
 
                     monacoEditor.onDidScrollChange(() => {
-                        if (!this.activeTabPath || this.activeTabIsImage || this.activeTabIsTerminal) return;
+                        if (!this.activeTabPath || this.activeTabIsPreview || this.activeTabIsTerminal) return;
                         this.scheduleViewStateSave();
                     });
 
@@ -4658,7 +4684,7 @@
                     monacoEditor.onDidChangeModelContent(() => {
                         if (!this.activeTabPath) return;
                         const data = tabsData.get(this.activeTabPath);
-                        if (!data || this.activeTabIsImage) return;
+                        if (!data || this.activeTabIsPreview) return;
                         const isDirty = isModelDirty(data);
                         const tab = this.tabsList.find(t => t.path === this.activeTabPath);
                         if (tab && isDirty !== tab.dirty) tab.dirty = isDirty;
