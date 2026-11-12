@@ -720,6 +720,17 @@ button.btn:disabled {
     max-height: 100%;
 }
 
+#image-preview .img-loading {
+    display: inline-block;
+    font-size: 40px;
+    color: var(--fg);
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
 #empty-hint {
     position: absolute;
     inset: 0;

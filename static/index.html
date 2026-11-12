@@ -242,7 +242,8 @@
                      且帶 Content-Disposition: attachment，不會讓工作區檔案在本站 origin 下被當網頁渲染 -->
                 <video v-if="activeTabIsVideo" :src="'/api/download?path=' + encodeURIComponent(activeTabPath)"
                        controls @loadedmetadata="onVideoMeta" @error="showError('影片載入失敗：' + activeTabPath)"></video>
-                <img v-else :src="imagePreviewSrc" @load="onImgLoad" />
+                <img v-else-if="imagePreviewSrc" :src="imagePreviewSrc" @load="onImgLoad" />
+                <i v-else-if="imageLoading" class="icon-loader-circle img-loading"></i>
             </div>
             <div id="terminal-host" ref="terminalHost" v-show="activeTabIsTerminal"></div>
         </div>
@@ -1517,6 +1518,7 @@
                     indentInfo: null, // { insertSpaces, tabSize, indentSize }，來自當前 model.getOptions()
                     currentEol: 'LF', // 狀態列行尾序列，來自 model.getEndOfLineSequence()
                     imagePreviewSrc: '',
+                    imageLoading: false,
                     editorReady: false,
                     uploads: [],
                     dlg: { visible: false, title: '', inputMode: false, inputValue: '', placeholder: '', danger: false, confirmText: '確定', cancelText: '取消', _resolve: null },
@@ -2194,6 +2196,9 @@
 
                     this.activeTabPath = path;
                     const newTab = this.tabsList.find(t => t.path === path);
+                    // 切離分頁就釋放上一張圖的 blob；新圖下載期間顯示 loading
+                    if (this.imagePreviewSrc) URL.revokeObjectURL(this.imagePreviewSrc);
+                    this.imagePreviewSrc = '';
 
                     if (newTab && newTab.tabType === 'terminal') {
                         for (const [n, e] of termInstances) {
@@ -2215,19 +2220,19 @@
                             this.imageBytes = 0;
                         } else if (newTab.tabType === 'image') {
                             this.setStatus('圖片預覽：' + path);
+                            this.imageLoading = true;
                             try {
                                 const { bytes } = await this.fetchBytes(path, true);
                                 // 下載期間使用者已切到別的分頁：別把這張圖的尺寸/內容蓋到新分頁上
                                 if (this.activeTabPath !== path) return;
                                 this.imageBytes = bytes.length;
-                                if (this._imgObjUrl) URL.revokeObjectURL(this._imgObjUrl);
-                                this._imgObjUrl = URL.createObjectURL(new Blob([bytes]));
-                                this.imagePreviewSrc = this._imgObjUrl;
+                                this.imagePreviewSrc = URL.createObjectURL(new Blob([bytes]));
                             } catch (e) {
+                                if (this.activeTabPath !== path) return;
                                 this.imageBytes = 0;
-                                this.imagePreviewSrc = '';
                                 this.showError('圖片載入失敗: ' + e.message);
                             }
+                            this.imageLoading = false;
                         } else {
                             monacoEditor.setModel(data.model);
                             this.currentEncoding = data.encoding || 'utf8';
