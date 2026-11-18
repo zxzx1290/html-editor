@@ -3723,7 +3723,8 @@
 
                 // 把目前分頁狀態（順序、作用中分頁、匿名分頁、viewState）寫入 IndexedDB meta
                 saveMeta() {
-                    if (this.kicked) return;
+                    // 還沒讀過 meta 前（Monaco/loadTree/initBuiltins 載入中）不能寫：此時切到背景觸發 flushSession，會把空的 tabs/activeTab 蓋掉上次的 meta
+                    if (this.kicked || !this._metaLoaded) return;
                     // 任一次實際寫入都涵蓋完整 meta（含 viewState），所以把兩個 debounce
                     // 計時器一起清掉，避免結構性寫入後又被 viewState 計時器重複寫一次。
                     clearTimeout(this._metaTimer);
@@ -3787,6 +3788,7 @@
                 async restoreSession() {
                     mylog('restoreSession', 'restoring session');
                     const session = await loadSession();
+                    this._metaLoaded = true;
                     // tabs 為空也照樣往下跑：舊 meta 可能是 tabs=[]、activeTab=tmux://…，需靠 _restoreSessionInner 設 _pendingActiveTab
                     if (!session || !Array.isArray(session.tabs)) {
                         mylog('restoreSession', 'nothing to restore:', session ? `tabs=${JSON.stringify(session.tabs)}` : 'no meta');
