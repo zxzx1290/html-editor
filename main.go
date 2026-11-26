@@ -86,10 +86,10 @@ type Config struct {
 //   - {reason}: "" | "invalid" | "replay" | "blocked"
 type LoginNotifyConfig struct {
 	Host           string `json:"host"`           // SMTP server host; empty disables notifications
-	Port           int    `json:"port"`           // SMTP port; 0 → 587
+	Port           int    `json:"port"`           // SMTP port; 0 → 465
 	Username       string `json:"username"`       // SMTP auth username; empty → no auth
 	Password       string `json:"password"`       // SMTP auth password
-	TLS            string `json:"tls"`            // "starttls" (default) | "tls" (implicit, e.g. port 465) | "none"
+	TLS            string `json:"tls"`            // "tls" (default, implicit, e.g. port 465) | "starttls" (e.g. port 587) | "none"
 	From           string `json:"from"`           // sender address (template-expanded)
 	To             string `json:"to"`             // recipient address(es), comma/space separated
 	Subject        string `json:"subject"`        // subject template
@@ -893,11 +893,11 @@ func (s *server) sendLoginNotify(cfg *LoginNotifyConfig, event, username, ip, re
 	}
 	port := cfg.Port
 	if port == 0 {
-		port = 587
+		port = 465
 	}
 	mode := strings.ToLower(strings.TrimSpace(cfg.TLS))
 	if mode == "" {
-		mode = "starttls"
+		mode = "tls"
 	}
 
 	from := notifyExpand(cfg.From, vars)

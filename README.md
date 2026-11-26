@@ -147,10 +147,10 @@ Windows：
 ```json
 "loginNotify": {
   "host": "smtp.gmail.com",
-  "port": 587,
+  "port": 465,
   "username": "notify@example.com",
   "password": "your-smtp-password-or-app-password",
-  "tls": "starttls",
+  "tls": "tls",
   "notifySuccess": true,
   "notifyFailure": true,
   "timeoutSeconds": 5,
@@ -164,10 +164,10 @@ Windows：
 | 欄位 | 說明 |
 |------|------|
 | `host` | SMTP 伺服器位址；留空表示停用 |
-| `port` | SMTP 連接埠；預設 `587` |
+| `port` | SMTP 連接埠；預設 `465` |
 | `username` | SMTP 認證帳號；留空則不做認證 |
 | `password` | SMTP 認證密碼（Gmail 等需用「應用程式密碼」） |
-| `tls` | `starttls`（預設，連線後升級，常見於 587 埠）、`tls`（隱式 TLS，常見於 465 埠）或 `none`（明文） |
+| `tls` | `tls`（預設，隱式 TLS，常見於 465 埠）、`starttls`（連線後升級，常見於 587 埠）或 `none`（明文） |
 | `notifySuccess` | 登入成功時是否通知 |
 | `notifyFailure` | 登入失敗時是否通知（含帳密錯誤、TOTP 重放、IP 封鎖） |
 | `timeoutSeconds` | 連線／傳輸逾時秒數；預設 5 |

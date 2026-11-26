@@ -12,10 +12,10 @@
   "logTag": "html-editor",
   "loginNotify": {
     "host": "smtp.gmail.com",
-    "port": 587,
+    "port": 465,
     "username": "notify@example.com",
     "password": "your-smtp-password-or-app-password",
-    "tls": "starttls",
+    "tls": "tls",
     "notifySuccess": true,
     "notifyFailure": true,
     "timeoutSeconds": 5,
